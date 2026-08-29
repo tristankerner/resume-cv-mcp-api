@@ -1,0 +1,48 @@
+# Formatting, linting and type checking, at commit time rather than in CI.
+#
+# Install once, after cloning:
+#
+#     uv sync --all-groups
+#     uv run pre-commit install
+#
+# Every hook runs through `uv run`, against the versions pinned in uv.lock,
+# rather than pre-commit's own isolated environments. Two reasons:
+#
+#   - ty resolves imports against the installed dependencies. In an isolated
+#     environment it would see neither fastapi nor sqlalchemy and would report
+#     unresolved imports throughout.
+#   - It leaves one place to bump a tool version. `uv run ruff` here and
+#     `uv run ruff` on your terminal cannot disagree.
+#
+# To skip a hook for one commit — a work-in-progress spike, say:
+#     SKIP=ty git commit ...
+# To bypass all of them: `git commit --no-verify`. Both are deliberate escape
+# hatches; nothing here is a substitute for the tests.
+
+repos:
+  - repo: https://github.com/PyCQA/bandit
+    rev: '1.9.4' # Use the actual git tag or revision
+    hooks:
+      - id: bandit
+        args: ["-c", "pyproject.toml"]
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff · lint and import sort
+        entry: uv run ruff check --fix --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+      - id: ruff-format
+        name: ruff · format
+        entry: uv run ruff format --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+      - id: ty
+        name: ty · type check
+        entry: uv run ty check
+        language: system
+        types_or: [python, pyi]
+        pass_filenames: false
+        require_serial: true

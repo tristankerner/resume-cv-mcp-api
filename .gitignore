@@ -1,0 +1,10 @@
+/.env
+.venv/
+data/
+.idea/
+.coverage
+# Written by deploy/01-test.sh (repo 1) and by this repo's own test workflow.
+coverage.xml
+.pytest_cache/
+htmlcov/
+__pycache__/

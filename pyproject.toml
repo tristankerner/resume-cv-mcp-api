@@ -1,0 +1,124 @@
+[project]
+name = "resume-api"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "aiosqlite>=0.22.1",
+    "alembic>=1.19.1",
+    # The two Postgres drivers alembic/env.py maps DATABASE_URL onto: asyncpg
+    # for the application's async engine, psycopg for the sync engine the
+    # migrations run on. Both are needed to point DATABASE_URL at Postgres;
+    # neither is used while it points at SQLite.
+    "asyncpg>=0.30.0",
+    "psycopg[binary]>=3.2.0",
+    # Plain `fastapi`, not `fastapi[standard]`. The extra pulls in the CLI and
+    # its rendering stack — fastapi-cli, typer, rich, pygments — plus jinja2 and
+    # email-validator, none of which this service uses at runtime and which
+    # together cost around 30 MB of image. The two pieces of `standard` that are
+    # actually load-bearing are named below: python-multipart, without which the
+    # OAuth2 form login on /token fails at import, and the server itself.
+    # `fastapi[standard]` stays in the dev group so `fastapi dev` still works.
+    "fastapi>=0.141.1",
+    "fastmcp>=3.4.7",
+    "python-multipart>=0.0.20",
+    # uvicorn without [standard]: that extra adds websockets and watchfiles,
+    # which are for a protocol this service does not speak and a reloader it
+    # does not run. uvloop and httptools are the parts worth having, so they are
+    # requested directly.
+    "uvicorn>=0.34.0",
+    "uvloop>=0.21.0",
+    "httptools>=0.6.4",
+    "pwdlib[argon2]>=0.3.1",
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.15.0",
+    "pyjwt>=2.13.0",
+    "python-dotenv>=1.2.3",
+    "sqlalchemy>=2.0.52",
+]
+
+[tool.fastapi]
+entrypoint = "main:app"
+
+[dependency-groups]
+dev = [
+    # The `fastapi dev` CLI, kept out of the runtime image. See the note on the
+    # runtime dependency above.
+    "fastapi[standard]>=0.141.1",
+    "pre-commit>=4.0.0",
+    "ruff>=0.16.4",
+    "ty>=0.0.73",
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    # Validates a schema served by GET /documents/schemas against a real
+    # stored document in tests. Already present transitively (fastapi's dev
+    # extras pull it in); listed explicitly because the test suite now
+    # imports it directly rather than relying on that accident.
+    "jsonschema>=4.0.0",
+    "bandit>=1.9.4",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# conftest imports `main`, which lives at the repository root rather than in an
+# installed package. Without this the suite only runs when the caller happens to
+# have the root on PYTHONPATH — true in an IDE, not true for `uv run pytest` or
+# for CI.
+pythonpath = ["."]
+# Every test shares one event loop, so an httpx request and a direct database
+# call in the same test can safely reuse pooled connections.
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+
+[tool.coverage.run]
+branch = true
+source = ["."]
+omit = [
+    "alembic/*",       # migration scripts; exercised by running them, not by unit tests
+    "tests/*",
+    "scratch.py",
+    ".venv/*",
+]
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@abstractmethod",
+    'if __name__ == "__main__":',
+]
+
+[tool.ruff]
+# Alembic writes these from a template and they are edited only where a
+# migration needs real logic, so the generated scaffolding — `Union` in the
+# revision identifiers, the unsorted import block — is not worth reporting on
+# every commit. The schema they produce is covered by the tests instead.
+#
+# Note that ruff honours this only when it discovers files itself. pre-commit
+# passes staged paths explicitly, which overrides exclusions unless
+# --force-exclude is set; both hooks in .pre-commit-config.yaml set it.
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+# `I` is in ruff's default rule set as of 0.16, so this changes nothing today.
+# It is written down because import sorting is something we rely on the hook to
+# enforce, and a silent change to ruff's defaults should not be able to switch
+# it off.
+extend-select = ["I"]
+
+[tool.ty.src]
+# Same reasoning as ruff's exclusion above. ty does whole-project analysis, so
+# this is what keeps generated migration scaffolding out of its results.
+exclude = ["alembic/versions"]
+
+[tool.ruff.lint.flake8-type-checking]
+runtime-evaluated-base-classes = ["pydantic.BaseModel"] # Allows runtime Pydantic validation
+runtime-evaluated-decorators = ["fastapi.Depends", "fastapi.Query", "fastapi.Path"]
+
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv", "alembic"]
+recurse = true
+level = "MEDIUM" # Only error on High severity
+confidence = "MEDIUM" # Only error on High confidence

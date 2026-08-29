@@ -1,0 +1,39 @@
+/.env
+# Would otherwise be copied into the image by `COPY . /app` — it holds the
+# production database password and the token signing key.
+/.env.prod
+/.deploy/
+# Deploy tooling: it builds the image, it does not belong inside it.
+/deploy/
+# The whole directory. The service reads none of it — the documents are served
+# out of the database, not the filesystem — and it holds the filled-in résumé,
+# its metadata and the tailoring notes: contact details, per-bullet figures, and
+# a former employer's internal scale and vendor stack. `COPY . /app` would
+# otherwise bake all of that into an image pushed to Artifact Registry, where
+# anyone with registry read access could pull it back out.
+#
+# Excluding by directory rather than by filename on purpose: the previous
+# per-file list silently stopped covering resume.json and resume.metadata.json
+# the moment those were added.
+/docs/
+.venv/
+data/
+.idea/
+.coverage
+.pytest_cache/
+htmlcov/
+__pycache__/
+.ruff_cache/
+.git/
+.github/
+/tests/
+# clients/web/index.html itself is wanted in the image — CLIENT_HTML_PATH
+# points at /app/clients/web/index.html and GET /client serves it. These two
+# are not: they are whatever clients/web/build.sh last left on the developer's
+# machine, gitignored and therefore invisible to review, and `COPY . /app`
+# would bake them in. A stale dist/ is the worse of the two — it would be
+# served to real users as though it were the file in the repository.
+/clients/web/dist/
+/clients/web/node_modules/
+
+coverage.xml
