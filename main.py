@@ -3,25 +3,30 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, cast
 
 from alembic.config import Config
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse
 from fastmcp import FastMCP
 from fastmcp.server.auth import RemoteAuthProvider
 from fastmcp.server.providers import FileSystemProvider
 from fastmcp.utilities.lifespan import combine_lifespans
 from pydantic import AnyHttpUrl
+from sqlalchemy import select
 
 from alembic import command
 from middleware.client_cors import ClientCorsMiddleware
 from middleware.public_cors import PublicCorsMiddleware
 from persistence.auth_failure import AuthFailure
+from persistence.mfa_credential import MfaCredential
 from persistence.oauth_authorization_code import OAuthAuthorizationCode
 from persistence.oauth_refresh_token import OAuthRefreshToken
-from routers import api_keys, auth, docs, documents, oauth, users
+from routers import api_keys, auth, docs, documents, mfa, oauth, users
 from services.auth.mcp_verifier import McpTokenVerifier
+from services.auth.mfa.secret_box import MfaSecretBox
 from services.config.config_service import ConfigService
 from services.database.database_service import DatabaseService
 from services.oauth.scopes import OAUTH_ISSUABLE_SCOPES
@@ -73,6 +78,44 @@ class StartupTasks:
                 "can be written until one is created: set BOOTSTRAP_ADMIN_USERNAME "
                 "and BOOTSTRAP_ADMIN_PASSWORD and restart, or run "
                 "`python -m bootstrap_admin`."
+            )
+
+    async def verify_mfa_key(self) -> None:
+        """Open one sealed TOTP secret, to prove the configured key is the
+        one this database was written with.
+
+        A wrong key is otherwise silent until somebody tries to log in, at
+        which point every enrolled account is locked out at once and the
+        cause is several layers away from the symptom. Refusing to start is
+        the same call `bootstrap_admin_user` makes when it cannot create the
+        admin it was configured with: a deployment that cannot serve its
+        users should fail visibly rather than serve them badly.
+
+        Nothing to check on a database with no sealed rows, which is every
+        database before the first enrolment — so this is silent on a fresh
+        deployment and only ever speaks when it has evidence.
+        """
+        async with DatabaseService.session() as db:
+            sealed = (
+                (
+                    await db.execute(
+                        select(MfaCredential)
+                        .where(MfaCredential.secret.like(f"{MfaSecretBox.PREFIX}%"))
+                        .limit(1)
+                    )
+                )
+                .scalars()
+                .first()
+            )
+        if sealed is None or sealed.secret is None:
+            return
+
+        box = MfaSecretBox.from_settings(self.config_service.settings)
+        if box.open(sealed.secret) is None:
+            raise RuntimeError(
+                "MFA_ENCRYPTION_KEYS does not open an existing sealed TOTP "
+                "secret. Every enrolled account would be locked out of "
+                "password login; refusing to start rather than serve that."
             )
 
     async def prune_oauth_grants(self) -> None:
@@ -158,6 +201,10 @@ class Application:
         )
         self._app.mount("/resume", mcp_app)
 
+        self._app.add_exception_handler(
+            RequestValidationError, self._handle_validation_error
+        )
+
         # The résumé page is a separate site on a separate origin, so the
         # public document routes have to declare themselves cross-origin
         # readable or a browser will fetch them and then discard the
@@ -185,6 +232,7 @@ class Application:
         self._app.include_router(documents.router)
         self._app.include_router(api_keys.router)
         self._app.include_router(oauth.router)
+        self._app.include_router(mfa.router)
 
         self._register_client_route(self._app, self.settings.client_html_path)
 
@@ -227,6 +275,34 @@ class Application:
             # act; see OAUTH_ISSUABLE_SCOPES.
             scopes_supported=sorted(str(scope) for scope in OAUTH_ISSUABLE_SCOPES),
             resource_name="resume-api MCP",
+        )
+
+    @staticmethod
+    async def _handle_validation_error(
+        _request: Request, exc: Exception
+    ) -> JSONResponse:
+        """FastAPI's 422, minus the echo of what was sent.
+
+        The stock handler puts the offending value in an `input` key, so a
+        request that fails validation *on some other field* still comes back
+        carrying whatever else it contained — and several routes here carry a
+        password: `POST /users/me/password` and the three under
+        `/users/me/mfa`. A plaintext password in a response body reaches
+        browser devtools, proxy logs and any error tracker watching 4xx.
+
+        `SecretStr` does not help: `input` is the raw body as it arrived,
+        before any field was parsed into one. Dropping the key is what fixes
+        it, and nothing needs it — the browser client reads `loc` and `msg`
+        (see `parseValidationErrors` in clients/web/index.html) and ignores
+        the rest.
+        """
+        errors = [
+            {key: value for key, value in error.items() if key != "input"}
+            for error in cast(RequestValidationError, exc).errors()
+        ]
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            content={"detail": jsonable_encoder(errors)},
         )
 
     @staticmethod
@@ -295,6 +371,7 @@ class Application:
                 "deployment pipeline owns the schema."
             )
         await tasks.bootstrap_admin_user()
+        await tasks.verify_mfa_key()
         await tasks.prune_auth_failures()
         await tasks.prune_oauth_grants()
         yield

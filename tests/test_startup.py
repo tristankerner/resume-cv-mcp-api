@@ -3,9 +3,15 @@
 import logging
 import secrets
 
+import pytest
+from cryptography.fernet import Fernet
+
 import main
+from persistence.mfa_credential import MfaCredential
 from persistence.user import User
+from services.auth.mfa.secret_box import MfaSecretBox
 from services.auth.roles import Roles
+from services.config.config_service import ConfigService
 from services.database.database_service import DatabaseService
 
 
@@ -113,3 +119,42 @@ class TestServiceProviders:
 
         monkeypatch.setenv("CLIENT_HTML_PATH", "/srv/client/index.html")
         assert ConfigServiceModel().client_html_path == "/srv/client/index.html"
+
+
+class TestVerifyMfaKey:
+    """A wrong key is otherwise silent until an enrolled user tries to log
+    in, and it locks all of them out at once."""
+
+    @staticmethod
+    async def _seal_a_credential(secret: str) -> None:
+        async with DatabaseService.session() as db:
+            user = User(username="verify-mfa-key-owner", password=None, roles=[])
+            db.add(user)
+            await db.flush()
+            box = MfaSecretBox.from_settings(ConfigService.get_without_deps().settings)
+            db.add(
+                MfaCredential(
+                    user_id=user.id,
+                    kind="totp",
+                    label="Authenticator app",
+                    secret=box.seal(secret),
+                )
+            )
+            await db.commit()
+
+    async def test_silent_with_no_sealed_rows(self):
+        tasks = main.StartupTasks(ConfigService.get_without_deps())
+        await tasks.verify_mfa_key()  # must not raise
+
+    async def test_silent_with_a_matching_key(self):
+        await self._seal_a_credential("a-totp-secret")
+        tasks = main.StartupTasks(ConfigService.get_without_deps())
+        await tasks.verify_mfa_key()  # must not raise
+
+    async def test_raises_with_a_mismatched_key(self, monkeypatch):
+        await self._seal_a_credential("a-totp-secret")
+        monkeypatch.setenv("MFA_ENCRYPTION_KEYS", Fernet.generate_key().decode())
+        ConfigService.reset()
+        tasks = main.StartupTasks(ConfigService.get_without_deps())
+        with pytest.raises(RuntimeError, match="MFA_ENCRYPTION_KEYS"):
+            await tasks.verify_mfa_key()

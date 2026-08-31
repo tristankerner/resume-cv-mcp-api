@@ -2,6 +2,7 @@ import os
 from enum import StrEnum, auto
 from typing import Annotated, ClassVar
 
+from cryptography.fernet import Fernet
 from pydantic import (
     AnyHttpUrl,
     AnyUrl,
@@ -180,9 +181,12 @@ class ConfigServiceModel(BaseSettings):
     # Comma-separated, empty by default, which is exactly today's behaviour:
     # no origin is allowlisted, so the middleware is a no-op everywhere.
     # "null" is the origin of a page opened directly from disk (file://); safe
-    # to allowlist because this API takes no cookies, so a hostile page granted
-    # "null" still has no way to obtain a token that lives in the client
-    # origin's localStorage. Recommended for local use only, not production.
+    # to allowlist because none of these routes take a cookie — the one
+    # cookie this service issues (docs_session, see services/auth/docs_session.py)
+    # is HttpOnly and answers only the four documentation routes, which this
+    # setting does not gate at all — so a hostile page granted "null" still
+    # has no way to obtain a token that lives in the client origin's
+    # localStorage. Recommended for local use only, not production.
     # NoDecode: see oauth_allowed_redirect_hosts above for why a plain
     # comma-separated string needs this to reach the validator unparsed.
     client_allowed_origins: Annotated[frozenset[str], NoDecode] = Field(
@@ -195,6 +199,49 @@ class ConfigServiceModel(BaseSettings):
     # built clients/web/dist/index.html — at GET /client. Same-origin means
     # CLIENT_ALLOWED_ORIGINS does not even need to name it.
     client_html_path: str | None = Field(default=None, alias="CLIENT_HTML_PATH")
+
+    # --- Multi-factor authentication ---------------------------------------
+    # MFA is per-account and opt-in, so there is deliberately no global
+    # on/off switch: a setting that silently stops demanding a second factor
+    # from accounts that enrolled one is a footgun, not a feature. What is
+    # configurable is the shape of the challenge, not whether it happens.
+
+    # How long the token returned by the first step stays redeemable. Long
+    # enough to find a phone, short enough that one left in a shell history
+    # is worthless.
+    mfa_challenge_ttl_minutes: int = Field(
+        default=5, ge=1, alias="MFA_CHALLENGE_TTL_MINUTES"
+    )
+    # Thirty-second steps either side of now that a TOTP code is accepted
+    # for. 1 tolerates roughly a minute and a half of clock skew between a
+    # phone and this server, which is the usual recommendation; 0 demands
+    # perfectly synchronised clocks and will generate support requests.
+    mfa_totp_drift_steps: int = Field(default=1, ge=0, alias="MFA_TOTP_DRIFT_STEPS")
+    mfa_backup_code_count: int = Field(default=10, ge=1, alias="MFA_BACKUP_CODE_COUNT")
+    # The issuer an authenticator app shows beside the account name. Purely
+    # cosmetic, and worth setting when one person runs more than one of these.
+    mfa_issuer: str = Field(default="resume-api", alias="MFA_ISSUER")
+
+    # Fernet keys for the TOTP secrets at rest, newest first: every key
+    # listed can decrypt, the first one encrypts. Rotating is therefore
+    # prepending a new key and leaving the old one until the lazy re-seal in
+    # TotpMethod.verify has worked through the enrolled accounts.
+    #
+    # Deliver this through SECRETS_DIR in production, not an environment
+    # variable — `docker inspect` reads env vars, and this key is the whole
+    # of what stands between a database dump and everyone's second factor.
+    #
+    # NoDecode for the same reason the two frozensets above carry it:
+    # pydantic-settings tries to JSON-decode any complex annotation before a
+    # validator sees it, so a plain comma-separated string never reaches
+    # `_parse_mfa_encryption_keys`.
+    mfa_encryption_keys: Annotated[list[SecretStr], NoDecode] = Field(
+        default_factory=list, alias="MFA_ENCRYPTION_KEYS"
+    )
+
+    # How long a documentation login lasts. The docs are read, not acted on,
+    # so this is a browsing session rather than a credential lifetime.
+    docs_session_minutes: int = Field(default=60, ge=1, alias="DOCS_SESSION_MINUTES")
 
     @field_validator("oauth_allowed_redirect_hosts", mode="before")
     @classmethod
@@ -209,6 +256,35 @@ class ConfigServiceModel(BaseSettings):
         return frozenset(
             origin.strip() for origin in value.split(",") if origin.strip()
         )
+
+    @field_validator("mfa_encryption_keys", mode="before")
+    @classmethod
+    def _parse_mfa_encryption_keys(cls, value):
+        if not isinstance(value, str):
+            return value
+        return [key.strip() for key in value.split(",") if key.strip()]
+
+    @field_validator("mfa_encryption_keys", mode="after")
+    @classmethod
+    def _validate_mfa_encryption_keys(cls, value):
+        """Reject key material Fernet cannot use, at settings load.
+
+        A malformed key is otherwise a 500 on the first enrolment and a
+        lockout on every login after it. Fernet wants exactly 32 bytes,
+        url-safe base64 encoded; anything else fails here, where the message
+        can say so.
+        """
+        for key in value:
+            try:
+                Fernet(key.get_secret_value().encode())
+            except (ValueError, TypeError) as error:
+                raise ValueError(
+                    "MFA_ENCRYPTION_KEYS entries must be url-safe base64 "
+                    "encoded 32-byte keys. Generate one with: python -c "
+                    '"from cryptography.fernet import Fernet; '
+                    'print(Fernet.generate_key().decode())"'
+                ) from error
+        return value
 
     @field_validator("environment", mode="before")
     @classmethod
@@ -253,6 +329,21 @@ class ConfigServiceModel(BaseSettings):
                 "PUBLIC_BASE_URL is required in production: the authorization "
                 "server and resource server cannot derive their own URL from "
                 "a request a caller controls."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _require_mfa_encryption_key_in_production(self) -> ConfigServiceModel:
+        """Plaintext TOTP secrets are a development affordance, not a
+        deployment option. Locally there is nothing worth encrypting and a
+        required key would only be ceremony before `uv run pytest`; in
+        production the absence of one is a configuration mistake nobody
+        notices until a database leaks."""
+        if self.is_production and not self.mfa_encryption_keys:
+            raise ValueError(
+                "MFA_ENCRYPTION_KEYS is required in production: TOTP secrets "
+                "are symmetric, and storing them in the clear makes a database "
+                "read sufficient to mint second factors."
             )
         return self
 

@@ -3,7 +3,7 @@ from typing import Annotated, ClassVar
 
 import jwt
 from fastapi import Depends, Request
-from fastapi.security import HTTPBasic, HTTPBasicCredentials, OAuth2PasswordBearer
+from fastapi.security import OAuth2PasswordBearer
 from jwt.exceptions import InvalidTokenError
 from pwdlib import PasswordHash
 from sqlalchemy.exc import IntegrityError
@@ -31,12 +31,9 @@ from ..config.config_service import ConfigService
 
 
 class AuthService(ServiceProviderInterface):
+    # auto_error off so this class decides what an absent credential means —
+    # "anonymous" rather than a 401 raised before a route ever runs.
     oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
-    # For the documentation, and nothing else — see `require_docs_access`. Both
-    # schemes are declared with auto_error off so that this class decides what an
-    # absent credential means; for the bearer scheme that is "anonymous", and here
-    # it is "no prompt outside production".
-    docs_basic_scheme = HTTPBasic(realm="resume-api", auto_error=False)
     _password_hash: ClassVar[PasswordHash] = PasswordHash.recommended()
 
     # How stale ApiKey.last_used_at is allowed to get, traded against a database
@@ -217,18 +214,19 @@ class AuthService(ServiceProviderInterface):
         AccountLock.clear(locked)
         await self.db.commit()
 
-    async def change_password(
-        self, user: User, current_password: str, new_password: str
-    ) -> None:
-        """Verify `current_password` and set `new_password`, throttled the
-        same way authenticate_user throttles /token.
+    async def verify_current_password(self, user: User, password: str) -> None:
+        """Check a password on an already-authenticated request, throttled the
+        same way /token is.
 
-        Left unthrottled, this route would be a password oracle for anyone
-        holding a valid token for the account — a narrower audience than
-        /token faces, since a token is required to reach it at all, but not
-        an empty one. Reusing the same account/address counters means a
-        lockout tripped here also blocks /token and vice versa, which is the
-        right coupling: both are ways of proving you know the password.
+        Left unthrottled, any route that takes a current password is a
+        password oracle for whoever holds a token for the account. Sharing
+        the account and address counters with /token is the right coupling:
+        a lockout tripped here blocks /token and vice versa, because both are
+        ways of proving you know the password.
+
+        Raises rather than returning a bool: every caller's response to a
+        wrong password is identical, and a bool is one `if` away from being
+        forgotten.
         """
         account_policy = AccountPolicy.from_settings(self.config_services.settings)
         address_policy = AddressPolicy.from_settings(self.config_services.settings)
@@ -241,15 +239,70 @@ class AuthService(ServiceProviderInterface):
         if state.kind is LockKind.TEMPORARY:
             raise AuthErrors.account_locked(state.retry_after_seconds)
 
-        if not self.verify_password(current_password, user.password):
+        if not self.verify_password(password, user.password):
             await self._register_login_failure(
                 user, address, account_policy, address_policy, now
             )
             raise AuthErrors.wrong_current_password()
 
         await self._clear_login_failures(user)
+
+    async def change_password(
+        self, user: User, current_password: str, new_password: str
+    ) -> None:
+        """Verify `current_password` and set `new_password`."""
+        await self.verify_current_password(user, current_password)
         user.password = self.get_password_hash(new_password)
         await self.db.commit()
+
+    def raise_if_locked(self, user: User) -> None:
+        """Refuse a login step for an account that is locked right now.
+
+        The second factor arrives as a *second request*, so a lock tripped
+        between the two — by guessing against this account from somewhere
+        else — has to be honoured on the way in as well, or a challenge
+        minted a moment before the lock walks straight around it. All three
+        password surfaces redeem a challenge and so all three call this;
+        having one of them forget is how the throttle ends up enforced in
+        two places out of three.
+
+        Read-only and synchronous: `authenticate_user` already refuses a
+        locked account before any password is checked, and this is only the
+        second step catching up with it.
+        """
+        state = AccountPolicy.from_settings(self.config_services.settings).status(
+            user, utcnow()
+        )
+        if state.kind is LockKind.PERMANENT:
+            raise AuthErrors.account_locked_permanently()
+        if state.kind is LockKind.TEMPORARY:
+            raise AuthErrors.account_locked(state.retry_after_seconds)
+
+    async def register_mfa_failure(self, user: User) -> None:
+        """Charge a failed second factor to the account and the address.
+
+        The same counters /token uses, deliberately: a code is a credential
+        and guessing at one is guessing at the account. Six digits is a
+        million-wide space, which sounds large and is not — at the default
+        five-per-fifteen-minutes it takes centuries, and unthrottled it takes
+        an afternoon.
+
+        Raises AuthErrors.account_locked* when this attempt trips a lock,
+        exactly as _register_login_failure does on the password path.
+        """
+        account_policy = AccountPolicy.from_settings(self.config_services.settings)
+        address_policy = AddressPolicy.from_settings(self.config_services.settings)
+        address = address_policy.client_address(self.request)
+        await self._register_login_failure(
+            user, address, account_policy, address_policy, utcnow()
+        )
+
+    async def clear_login_failures(self, user: User) -> None:
+        """Forget a user's failure history, the same way a correct password
+        does. Public wrapper so the underscore convention is not violated
+        across module lines — used by the MFA second step on a correct
+        code."""
+        await self._clear_login_failures(user)
 
     def create_access_token(self, data: dict, expires_delta: timedelta | None = None):
         to_encode = data.copy()
@@ -388,6 +441,15 @@ class AuthService(ServiceProviderInterface):
         except InvalidTokenError:
             return None
 
+        # This branch is reached by elimination — see
+        # `_looks_like_oauth_access_token` — so it must refuse anything that
+        # names a purpose of its own. An MFA challenge and a docs-session
+        # cookie are signed with this same key and carry `sub`; without this
+        # line either one presented as a bearer token would authenticate as
+        # its subject, which is the whole account.
+        if payload.get("token_use") is not None:
+            return None
+
         user = await self._active_user_from_subject(payload)
         if user is None:
             return None
@@ -469,36 +531,3 @@ class AuthService(ServiceProviderInterface):
         if principal is None:
             raise AuthErrors.credentials()
         return principal
-
-    @staticmethod
-    async def require_docs_access(
-        auth_service: Annotated[AuthService, Depends(AuthService.get_with_deps)],
-        credentials: Annotated[HTTPBasicCredentials | None, Depends(docs_basic_scheme)],
-    ) -> None:
-        """Gate the documentation on a username and password, in production.
-
-        The one surface that authenticates with a password on the request
-        rather than a bearer token: the docs are opened in a browser, which
-        will supply Basic credentials on its own but has nowhere to keep a
-        token. It produces no Principal, because there is nothing downstream to
-        authorize — this decides who may read the route list, and every route
-        on that list still enforces its own scopes.
-
-        `authenticate_user` is the same call `/token` makes, deliberately, so
-        there is no second notion of a valid login: the same accounts work, a
-        passwordless service account still cannot log in, and deactivating a
-        user closes this door with the rest of them.
-
-        Outside production it passes everyone: the docs are the fastest way to
-        try a route, and a password prompt in front of localhost only trains
-        people to type one.
-        """
-        if not auth_service.config_services.settings.is_production:
-            return
-        if credentials is None:
-            raise AuthErrors.docs_credentials()
-        user = await auth_service.authenticate_user(
-            credentials.username, credentials.password
-        )
-        if not user:
-            raise AuthErrors.docs_credentials()

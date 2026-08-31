@@ -233,6 +233,7 @@ cryptography==50.0.0 \
     #   authlib
     #   joserfc
     #   pyjwt
+    #   resume-api
     #   secretstorage
 cyclopts==4.23.2 \
     --hash=sha256:1c9de7f245394d3ef9344fc6c976fc373fe1f2ce929b27f08ad4ea8499c13461 \
@@ -550,6 +551,10 @@ pyjwt==2.13.0 \
     # via
     #   mcp
     #   resume-api
+pyotp==2.10.0 \
+    --hash=sha256:1df2f6a1bcc3bb0716172a5215ddc2f8c7c7fd26a13df9927d52e1746934836c \
+    --hash=sha256:d01e9703443616b03c57c700b5cbffd56a1f929c1b0f8f03131bc78c1fca9d3f
+    # via resume-api
 pyperclip==1.11.0 \
     --hash=sha256:244035963e4428530d9e3a6101a1ef97209c6825edab1567beac148ccc1db1b6 \
     --hash=sha256:299403e9ff44581cb9ba2ffeed69c7aa96a008622ad0c46cb575ca75b5b84273

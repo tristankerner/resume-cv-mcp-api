@@ -25,6 +25,7 @@ from services.oauth.dtos import (
 from services.oauth.exceptions import (
     AuthorizeFatalError,
     AuthorizeLoginFailed,
+    AuthorizeMfaRequired,
     AuthorizeRedirectError,
     OAuthError,
 )
@@ -185,6 +186,8 @@ class OAuthRouter:
         resource: Annotated[str, Form()] = "",
         username: Annotated[str, Form()] = "",
         password: Annotated[str, Form()] = "",
+        mfa_token: Annotated[str, Form()] = "",
+        code: Annotated[str, Form()] = "",
         decision: Annotated[str, Form()] = "deny",
     ) -> HTMLResponse | RedirectResponse:
         oauth = OAuthService(db, config_service)
@@ -202,6 +205,8 @@ class OAuthRouter:
                 username=username,
                 password=password,
                 approved=(decision == "approve"),
+                mfa_token=mfa_token or None,
+                code=code or None,
             )
         except AuthorizeFatalError as exc:
             log.warning("Rejected /oauth/authorize: %s", exc.detail)
@@ -210,6 +215,37 @@ class OAuthRouter:
             )
         except AuthorizeRedirectError as exc:
             return self._redirect_error(redirect_uri, exc)
+        except AuthorizeMfaRequired as exc:
+            # client_id/redirect_uri were just re-validated inside
+            # complete_authorize, so re-running the same check to rebuild the
+            # form cannot itself raise AuthorizeFatalError/RedirectError here.
+            client, requested = await oauth.prepare_authorize(
+                client_id=client_id,
+                redirect_uri=redirect_uri,
+                response_type=response_type,
+                code_challenge=code_challenge,
+                code_challenge_method=code_challenge_method,
+                scope=scope,
+                state=state or None,
+            )
+            html = AuthorizePageRenderer.render_mfa_form(
+                client=client,
+                scopes=requested,
+                client_id=client_id,
+                redirect_uri=redirect_uri,
+                response_type=response_type,
+                code_challenge=code_challenge,
+                code_challenge_method=code_challenge_method,
+                scope=scope,
+                state=state or None,
+                resource=resource or None,
+                mfa_token=exc.mfa_token,
+                error=exc.detail,
+            )
+            # No detail means the first challenge, freshly issued off a
+            # correct password — 200, the same as the initial consent form.
+            # A detail means a rejected code — 401, like a wrong password.
+            return HTMLResponse(html, status_code=401 if exc.detail else 200)
         except AuthorizeLoginFailed as exc:
             # client_id/redirect_uri were just re-validated inside
             # complete_authorize, so re-running the same check to rebuild the

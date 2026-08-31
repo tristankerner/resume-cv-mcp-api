@@ -155,6 +155,66 @@ already holds the role. Changing your own password has its own route,
 `POST /users/me/password`, which additionally requires the *current* password
 — `PATCH` never checks it.
 
+### Second factors
+
+Opt-in, per account. A user with no second factor logs in exactly as before;
+enrolling one changes nothing about anyone else's login. Two methods:
+
+- **An authenticator app** (TOTP, RFC 6238) — a phone or a laptop can each
+  hold one, since `ALLOWS_MULTIPLE` is true for this kind.
+- **Backup codes** — ten single-use recovery codes, for when the
+  authenticator is gone but the account is not. Generating a set replaces
+  any previous one; there is only ever one live set.
+
+`POST /token` answers a password alone with a token, same as always. For an
+enrolled account it answers with a challenge instead, redeemed at
+`POST /token/mfa`:
+
+```bash
+curl -s -X POST localhost:8000/token -d 'username=YOU&password=YOURPASS'
+# {"mfa_required": true, "mfa_token": "...", "methods": ["totp"], "expires_in": 300}
+
+curl -s -X POST localhost:8000/token/mfa -d 'mfa_token=...&code=123456'
+# {"access_token": "...", "token_type": "bearer"}
+```
+
+Both steps are `application/x-www-form-urlencoded`, matching `/token` itself.
+The challenge is a signed JWT, not a database row — nothing is written to
+issue it, and it expires on its own in five minutes by default
+(`MFA_CHALLENGE_TTL_MINUTES`). It is bound to the password hash in force when
+minted, so a password change invalidates every challenge outstanding against
+the old one, and it is scoped to the surface that issued it: a challenge from
+`/token` cannot be redeemed at the docs login or the OAuth authorize flow, and
+the reverse. The docs login and `POST /oauth/authorize` both gain the same
+second step, in the same shape, for the same reason.
+
+A wrong code costs exactly what a wrong password costs against the throttle
+below — six digits is a small enough space that leaving it unthrottled would
+make guessing practical.
+
+**TOTP secrets are encrypted at rest**, with Fernet under `MFA_ENCRYPTION_KEYS`,
+so a database read alone no longer mints a second factor for someone's
+account — the key lives in the application process, not the database, so
+this is not a defence against a compromised host, only against what a leaked
+backup, a SQL-injection read, or a database dump pasted into a support ticket
+can do on its own. Backup codes are hashed rather than encrypted, the same
+way API keys are, which is what lets them keep working if the encryption key
+is ever lost — there is nothing there to decrypt.
+
+**Recovery.** An admin can strip every second factor from an account with
+`DELETE /users/{id}/mfa`, which — unlike the lock-clearing route — requires
+an interactive login, not just `users:admin`: a key that could disable MFA
+would make MFA optional service-wide for whoever steals it. When there is no
+admin to ask, `python -m reset_mfa <username>` does the same thing directly
+against the database, and needs no encryption key to do it — it deletes rows
+rather than reading them, which is what makes it the break-glass path when
+`MFA_ENCRYPTION_KEYS` itself is the thing that is wrong or lost. Backup codes
+exist precisely so neither of these is usually needed.
+
+**Back the encryption key up somewhere other than beside the database dump.**
+A backup containing both the encrypted secrets and the key that opens them is
+a backup with no encryption.
+
 ## Pointing an MCP client at a key
 
 The key belongs to **whoever owns the documents** — a document is reachable
@@ -224,8 +284,11 @@ and the fourth is permanent until an admin clears it. A locked account gets
 `429` with `Retry-After`; a permanently locked one gets a plain `401`, because
 there is no wait to communicate and nothing else to disclose.
 
-Both `/token` and the docs login go through the same `authenticate_user`, so
-the Basic prompt cannot be used to walk around the counter on `/token`.
+`/token`, the docs login, and `POST /oauth/authorize` all go through the same
+`authenticate_user`, so none of the three can be used to walk around the
+counter on the others. A wrong MFA code counts the same way, against the same
+account and address tallies, whichever of the three surfaces the second step
+is on — see "Second factors" above.
 
 **A successful login resets the ladder.** That is the property that makes a
 permanent lock safe to have: an account someone actually uses cannot be walked
@@ -261,22 +324,31 @@ Every threshold is configurable; see [`docs/configuration.md`](docs/configuratio
 
 FastAPI serves `/docs`, `/redoc` and `/openapi.json` without a credential — a
 complete index of every route, payload shape and security scheme. Where
-`ENVIRONMENT=production`, all three sit behind HTTP Basic instead.
+`ENVIRONMENT=production`, all three sit behind a login instead — an HTML form,
+not HTTP Basic: a username and password, then a code for an MFA-enrolled
+account, then a signed `HttpOnly` cookie good for an hour by default
+(`DOCS_SESSION_MINUTES`).
 
-All three: the two pages are only renderers for the schema, so guarding them
-and leaving `/openapi.json` open would guard nothing.
+All three routes, not just the two pages: they are only renderers for the
+schema, so guarding them and leaving `/openapi.json` open would guard nothing.
 
-The credential is a username and password from the users table, checked by the
-same call `/token` makes. There is no separate docs password to rotate — the
-same accounts work, a passwordless service account still cannot log in, and
-deactivating a user closes this door with the rest. Any active account will do;
-this gates who reads the route list, not what they can call, and every route
-behind it still enforces its own scopes.
+The credential is checked by the same `authenticate_user` call `/token` makes.
+There is no separate docs password to rotate — the same accounts work, a
+passwordless service account still cannot log in, and deactivating a user or
+changing their password closes this door with the rest, the cookie included:
+it is bound to the password hash in force when it was issued. Any active
+account will do; this gates who reads the route list, not what they can call,
+and every route behind it still enforces its own scopes.
 
-Basic rather than a bearer token because this is the one surface opened by a
-browser, which will supply a password on its own but has nowhere to keep a
-token. Development leaves them open: a prompt in front of localhost only trains
-people to type one.
+An HTML form rather than a bearer token because this is the one surface opened
+by a browser, which has nowhere to keep a token but will hold a cookie for you.
+It is also, deliberately, the only surface in this service that takes a
+cookie at all — `CLIENT_ALLOWED_ORIGINS`'s null-origin caveat and
+`middleware/client_cors.py`'s "no `Access-Control-Allow-Credentials`" both
+still hold, because nothing outside `routers/docs.py` reads this cookie and
+the header that would let cross-origin JavaScript see a credentialed response
+is never sent. Development leaves the docs open: a prompt in front of
+localhost only trains people to type one.
 
 ## Running it
 
@@ -435,10 +507,14 @@ The test suite runs on SQLite regardless of what `DATABASE_URL` says.
 
 ```
 routers/          HTTP routes, and the MCP tool
-services/auth/    authentication, scopes, Principal, API keys, login throttling
+services/auth/    authentication, scopes, Principal, API keys, login throttling, MFA (services/auth/mfa/)
 services/user/    user CRUD and first-admin bootstrap
 services/document/ document reads, writes, and the public projection
 persistence/      SQLAlchemy models
 alembic/          migrations, run automatically at startup
 clients/          submodule: front-end clients (resume-mcp-api-clients)
 ```
+
+`reset_mfa.py` is a root script like `unlock_user.py` and `reset_password.py`
+— the break-glass path for an account whose second factor and every backup
+code are gone. See "Second factors" above.

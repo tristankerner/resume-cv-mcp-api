@@ -7,13 +7,20 @@ import base64
 import hashlib
 import secrets
 import urllib.parse
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import jwt as pyjwt
+import pyotp
 import pytest
 from sqlalchemy import select
 
+from persistence.mfa_credential import MfaCredential
 from persistence.oauth_client import OAuthClient
+from persistence.user import User
 from services.auth.mcp_verifier import McpTokenVerifier
+from services.auth.mfa.challenge import MfaChallengeContext, MfaChallengeToken
+from services.auth.mfa.methods.totp import TotpMethod
 from services.auth.scopes import Scopes
 from services.config.config_service import ConfigService
 from services.database.database_service import DatabaseService
@@ -23,6 +30,15 @@ from services.oauth.scopes import OAUTH_ISSUABLE_SCOPES
 from services.oauth.tokens import TokenIssuer
 
 REDIRECT_URI = "https://claude.ai/api/mcp/auth_callback"
+
+
+@dataclass
+class ScopedEnrolled:
+    """Like conftest's `Enrolled`, but for an actor whose roles actually
+    grant a scope — see the local `enrolled` fixture below."""
+
+    actor: object
+    secret: str
 
 
 def pkce_pair() -> tuple[str, str]:
@@ -82,6 +98,8 @@ async def authorize(
     code_challenge_method="S256",
     decision="approve",
     resource=None,
+    mfa_token=None,
+    code=None,
 ):
     verifier, challenge = pkce_pair()
     data = {
@@ -98,6 +116,10 @@ async def authorize(
     }
     if resource:
         data["resource"] = resource
+    if mfa_token is not None:
+        data["mfa_token"] = mfa_token
+    if code is not None:
+        data["code"] = code
     response = await client.post("/oauth/authorize", data=data, follow_redirects=False)
     return response, verifier
 
@@ -108,6 +130,43 @@ async def get_code(client, *, client_id, username, password, **kw):
     )
     assert response.status_code == 303, response.text
     return query_of(response)["code"], verifier
+
+
+def extract_hidden_value(html: str, name: str) -> str:
+    marker = f'name="{name}" value="'
+    start = html.index(marker) + len(marker)
+    end = html.index('"', start)
+    return html[start:end]
+
+
+@pytest.fixture
+async def enrolled(admin) -> ScopedEnrolled:
+    """`admin`, with an activated TOTP credential.
+
+    Shadows conftest's own `enrolled` fixture (built on a roleless actor,
+    fine for the login surfaces but grantless here) — the authorize flow
+    needs a scope to hand out, or a wrong-scope redirect masks whatever the
+    test is actually checking. Activated with the previous step's code, not
+    the current one, for the same reason conftest's version is: a test then
+    calling `totp_code(secret)` gets a fresh step rather than one the replay
+    guard has already spent.
+    """
+    async with DatabaseService.session() as db:
+        user = await User.get_user_by_id(db, admin.user_id)
+        assert user is not None
+        method = TotpMethod(db, ConfigService.get_without_deps().settings)
+        result = await method.begin_enrollment(user, "Authenticator app")
+        await db.commit()
+        credential = await MfaCredential.get_for_user(db, user.id, result.credential_id)
+        assert credential is not None
+        assert result.secret is not None
+        activation_code = pyotp.TOTP(result.secret).at(
+            datetime.now(UTC), counter_offset=-1
+        )
+        await method.complete_enrollment(credential, activation_code)
+        await db.commit()
+
+    return ScopedEnrolled(actor=admin, secret=result.secret)
 
 
 @pytest.fixture
@@ -360,6 +419,122 @@ class TestFullFlow:
         )
         assert response.status_code == 401
         assert "<form" in response.text
+
+
+class TestMfaSecondStep:
+    """The authorize flow for an account with a second factor: the password
+    step returns a code form instead of a redirect, carrying the protocol
+    state forward in hidden fields."""
+
+    async def test_an_enrolled_accounts_password_step_shows_a_code_form(
+        self, client, enrolled
+    ):
+        client_id = await pre_register()
+        response, _verifier = await authorize(
+            client,
+            client_id=client_id,
+            username=enrolled.actor.username,
+            password=enrolled.actor.password,
+        )
+        assert response.status_code == 200
+        assert "<form" in response.text
+        assert 'name="mfa_token"' in response.text
+        assert 'name="code"' in response.text
+        assert 'name="password"' not in response.text
+
+    async def test_a_valid_code_completes_the_flow(self, client, enrolled, totp_code):
+        client_id = await pre_register()
+        challenge, _verifier = await authorize(
+            client,
+            client_id=client_id,
+            username=enrolled.actor.username,
+            password=enrolled.actor.password,
+        )
+        mfa_token = extract_hidden_value(challenge.text, "mfa_token")
+
+        response, _verifier = await authorize(
+            client,
+            client_id=client_id,
+            username="",
+            password="",
+            mfa_token=mfa_token,
+            code=totp_code(enrolled.secret),
+        )
+        assert response.status_code == 303, response.text
+        assert "code" in query_of(response)
+
+    async def test_a_wrong_code_reshows_the_code_form_with_a_fresh_token(
+        self, client, enrolled
+    ):
+        client_id = await pre_register()
+        challenge, _verifier = await authorize(
+            client,
+            client_id=client_id,
+            username=enrolled.actor.username,
+            password=enrolled.actor.password,
+        )
+        mfa_token = extract_hidden_value(challenge.text, "mfa_token")
+
+        response, _verifier = await authorize(
+            client,
+            client_id=client_id,
+            username="",
+            password="",
+            mfa_token=mfa_token,
+            code="000000",
+        )
+        assert response.status_code == 401
+        assert "not valid" in response.text
+        # A fresh token, so the next attempt gets a full window rather than
+        # racing whatever was left of the one just spent.
+        assert extract_hidden_value(response.text, "mfa_token") != mfa_token
+
+    async def test_denying_at_the_second_step_redirects_with_access_denied(
+        self, client, enrolled
+    ):
+        client_id = await pre_register()
+        challenge, _verifier = await authorize(
+            client,
+            client_id=client_id,
+            username=enrolled.actor.username,
+            password=enrolled.actor.password,
+        )
+        mfa_token = extract_hidden_value(challenge.text, "mfa_token")
+
+        response, _verifier = await authorize(
+            client,
+            client_id=client_id,
+            username="",
+            password="",
+            mfa_token=mfa_token,
+            code="",
+            decision="deny",
+        )
+        assert response.status_code == 302
+        assert query_of(response)["error"] == "access_denied"
+
+    async def test_a_docs_challenge_is_refused_here(self, client, enrolled):
+        """The three surfaces grant different things — a challenge minted
+        for the docs login must not be redeemable at /oauth/authorize."""
+        settings = ConfigService.get_without_deps().settings
+        async with DatabaseService.session() as db:
+            user = await User.get_user_by_id(db, enrolled.actor.user_id)
+            assert user is not None
+            token, _expires_in = MfaChallengeToken.mint(
+                settings, user, MfaChallengeContext.DOCS
+            )
+
+        client_id = await pre_register()
+        response, _verifier = await authorize(
+            client,
+            client_id=client_id,
+            username="",
+            password="",
+            mfa_token=token,
+            code="000000",
+        )
+        assert response.status_code == 401
+        assert "expired" in response.text
 
 
 class TestSecurityRequirements:
@@ -1013,3 +1188,41 @@ class TestIssuableScopes:
         )
         assert response.status_code == 302
         assert query_of(response)["error"] == "invalid_scope"
+
+
+class TestMfaChallengeBinding:
+    """A challenge is bound to the client whose consent screen produced it.
+
+    Without the binding, one issued while authorizing a client is redeemable
+    while authorizing a different one — and the scopes the user saw and
+    approved on the first page are not the scopes the second page asked for.
+    """
+
+    async def test_a_challenge_from_one_client_is_refused_by_another(
+        self, client, enrolled
+    ):
+        first_client = await pre_register()
+        second_client = await pre_register()
+
+        challenge, _verifier = await authorize(
+            client,
+            client_id=first_client,
+            username=enrolled.actor.username,
+            password=enrolled.actor.password,
+        )
+        assert challenge.status_code == 200
+        mfa_token = extract_hidden_value(challenge.text, "mfa_token")
+
+        response, _verifier = await authorize(
+            client,
+            client_id=second_client,
+            username="",
+            password="",
+            mfa_token=mfa_token,
+            code="000000",
+        )
+        # Refused as an expired/unusable challenge — the login form again,
+        # not the code form, and certainly not a redirect carrying a code.
+        assert response.status_code == 401
+        assert 'name="password"' in response.text
+        assert response.status_code != 303

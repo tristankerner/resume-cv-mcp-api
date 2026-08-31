@@ -778,6 +778,51 @@ class TestEffectiveScopes:
         assert Scopes.RESUME_READ.value in after.json()["scopes"]
 
 
+class TestResetMfa:
+    """`DELETE /users/{id}/mfa` — requires users:admin and an interactive
+    login, unlike `unlock_user`, which a locked-out admin's own API key must
+    still be able to reach."""
+
+    async def test_an_admin_can_strip_another_accounts_mfa(
+        self, client, admin, enrolled
+    ):
+        response = await client.delete(
+            f"/users/{enrolled.actor.user_id}/mfa", headers=admin.headers
+        )
+        assert response.status_code == 204
+
+        status = await client.get("/users/me/mfa", headers=enrolled.actor.headers)
+        assert status.json()["credentials"] == []
+
+    async def test_a_non_admin_is_refused(self, client, member, enrolled):
+        response = await client.delete(
+            f"/users/{enrolled.actor.user_id}/mfa", headers=member.headers
+        )
+        assert response.status_code == 403
+
+    async def test_an_admin_api_key_is_refused_not_interactive(
+        self, client, admin, enrolled
+    ):
+        """The difference from unlock_user: MFA management refuses any API
+        key, admin-scoped or not, because a key that can strip second
+        factors makes MFA optional service-wide for whoever steals it."""
+        headers = await narrowed_api_key(client, admin, Scopes.USERS_ADMIN)
+        response = await client.delete(
+            f"/users/{enrolled.actor.user_id}/mfa", headers=headers
+        )
+        assert response.status_code == 403
+
+    async def test_an_unknown_user_is_404(self, client, admin):
+        response = await client.delete("/users/999999/mfa", headers=admin.headers)
+        assert response.status_code == 404
+
+    async def test_an_account_with_no_mfa_is_still_204(self, client, admin, roleless):
+        response = await client.delete(
+            f"/users/{roleless.user_id}/mfa", headers=admin.headers
+        )
+        assert response.status_code == 204
+
+
 class TestUserQueries:
     async def test_lookup_by_username_is_case_sensitive(self, admin):
         """The guest bug was a casing mismatch; pin the behaviour it relied on."""

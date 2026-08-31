@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from persistence.oauth_client import OAuthClient
 from persistence.user import User
 from services.auth.auth_service import AuthService
+from services.auth.mfa.challenge import MfaChallengeContext, MfaChallengeToken
+from services.auth.mfa.verifier import MfaVerifier
 from services.auth.scopes import ScopeResolver, Scopes
 from services.config.config_service import ConfigService, ConfigServiceModel
 from services.database.database_service import DatabaseService
@@ -27,6 +29,7 @@ from services.oauth.dtos import (
 from services.oauth.exceptions import (
     AuthorizeFatalError,
     AuthorizeLoginFailed,
+    AuthorizeMfaRequired,
     AuthorizeRedirectError,
     OAuthErrors,
 )
@@ -196,6 +199,64 @@ class OAuthService(ServiceProviderInterface):
         )
         return client, requested
 
+    async def _resolve_user(
+        self,
+        auth_service: AuthService,
+        mfa_token: str | None,
+        code: str | None,
+        username: str,
+        password: str,
+        client_id: str,
+    ) -> User:
+        """The password step, or the second-factor step redeeming its
+        challenge — whichever this submission is.
+
+        Raises `AuthorizeMfaRequired` with `detail=None` the first time an
+        enrolled account's password is accepted (render the code form), and
+        with a detail message plus a freshly minted token on a rejected code
+        (re-render it, so the next attempt gets a full window rather than
+        racing whatever was left of the old one).
+
+        `register_mfa_failure` may itself raise `AuthErrors.account_locked`
+        (a 429 `HTTPException`), which then escapes this handler as a plain
+        error response rather than a rendered page — acceptable and honest,
+        not caught here.
+
+        Every challenge here is bound to `client_id`, so one issued while
+        authorizing a client cannot be redeemed while authorizing a
+        different one — the consent shown on the first page is not consent
+        to whatever the second page asked for.
+        """
+        verifier = MfaVerifier(self.db, self.settings)
+
+        if mfa_token:
+            user = await verifier.user_from_challenge(
+                mfa_token, MfaChallengeContext.OAUTH, binding=client_id
+            )
+            if user is None:
+                raise AuthorizeLoginFailed("That login attempt expired. Try again.")
+
+            auth_service.raise_if_locked(user)
+
+            if not await verifier.verify(user, code or ""):
+                await auth_service.register_mfa_failure(user)
+                new_token, _expires_in = MfaChallengeToken.mint(
+                    self.settings, user, MfaChallengeContext.OAUTH, binding=client_id
+                )
+                raise AuthorizeMfaRequired(new_token, "That code is not valid.")
+            await auth_service.clear_login_failures(user)
+            return user
+
+        user = await auth_service.authenticate_user(username, password)
+        if not user:
+            raise AuthorizeLoginFailed("Incorrect username or password.")
+        if await verifier.is_enrolled(user):
+            token, _expires_in = MfaChallengeToken.mint(
+                self.settings, user, MfaChallengeContext.OAUTH, binding=client_id
+            )
+            raise AuthorizeMfaRequired(token)
+        return user
+
     async def complete_authorize(
         self,
         request: Request,
@@ -211,12 +272,15 @@ class OAuthService(ServiceProviderInterface):
         username: str,
         password: str,
         approved: bool,
+        mfa_token: str | None = None,
+        code: str | None = None,
     ) -> str:
         """The POST handler's whole body. Returns the redirect URL on success.
 
         Raises `AuthorizeFatalError` (render a page), `AuthorizeRedirectError`
-        (redirect with `error=`), or `AuthorizeLoginFailed` (re-show the form)
-        — the router picks the response shape from which one it catches.
+        (redirect with `error=`), `AuthorizeLoginFailed` (re-show the form),
+        or `AuthorizeMfaRequired` (show the code form) — the router picks the
+        response shape from which one it catches.
         """
         client, requested = await self.prepare_authorize(
             client_id=client_id,
@@ -241,9 +305,9 @@ class OAuthService(ServiceProviderInterface):
             raise AuthorizeLoginFailed("incorrect_code_challenge")
 
         auth_service = AuthService(self.db, None, self.config_service, request)
-        user = await auth_service.authenticate_user(username, password)
-        if not user:
-            raise AuthorizeLoginFailed("Incorrect username or password.")
+        user = await self._resolve_user(
+            auth_service, mfa_token, code, username, password, client.client_id
+        )
 
         # Requested scopes are intersected with the user's role scopes before
         # the grant is recorded — a user cannot consent to more than they hold.

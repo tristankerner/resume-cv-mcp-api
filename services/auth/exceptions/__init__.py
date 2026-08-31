@@ -13,17 +13,6 @@ class AuthErrors:
         )
 
     @staticmethod
-    def docs_credentials() -> HTTPException:
-        """Basic rather than Bearer, and with a realm: this one is answered by
-        a browser address bar, and the header is what makes it show a login
-        prompt instead of an error page."""
-        return HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": 'Basic realm="resume-api"'},
-        )
-
-    @staticmethod
     def api_key_not_found() -> HTTPException:
         return HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="API key not found"
@@ -114,4 +103,59 @@ class AuthErrors:
                     f'Bearer error="insufficient_scope", scope="{" ".join(listed)}"'
                 )
             },
+        )
+
+
+class MfaErrors:
+    """Second-factor refusals. See AuthErrors for the same one-static-method-
+    per-refusal style."""
+
+    @staticmethod
+    def invalid_code() -> HTTPException:
+        """Used for a wrong second factor, but never for a wrong password —
+        the two must stay indistinguishable to an unauthenticated caller, so
+        the login path raises AuthErrors.credentials() instead of this."""
+        return HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="That code is not valid."
+        )
+
+    @staticmethod
+    def challenge_expired() -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="The login attempt expired. Start again.",
+        )
+
+    @staticmethod
+    def credential_not_found() -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="MFA method not found"
+        )
+
+    @staticmethod
+    def already_activated() -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="That method is already active.",
+        )
+
+    @staticmethod
+    def activation_not_required() -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This method needs no activation step.",
+        )
+
+    @staticmethod
+    def wrong_kind() -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="That method does not take an activation code.",
+        )
+
+    @staticmethod
+    def too_many_credentials() -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You already have the maximum number of MFA methods.",
         )

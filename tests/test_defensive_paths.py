@@ -42,14 +42,20 @@ class TestVanishedUser:
 
     async def test_current_user_404s(self):
         async with DatabaseService.session() as db:
-            service = UserService(db, principal_for(999_999))
+            service = UserService(
+                db, principal_for(999_999), ConfigService.get_without_deps()
+            )
             with pytest.raises(HTTPException) as caught:
                 await service.get_current_user()
         assert caught.value.status_code == 404
 
     async def test_update_without_a_target_is_rejected(self, admin):
         async with DatabaseService.session() as db:
-            service = UserService(db, principal_for(admin.user_id, Scopes.USERS_ADMIN))
+            service = UserService(
+                db,
+                principal_for(admin.user_id, Scopes.USERS_ADMIN),
+                ConfigService.get_without_deps(),
+            )
             with pytest.raises(HTTPException) as caught:
                 await service.update_user(UpdateUserRequest(first_name="x"))
         assert caught.value.status_code == 400
@@ -264,3 +270,44 @@ class TestCliRace:
 
         assert await BootstrapAdminCommand().run() == 0
         assert "already exists" in capsys.readouterr().out
+
+
+class TestValidationErrorsDoNotEchoInput:
+    """FastAPI's stock 422 puts the offending value in an `input` key, so a
+    body that fails validation on one field comes back carrying the rest of
+    what was sent — and four routes here send a password. `SecretStr` does
+    not help: `input` is the raw body as it arrived, before any field was
+    parsed into one. See Application._handle_validation_error.
+    """
+
+    async def test_change_password_422_does_not_echo_the_password(self, client, admin):
+        response = await client.post(
+            "/users/me/password",
+            headers=admin.headers,
+            json={"current_password": admin.password, "new_password": "Aa1!aaaaaa"},
+        )
+        assert response.status_code == 422
+        assert admin.password not in response.text
+
+    async def test_mfa_enrolment_422_does_not_echo_the_password(self, client, admin):
+        response = await client.post(
+            "/users/me/mfa/totp",
+            headers=admin.headers,
+            json={"current_password": admin.password},
+        )
+        assert response.status_code == 422
+        assert admin.password not in response.text
+
+    async def test_the_error_shape_the_client_reads_is_intact(self, client, admin):
+        """clients/web/index.html's parseValidationErrors reads `loc` and
+        `msg` and nothing else — dropping `input` must not disturb those."""
+        response = await client.post(
+            "/users/me/mfa/totp",
+            headers=admin.headers,
+            json={"current_password": admin.password},
+        )
+        detail = response.json()["detail"]
+        assert isinstance(detail, list)
+        assert detail[0]["loc"] == ["body", "label"]
+        assert detail[0]["msg"]
+        assert "input" not in detail[0]

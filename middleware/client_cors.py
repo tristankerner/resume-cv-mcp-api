@@ -29,9 +29,15 @@ class ClientCorsMiddleware(CorsMiddleware):
     echoes the caller's own origin is both safe and tighter than a wildcard
     would be.
 
-    **No `Access-Control-Allow-Credentials`.** Every credential here travels
-    in an `Authorization` header the client sets explicitly; there are no
-    cookies, so there is nothing for a cross-site request to ride on.
+    **No `Access-Control-Allow-Credentials`.** Every API credential travels
+    in an `Authorization` header the client sets explicitly. The one
+    exception is the `docs_session` cookie the production docs login sets
+    (services/auth/docs_session.py) — `HttpOnly`, `SameSite=Lax`, and read by
+    nothing outside routers/docs.py — but omitting this header still matters
+    for it: without `Access-Control-Allow-Credentials: true`, a browser
+    refuses to let cross-origin JavaScript read a credentialed response even
+    if the cookie rode along, so there is nothing for a cross-site request to
+    gain by carrying it.
     """
 
     ALLOWED_METHODS: ClassVar[str] = "GET, POST, PATCH, DELETE, OPTIONS"

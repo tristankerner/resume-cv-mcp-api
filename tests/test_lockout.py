@@ -623,18 +623,25 @@ class TestAddressThrottleEndpoint:
 
 
 class TestDocsLoginSharesTheCounter:
-    """The docs Basic login goes through the same authenticate_user, which is
+    """The docs HTML login goes through the same authenticate_user, which is
     what stops it being a way around the throttle on /token."""
 
     @pytest.fixture
     def production(self, reconfigure):
         reconfigure(ENVIRONMENT="production")
 
+    @staticmethod
+    async def _docs_login(client, username: str, password: str):
+        return await client.post(
+            "/docs/login",
+            data={"username": username, "password": password, "next": "/docs"},
+        )
+
     async def test_failures_at_the_docs_count_against_the_account(
         self, client, admin, production, quick_lockout, no_address_throttle
     ):
         for _ in range(3):
-            await client.get("/docs", auth=(admin.username, "not-the-password"))
+            await self._docs_login(client, admin.username, "not-the-password")
 
         user = await read_user(admin.user_id)
         assert user.locked_until is not None
@@ -643,7 +650,7 @@ class TestDocsLoginSharesTheCounter:
         self, client, admin, production, quick_lockout, no_address_throttle
     ):
         await fail_login(client, admin.username, 3)
-        response = await client.get("/docs", auth=(admin.username, admin.password))
+        response = await self._docs_login(client, admin.username, admin.password)
         assert response.status_code == 429
 
 

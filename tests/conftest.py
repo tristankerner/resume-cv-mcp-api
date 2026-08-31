@@ -17,7 +17,10 @@ import secrets
 import shutil
 import tempfile
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
+
+from cryptography.fernet import Fernet
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _TMP_DIR = tempfile.mkdtemp(prefix="resume-api-tests-")
@@ -33,6 +36,10 @@ os.environ["AUTH_ALGORITHM"] = "HS256"
 os.environ["AUTH_ACCESS_TOKEN_EXPIRE_MINUTES"] = "30"
 os.environ["PUBLIC_BASE_URL"] = "http://testserver"
 os.environ["OAUTH_ALLOWED_REDIRECT_HOSTS"] = "claude.ai,chatgpt.com"
+# Generated per run, like AUTH_SECRET_KEY above: the suite encrypts TOTP
+# secrets the same way a deployment does, so a change that stops sealing
+# them fails here rather than in production.
+os.environ["MFA_ENCRYPTION_KEYS"] = Fernet.generate_key().decode()
 # Empty rather than absent: these must override anything in a local .env, and
 # an empty value is what the bootstrap treats as "not configured".
 os.environ["BOOTSTRAP_ADMIN_USERNAME"] = ""
@@ -47,14 +54,17 @@ os.environ["CLIENT_ALLOWED_ORIGINS"] = ""
 os.environ["CLIENT_HTML_PATH"] = ""
 os.environ.pop("SECRETS_DIR", None)
 
+import pyotp
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
 import main
 from persistence.base import SQAlchemyBase
+from persistence.mfa_credential import MfaCredential
 from persistence.user import User
 from services.auth.auth_service import AuthService
+from services.auth.mfa.methods.totp import TotpMethod
 from services.auth.roles import Roles
 from services.auth.scopes import ScopeResolver
 from services.config.config_service import ConfigService
@@ -233,6 +243,47 @@ async def other_owner(make_actor) -> Actor:
     ownership-isolation tests: two users each holding a document does not mean
     either can see the other's."""
     return await make_actor("other-owner", [Roles.ADMIN.value])
+
+
+@dataclass
+class Enrolled:
+    """An actor with an activated TOTP credential, plus its secret — the
+    secret only ever exists in the clear at enrolment time, same as it
+    would for a real authenticator app."""
+
+    actor: Actor
+    secret: str
+
+
+@pytest.fixture
+async def enrolled(make_actor) -> Enrolled:
+    actor = await make_actor("mfa-enrolled-user", [])
+    async with DatabaseService.session() as db:
+        user = await User.get_user_by_id(db, actor.user_id)
+        assert user is not None
+        method = TotpMethod(db, ConfigService.get_without_deps().settings)
+        result = await method.begin_enrollment(user, "Authenticator app")
+        await db.commit()
+        credential = await MfaCredential.get_for_user(db, user.id, result.credential_id)
+        assert credential is not None
+        assert result.secret is not None
+        # Activated with the *previous* step's code, not the current one:
+        # this fixture hands the secret back to tests that then call
+        # `totp_code(secret)` for a fresh login — which is `.now()`, i.e.
+        # the current step. Activating with that same step would make the
+        # replay guard correctly refuse the first real test login.
+        totp = pyotp.TOTP(result.secret)
+        activation_code = totp.at(datetime.now(UTC), counter_offset=-1)
+        await method.complete_enrollment(credential, activation_code)
+        await db.commit()
+
+    return Enrolled(actor=actor, secret=result.secret)
+
+
+@pytest.fixture
+def totp_code():
+    """Current code for a secret, as an authenticator app would show it."""
+    return lambda secret: pyotp.TOTP(secret).now()
 
 
 @pytest.fixture

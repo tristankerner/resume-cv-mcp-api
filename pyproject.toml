@@ -34,6 +34,17 @@ dependencies = [
     "pyjwt>=2.13.0",
     "python-dotenv>=1.2.3",
     "sqlalchemy>=2.0.52",
+    # Fernet, for the TOTP secrets at rest — see services/auth/mfa/secret_box.py.
+    # Already in the tree transitively (fastmcp -> fastmcp-slim[client,server]
+    # -> authlib/joserfc), so naming it here costs nothing in the image. Named
+    # anyway: depending on somebody else's transitive dependency for your own
+    # cryptography is how an unrelated upgrade removes it.
+    "cryptography>=45.0.0",
+    # RFC 6238 TOTP: code generation, the drift window, base32 secrets, and
+    # the otpauth:// provisioning URI. Pure Python, no transitive
+    # dependencies. Hand-rolling this is thirty lines of HMAC and a hundred
+    # of encoding edge cases nobody reviews.
+    "pyotp>=2.9.0",
 ]
 
 [tool.fastapi]

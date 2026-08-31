@@ -1,37 +1,61 @@
-"""Swagger UI, ReDoc, and the schema they render.
+"""Swagger UI, ReDoc, and the schema they render — plus the login in front
+of them in production.
 
-FastAPI mounts these three itself, without a credential. In production that is
-a public index of every route the service has, its payload shapes and its
-authentication scheme, so they are re-declared here behind a login instead —
-`main` disables the built-ins, which is what frees the paths.
+FastAPI mounts the first three itself, without a credential. In production
+that is a public index of every route the service has, its payload shapes
+and its authentication scheme, so they are re-declared here behind a login
+instead — `main` disables the built-ins, which is what frees the paths.
 
 All three, not just the two pages. The UIs are only renderers for
 `/openapi.json`; guarding them while leaving the schema open would guard
-nothing. Outside production `require_docs_access` waves everyone through, so
+nothing. Outside production `DocsAccessGuard.check` waves everyone through, so
 what a developer browses locally is the same surface that is deployed, minus
 the prompt.
+
+The login itself is an HTML form, not HTTP Basic: a password, then — for an
+MFA-enrolled account — a code, then a signed `HttpOnly` cookie. This is the
+one surface in the service that takes a cookie at all; see
+middleware/client_cors.py and ConfigServiceModel.client_allowed_origins for
+what that does and does not change about the rest of the API.
 """
 
 from typing import Annotated, ClassVar
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.openapi.docs import (
     get_redoc_html,
     get_swagger_ui_html,
     get_swagger_ui_oauth2_redirect_html,
 )
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.auth.auth_service import AuthService
+from services.auth.docs_login_page import DocsLoginPageRenderer
+from services.auth.docs_session import DocsAccessGuard, DocsSessionToken
+from services.auth.mfa.challenge import MfaChallengeContext, MfaChallengeToken
+from services.auth.mfa.verifier import MfaVerifier
+from services.config.config_service import ConfigService, ConfigServiceModel
+from services.database.database_service import DatabaseService
 
 
 class DocsRouter:
-    DocsAccess = Annotated[None, Depends(AuthService.require_docs_access)]
+    DocsAccess = Annotated[None, Depends(DocsAccessGuard.check)]
+    DbSession = Annotated[AsyncSession, Depends(DatabaseService.get_async_db_session)]
+    Settings = Annotated[ConfigService, Depends(ConfigService.get_with_deps)]
 
     OPENAPI_URL: ClassVar[str] = "/openapi.json"
     DOCS_URL: ClassVar[str] = "/docs"
     REDOC_URL: ClassVar[str] = "/redoc"
     OAUTH2_REDIRECT_URL: ClassVar[str] = "/docs/oauth2-redirect"
+    LOGIN_URL: ClassVar[str] = "/docs/login"
+
+    # An open-redirect guard, not tidiness: `next` arrives as attacker-
+    # controlled query or form input, and the only acceptable destinations
+    # are the docs paths this router itself serves.
+    NEXT_ALLOWLIST: ClassVar[frozenset[str]] = frozenset(
+        {OPENAPI_URL, DOCS_URL, REDOC_URL, OAUTH2_REDIRECT_URL}
+    )
 
     def __init__(self) -> None:
         # The documentation is not itself part of the documentation.
@@ -43,6 +67,9 @@ class DocsRouter:
         self.router.get(self.DOCS_URL)(self.swagger_ui)
         self.router.get(self.OAUTH2_REDIRECT_URL)(self.swagger_ui_oauth2_redirect)
         self.router.get(self.REDOC_URL)(self.redoc)
+        self.router.get(self.LOGIN_URL, response_model=None)(self.login_page)
+        self.router.post(self.LOGIN_URL, response_model=None)(self.login_submit)
+        self.router.post("/docs/logout")(self.logout)
 
     async def openapi_schema(self, request: Request, _: DocsAccess) -> JSONResponse:
         """The generated schema, built and cached by the application object."""
@@ -71,6 +98,120 @@ class DocsRouter:
         return get_redoc_html(
             openapi_url=self.OPENAPI_URL, title=f"{request.app.title} - ReDoc"
         )
+
+    async def login_page(
+        self,
+        request: Request,
+        db: DbSession,
+        config_service: Settings,
+        next: str = DOCS_URL,
+    ) -> HTMLResponse | RedirectResponse:
+        next_path = self._validate_next(next)
+        token = request.cookies.get(DocsSessionToken.COOKIE_NAME)
+        if token:
+            user = await DocsSessionToken.user_from_cookie(
+                db, config_service.settings, token
+            )
+            if user is not None:
+                return RedirectResponse(next_path, status_code=303)
+        return HTMLResponse(
+            DocsLoginPageRenderer.render_login_form(next_path=next_path)
+        )
+
+    async def login_submit(
+        self,
+        request: Request,
+        db: DbSession,
+        config_service: Settings,
+        # Every field defaults to "" rather than being required, the same
+        # reasoning routers/oauth.py's authorize_submit gives: a missing
+        # value should re-render this form with an error, not 422.
+        username: Annotated[str, Form()] = "",
+        password: Annotated[str, Form()] = "",
+        next: Annotated[str, Form()] = DOCS_URL,
+        mfa_token: Annotated[str, Form()] = "",
+        code: Annotated[str, Form()] = "",
+    ) -> HTMLResponse | RedirectResponse:
+        next_path = self._validate_next(next)
+        settings = config_service.settings
+        auth_service = AuthService(db, None, config_service, request)
+        verifier = MfaVerifier(db, settings)
+
+        if mfa_token:
+            user = await verifier.user_from_challenge(
+                mfa_token, MfaChallengeContext.DOCS
+            )
+            if user is None:
+                html = DocsLoginPageRenderer.render_login_form(
+                    next_path=next_path,
+                    error="The login attempt expired. Start again.",
+                )
+                return HTMLResponse(html, status_code=401)
+            # The same check /token/mfa and /oauth/authorize make before
+            # accepting a code — see AuthService.raise_if_locked.
+            auth_service.raise_if_locked(user)
+            if not await verifier.verify(user, code):
+                await auth_service.register_mfa_failure(user)
+                html = DocsLoginPageRenderer.render_mfa_form(
+                    next_path=next_path,
+                    mfa_token=mfa_token,
+                    error="That code is not valid.",
+                )
+                return HTMLResponse(html, status_code=401)
+            await auth_service.clear_login_failures(user)
+            return self._issue_cookie(user, next_path, settings)
+
+        # AuthErrors.account_locked(_permanently) propagating out of here as
+        # a 429/401 is fine and correct — the same throttle /token uses, and
+        # not swallowing it is what keeps the docs login from being a way
+        # around it.
+        user = await auth_service.authenticate_user(username, password)
+        if not user:
+            html = DocsLoginPageRenderer.render_login_form(
+                next_path=next_path, error="Incorrect username or password."
+            )
+            return HTMLResponse(html, status_code=401)
+
+        if await verifier.is_enrolled(user):
+            token, _expires_in = MfaChallengeToken.mint(
+                settings, user, MfaChallengeContext.DOCS
+            )
+            html = DocsLoginPageRenderer.render_mfa_form(
+                next_path=next_path, mfa_token=token
+            )
+            return HTMLResponse(html)
+
+        return self._issue_cookie(user, next_path, settings)
+
+    async def logout(self) -> RedirectResponse:
+        response = RedirectResponse(self.LOGIN_URL, status_code=303)
+        response.delete_cookie(DocsSessionToken.COOKIE_NAME, path="/")
+        return response
+
+    @classmethod
+    def _validate_next(cls, next_path: str) -> str:
+        return next_path if next_path in cls.NEXT_ALLOWLIST else cls.DOCS_URL
+
+    @staticmethod
+    def _issue_cookie(
+        user, next_path: str, settings: ConfigServiceModel
+    ) -> RedirectResponse:
+        token, expires_in = DocsSessionToken.mint(settings, user)
+        response = RedirectResponse(next_path, status_code=303)
+        # Path=/ rather than /docs: /openapi.json and /redoc are outside a
+        # /docs prefix. Secure only in production, where the deployment is
+        # reachable over HTTPS; a local run over plain HTTP would otherwise
+        # never see the cookie come back.
+        response.set_cookie(
+            DocsSessionToken.COOKIE_NAME,
+            token,
+            max_age=expires_in,
+            httponly=True,
+            samesite="lax",
+            path="/",
+            secure=settings.is_production,
+        )
+        return response
 
 
 router = DocsRouter().router

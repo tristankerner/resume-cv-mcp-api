@@ -84,3 +84,20 @@ class AuthorizeLoginFailed(Exception):
     def __init__(self, detail: str):
         self.detail = detail
         super().__init__(detail)
+
+
+class AuthorizeMfaRequired(Exception):
+    """The password was right and a second factor is outstanding.
+
+    Its own exception rather than a variant of AuthorizeLoginFailed because
+    the router answers it with a different page — the protocol parameters
+    have to survive the extra round trip in hidden fields, and the user must
+    not be asked for their password a second time. `detail` is None for the
+    first challenge (render at 200) and set for a rejected code (render at
+    401, with a freshly minted token so the next attempt gets a full window).
+    """
+
+    def __init__(self, mfa_token: str, detail: str | None = None):
+        self.mfa_token = mfa_token
+        self.detail = detail
+        super().__init__(detail or "MFA required")

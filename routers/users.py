@@ -26,6 +26,7 @@ class UsersRouter:
             self.change_own_password
         )
         self.router.delete("/users/{user_id}/lock", status_code=204)(self.unlock_user)
+        self.router.delete("/users/{user_id}/mfa", status_code=204)(self.reset_mfa)
 
     async def read_users_me(self, user_service: UserServiceDep) -> UserDto:
         return await user_service.get_current_user()
@@ -63,6 +64,20 @@ class UsersRouter:
         `python -m unlock_user` does the same thing against the database.
         """
         await user_service.unlock_user(user_id)
+        return Response(status_code=204)
+
+    async def reset_mfa(self, user_id: int, user_service: UserServiceDep) -> Response:
+        """Strip every MFA method from an account. Requires users:admin and
+        an interactive login.
+
+        Unlike unlock_user, not reachable with an API key: a lock has to be
+        clearable that way so a locked-out admin can still act, but MFA has
+        no such constraint, and an admin key that can strip second factors
+        would make MFA optional service-wide for whoever steals that key.
+        `python -m reset_mfa` is the break-glass path when there is no
+        interactive login to be had.
+        """
+        await user_service.reset_mfa(user_id)
         return Response(status_code=204)
 
 

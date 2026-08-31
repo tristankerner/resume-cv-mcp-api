@@ -221,6 +221,12 @@ needs**, and log in as the **account that owns the documents** — reads are
 scoped to the owner, so approving as anyone else yields a connector that
 authenticates successfully and sees an empty store.
 
+If that account has a second factor enrolled, a code prompt follows the
+password page before the redirect — the same challenge `/token` uses, in the
+same shape, with the connector's protocol parameters carried forward in
+hidden fields so nothing about the authorization request is lost across the
+extra round trip.
+
 ## 8. Verify
 
 Run these in order and stop at the first failure; each depends on the one

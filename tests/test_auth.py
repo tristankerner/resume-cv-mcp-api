@@ -220,6 +220,19 @@ class TestAuthenticate:
         principal = await authenticate(actor.token)
         assert principal.scopes == frozenset()
 
+    @pytest.mark.parametrize("token_use", ["mfa_pending", "docs_session", "anything"])
+    async def test_a_token_naming_its_own_purpose_does_not_authenticate(
+        self, settings, admin, token_use
+    ):
+        """The password-JWT path is reached by elimination — see
+        `_looks_like_oauth_access_token` — so it must refuse any token that
+        claims a purpose of its own, not just the two kinds this plan adds.
+        Left unguarded, an MFA challenge or a docs-session cookie presented as
+        `Authorization: Bearer ...` would be a complete authentication
+        bypass: both are signed with this same key and carry `sub`."""
+        forged = encode(settings, {"sub": str(admin.user_id), "token_use": token_use})
+        assert await authenticate(forged) is None
+
 
 class TestRouteGuards:
     async def test_protected_route_rejects_anonymous(self, client):

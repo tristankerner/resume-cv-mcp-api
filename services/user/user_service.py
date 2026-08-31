@@ -3,12 +3,15 @@ from typing import Annotated
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from persistence.mfa_credential import MfaCredential
 from persistence.user import User
 from services.auth.auth_service import AuthService
 from services.auth.dtos.user import UserDto
 from services.auth.lockout import AccountLock
+from services.auth.mfa.verifier import MfaVerifier
 from services.auth.principal import Principal
 from services.auth.scopes import ScopeResolver, Scopes
+from services.config.config_service import ConfigService
 from services.database.database_service import DatabaseService
 from services.user.dtos.change_password import ChangePasswordRequest
 from services.user.dtos.update_user import UpdateUserRequest
@@ -19,9 +22,12 @@ from .dtos import CreateUserRequest, CreateUserResponse
 
 
 class UserService(ServiceProviderInterface):
-    def __init__(self, db: AsyncSession, principal: Principal):
+    def __init__(
+        self, db: AsyncSession, principal: Principal, config_service: ConfigService
+    ):
         self.db: AsyncSession = db
         self.principal: Principal = principal
+        self.config_service = config_service
 
     async def get_current_user(self) -> UserDto:
         user = await User.get_user_by_id(self.db, self.principal.user_id)
@@ -29,6 +35,9 @@ class UserService(ServiceProviderInterface):
             raise UserErrors.not_found()
         dto = UserDto.model_validate(user)
         dto.scopes = sorted(await ScopeResolver.for_roles(self.db, user.roles))
+        dto.mfa_enrolled = await MfaVerifier(
+            self.db, self.config_service.settings
+        ).is_enrolled(user)
         return dto
 
     async def register_user(self, request: CreateUserRequest) -> CreateUserResponse:
@@ -173,9 +182,33 @@ class UserService(ServiceProviderInterface):
         await self.db.commit()
         return True
 
+    async def reset_mfa(self, user_id: int) -> None:
+        """Remove every MFA method from an account. Requires users:admin.
+
+        Unlike `unlock_user`, this one also requires an interactive login.
+        A lock has to be clearable with an API key, because the whole point
+        of that design is that a locked-out admin can still act; MFA has no
+        such constraint, and an admin key that can strip second factors from
+        any account would make MFA optional service-wide for whoever steals
+        that key. `python -m reset_mfa` is the break-glass path when there
+        is no interactive login to be had.
+
+        Idempotent: an account with no MFA returns having done nothing.
+        """
+        self.principal.require_scope(Scopes.USERS_ADMIN)
+        self.principal.require_interactive()
+
+        user = await User.get_user_by_id(self.db, user_id)
+        if user is None:
+            raise UserErrors.not_found()
+
+        await MfaCredential.delete_all_for_user(self.db, user_id)
+        await self.db.commit()
+
     @staticmethod
     def get_with_deps(
         db: Annotated[AsyncSession, Depends(DatabaseService.get_async_db_session)],
         principal: Annotated[Principal, Depends(AuthService.get_principal)],
+        config_service: Annotated[ConfigService, Depends(ConfigService.get_with_deps)],
     ) -> UserService:
-        return UserService(db, principal)
+        return UserService(db, principal, config_service)

@@ -10,7 +10,7 @@ Configuration is read once per process — changing a value needs a restart.
 
 | Setting | Default | |
 | --- | --- | --- |
-| `ENVIRONMENT` | `development` | `development` or `production`. Development leaves `/docs`, `/redoc` and `/openapi.json` open. Production puts all three behind HTTP Basic, checked against the users table — see the README's "The docs are not public in production". Nothing else branches on this. |
+| `ENVIRONMENT` | `development` | `development` or `production`. Development leaves `/docs`, `/redoc` and `/openapi.json` open. Production puts all three behind an HTML login (and, for an MFA-enrolled account, a code) — see the README's "The docs are not public in production". Nothing else branches on this. |
 
 ## Database
 
@@ -24,17 +24,19 @@ Configuration is read once per process — changing a value needs a restart.
 
 | Setting | Default | |
 | --- | --- | --- |
-| `AUTH_SECRET_KEY` | — (required) | Signs access tokens. Generate a fresh one per deployment: `python -c "import secrets; print(secrets.token_urlsafe(64))"` |
+| `AUTH_SECRET_KEY` | — (required) | Signs access tokens, MFA challenges and the docs-session cookie — all three are JWTs distinguished by a `token_use` claim. Generate a fresh one per deployment: `python -c "import secrets; print(secrets.token_urlsafe(64))"` |
 | `AUTH_ALGORITHM` | `HS256` | |
 | `AUTH_ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | |
+| `DOCS_SESSION_MINUTES` | `60` | How long a documentation login lasts. The docs are read, not acted on, so this is a browsing session rather than a credential lifetime — see "Auth — multi-factor" below and the README's "The docs are not public in production". |
 
 ## Auth — login throttling
 
 Failed password logins are counted, per account and per calling address.
 Every value here has a working default; the whole block can be deleted.
-Applies to `/token` and the docs login, which share one code path — API keys
-are not throttled, since they are 32 random bytes with no dictionary to
-attack.
+Applies to `/token`, the docs login, and `POST /oauth/authorize`, which all
+share one code path, and to a wrong MFA code at any of their second steps —
+API keys are not throttled, since they are 32 random bytes with no
+dictionary to attack.
 
 | Setting | Default | |
 | --- | --- | --- |
@@ -47,6 +49,21 @@ attack.
 | `AUTH_IP_WINDOW_MINUTES` | `15` | |
 | `AUTH_IP_BAN_MINUTES` | `15` | Bans here are always temporary; an address is a lease, not an identity. |
 | `AUTH_TRUSTED_PROXY_HOPS` | `1` | How many proxies sit in front of this process, counted from the **right** of `X-Forwarded-For` — not the leftmost entry, since a client can send that header itself and a proxy appends rather than replaces it. `1` is right for a single reverse proxy in front with no load balancer behind it; add one per additional proxy. `0` turns address throttling off, which is the honest setting when nothing trustworthy sets the header — including a service exposed directly, where the header cannot be believed at all. Getting this wrong throttles every caller as the proxy. |
+
+## Auth — multi-factor
+
+MFA is per-account and opt-in — there is no setting that turns it on or off
+service-wide, only ones that shape the challenge once an account has
+enrolled a second factor. See the README's "Second factors" for the full
+picture; this table is the settings alone.
+
+| Setting | Default | |
+| --- | --- | --- |
+| `MFA_CHALLENGE_TTL_MINUTES` | `5` | How long the token `/token`, the docs login, or `POST /oauth/authorize` returns after a correct password stays redeemable with a code. Long enough to find a phone, short enough that one left in a shell history is worthless. |
+| `MFA_TOTP_DRIFT_STEPS` | `1` | Thirty-second steps either side of now that a TOTP code is accepted for. `1` tolerates roughly ninety seconds of clock skew between a phone and this server; `0` demands perfectly synchronised clocks and will generate support requests. |
+| `MFA_BACKUP_CODE_COUNT` | `10` | How many single-use recovery codes a set contains. Regenerating replaces the set outright — there is only ever one live. |
+| `MFA_ISSUER` | `resume-api` | The issuer name shown beside the account in an authenticator app. Purely cosmetic; worth setting when one person runs more than one deployment of this service. |
+| `MFA_ENCRYPTION_KEYS` | — (required in production) | Fernet keys that seal TOTP secrets at rest, newest first: every key listed can decrypt, the first one encrypts. Generate one with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Comma-separated for more than one. Unset locally — a development run stores TOTP secrets in the clear, which is fine for a database nobody is defending — but startup refuses to begin in production without at least one, because a plaintext seed is symmetric: whoever reads the row can mint valid codes for that account forever. Rotation is prepend-and-wait: add a new key ahead of the old one, and `TotpMethod.verify` re-seals each credential under the new key the next time its owner logs in, so the old key can be dropped once enough time has passed. **Losing every configured key locks every enrolled account out of password login** — startup's `verify_mfa_key` check catches a key that does not match what is already stored and refuses to start rather than let that surface as everyone's login breaking at once. Deliver this through `SECRETS_DIR` in production, not a bare environment variable — `docker inspect` reads env vars, and this key is the whole of what stands between a database dump and every account's second factor. **Back it up somewhere other than beside the database dump** — a backup holding both is a backup with no encryption. Recovery when the key is genuinely gone: `python -m reset_mfa` deletes MFA rows without ever decrypting them, so it works even when this setting is the thing that's wrong. |
 
 ## Bootstrap admin (first start only)
 
