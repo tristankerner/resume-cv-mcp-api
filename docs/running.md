@@ -24,7 +24,7 @@ The first start of an empty database has no users. Either set
 once an admin exists — or create one by hand:
 
 ```bash
-uv run python -m bootstrap_admin
+uv run python -m admin_cli bootstrap-admin
 ```
 
 ## Docker

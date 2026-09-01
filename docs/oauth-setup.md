@@ -83,11 +83,14 @@ next token expiry.
 
 ## 3. Leave `OAUTH_REGISTRATION_ENABLED` alone
 
-It defaults to `false` and should stay there. `POST /oauth/register` cannot ask
-who is calling — a client registers before any user is involved — so open, it
-is an unauthenticated database write anyone who finds it can repeat. The
-allowlist in §2 bounds *where a code goes*; it does nothing about how many
-client rows a stranger can create.
+It defaults to `false` and should stay there — more so now than before:
+`POST /oauth-clients` (§6) gives an admin an authenticated way to register a
+client over HTTP, so there is no longer even the convenience argument for
+leaving anonymous registration open. `POST /oauth/register` cannot ask who is
+calling — a client registers before any user is involved — so open, it is an
+unauthenticated database write anyone who finds it can repeat. The allowlist
+in §2 bounds *where a code goes*; it does nothing about how many client rows a
+stranger can create.
 
 Closed, `POST /oauth/register` returns 404 and `registration_endpoint` is
 absent from the authorization server metadata, which is how a conforming client
@@ -131,30 +134,39 @@ which is why it comes after this rather than before.
 
 ## 6. Register a client
 
-Registration is a deliberate act performed by you, against the database:
+Registration is a deliberate act performed by an admin, over the API:
 
 ```bash
-uv run python -m register_oauth_client --name "Claude" --redirect-uri https://claude.ai/api/mcp/auth_callback
+curl -sS -X POST https://mcp.example.com/oauth-clients \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"client_name": "Claude", "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"]}'
 ```
 
-It needs the deployment's `DATABASE_URL` in the environment. That is the point
-of a CLI rather than an admin endpoint: it requires database access, so a
-stolen API token cannot register a client.
+`$ADMIN_TOKEN` has to come from a password login (`POST /token`), not an API
+key: `POST /oauth-clients` requires `users:admin` **and** an interactive
+login, the same reasoning `DELETE /users/{id}/mfa` uses — an admin key that
+could mint an OAuth client could mint itself a fresh path into the service.
+If a browser client is in front of this deployment, it has an admin screen
+for the same operation; see the README's "Administration" for the full
+surface and why each route does or does not accept a key.
 
-It prints a `client_id` and a `client_secret`. **The secret is shown once** —
-only its hash is stored. Re-run to issue a new client if you lose it.
+The response carries the new client alongside a `client_secret` — **shown
+once**; only its hash is stored. Register again to issue a replacement if you
+lose it.
 
-Useful flags:
-
-| Flag | Effect |
+| Field | Effect |
 | --- | --- |
-| `--public` | no secret; PKCE alone binds the exchange. For a client that cannot keep one. |
-| `--list` | show what is registered, change nothing |
-| `--scope` | space-delimited default scopes |
+| `"public": true` | no secret; PKCE alone binds the exchange. For a client that cannot keep one. |
+| `"scope"` | space-delimited default scopes |
+
+`GET /oauth-clients` lists what is registered (also admin-only, also
+interactive), and `DELETE /oauth-clients/{client_id}` deregisters one,
+invalidating every authorization code and refresh token it holds in the same
+request.
 
 The redirect URI is checked against `OAUTH_ALLOWED_REDIRECT_HOSTS` exactly as
-an HTTP registration would be, so a typo fails here — with the configured hosts
-printed as a hint — rather than confusingly later at authorize time.
+an HTTP registration would be, so a typo is refused here — 400, naming the
+rejected URI — rather than confusingly later at authorize time.
 
 ### Claude Code needs a pinned port
 
@@ -162,7 +174,9 @@ Its redirect is a loopback address on an ephemeral port, and redirect URIs are
 matched exactly. Pick a port, register it, and pass the same one:
 
 ```bash
-uv run python -m register_oauth_client --name "Claude Code" --redirect-uri http://127.0.0.1:41703/callback --public
+curl -sS -X POST https://mcp.example.com/oauth-clients \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"client_name": "Claude Code", "redirect_uris": ["http://127.0.0.1:41703/callback"], "public": true}'
 ```
 
 Then add `--callback-port 41703` to the `claude mcp add` command in §7.
@@ -265,26 +279,27 @@ curl -sS -X DELETE https://mcp.example.com/api-keys/KEY_ID -H "Authorization: Be
 **Check what is registered** and confirm it is only what you created:
 
 ```bash
-uv run python -m register_oauth_client --list
+curl -sS https://mcp.example.com/oauth-clients -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
 With §3 off there is no path by which anything else could appear, so an
 unfamiliar entry means registration was open at some point — check that it is
 `false` and redeploy.
 
-**Revoking a client** is a database operation; there is no endpoint for it.
-`oauth_refresh_tokens.client_id` and `oauth_authorization_codes.client_id` are
-foreign keys onto `oauth_clients.client_id`, so the dependants go first or the
-delete is refused:
+**Revoking a client**:
 
-```sql
-DELETE FROM oauth_refresh_tokens      WHERE client_id = 'THE_CLIENT_ID';
-DELETE FROM oauth_authorization_codes WHERE client_id = 'THE_CLIENT_ID';
-DELETE FROM oauth_clients             WHERE client_id = 'THE_CLIENT_ID';
+```bash
+curl -sS -X DELETE https://mcp.example.com/oauth-clients/THE_CLIENT_ID \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
-Both `/oauth/authorize` and `/oauth/token` then refuse it immediately — each
-loads the client row first and answers `invalid_client` when it is gone.
+This removes every authorization code and refresh token the client holds in
+the same request — `oauth_refresh_tokens.client_id` and
+`oauth_authorization_codes.client_id` are foreign keys onto
+`oauth_clients.client_id`, and the service deletes the dependants first rather
+than leaving that to the database. Both `/oauth/authorize` and `/oauth/token`
+then refuse the client immediately — each loads the client row first and
+answers `invalid_client` when it is gone.
 
 Its **access tokens survive until they expire**, because they are stateless
 JWTs that no lookup validates against the client. That window is

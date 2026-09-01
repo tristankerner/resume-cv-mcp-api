@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 #
 # Upload the three example documents in this directory to a running instance
-# of this service. Useful for trying the API end to end with something other
-# than an empty database.
+# of this service. Redundant for a brand-new account — POST /users and the
+# admin bootstrap now seed these same three documents automatically, under
+# `resume`/`metadata`/`skill` rather than the *.example.json names this script
+# uses — but still useful for re-seeding an existing account, or for loading
+# real content in place of the fictional starting point.
 #
 # Usage:
 #

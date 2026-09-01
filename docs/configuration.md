@@ -51,7 +51,7 @@ dictionary to attack.
 | `AUTH_LOCKOUT_MAX_ATTEMPTS` | `5` | Failed attempts within the window that lock an account. |
 | `AUTH_LOCKOUT_WINDOW_MINUTES` | `15` | How far back that window reaches. Fixed, not sliding — a patient attacker retains a sustained four-guesses-per-window at these values. |
 | `AUTH_LOCKOUT_BASE_MINUTES` | `15` | How long the first lock lasts. Each further lock without a successful login in between doubles it: 15, then 30, then 60. |
-| `AUTH_LOCKOUT_PERMANENT_AFTER_LOCKS` | `4` | Which lock stops being temporary. After this many, an admin has to run `POST /users/{id}/unlock` or `python -m unlock_user`. A successful login resets the ladder, so an account in daily use cannot be walked up to this by an outsider. A lock never blocks an API key, which is what keeps a locked-out admin able to unlock themselves. |
+| `AUTH_LOCKOUT_PERMANENT_AFTER_LOCKS` | `4` | Which lock stops being temporary. After this many, an admin has to run `DELETE /users/{id}/lock` or `python -m admin_cli unlock`. A successful login resets the ladder, so an account in daily use cannot be walked up to this by an outsider. A lock never blocks an API key, which is what keeps a locked-out admin able to unlock themselves. |
 | `AUTH_IP_MAX_FAILURES` | `20` | Same idea, keyed on the caller's address — catches one guess each across a list of usernames, where no single account sees enough failures to lock. |
 | `AUTH_IP_WINDOW_MINUTES` | `15` | |
 | `AUTH_IP_BAN_MINUTES` | `15` | Bans here are always temporary; an address is a lease, not an identity. |
@@ -92,9 +92,9 @@ logs in, so the old key can be dropped once enough time has passed.
 **Losing every configured key locks every enrolled account out of password
 login.** Startup's `verify_mfa_key` catches a key that does not match what is
 stored and refuses to start, rather than letting that surface as everyone's
-login breaking at once. When a key is genuinely gone, `python -m reset_mfa`
-deletes MFA rows without decrypting them, so it works even when this setting is
-the thing that is wrong.
+login breaking at once. When a key is genuinely gone, `python -m admin_cli
+reset-mfa` deletes MFA rows without decrypting them, so it works even when
+this setting is the thing that is wrong.
 
 Deliver it through `SECRETS_DIR`, not a bare environment variable — `docker
 inspect` reads env vars, and this key is the whole of what stands between a
@@ -106,7 +106,9 @@ than beside that dump**; a backup holding both is a backup with no encryption.
 Migrations seed no users. On a database with no admin, and only then, these
 create one; afterwards they are ignored, so they can stay set in a compose
 file without recreating anything on restart. Leave unset to create the admin
-by hand instead: `python -m bootstrap_admin`.
+by hand instead: `python -m admin_cli bootstrap-admin`. Either way, the new
+admin is seeded with the same three example documents as any other new
+account — see the README's "Documents".
 
 | Setting | Default | |
 | --- | --- | --- |
@@ -122,7 +124,7 @@ See [oauth-setup.md](oauth-setup.md) for the full walkthrough.
 | --- | --- | --- |
 | `PUBLIC_BASE_URL` | `http://localhost:8000` outside production | The service's own issuer/resource URL. Every OAuth token is checked against it, so a wrong value in production rejects them all with no useful error — set it explicitly there. |
 | `OAUTH_ALLOWED_REDIRECT_HOSTS` | — (required; `.env.example` sets `claude.ai`) | Hosts a Dynamic-Client-Registration request's `redirect_uri` may target. An empty value is rejected at startup rather than treated as an empty allowlist, since that would silently block every registration. Comma-separated, any number of entries, one leading `*.` wildcard per entry. `claude.ai` covers Claude web, Desktop, mobile and Cowork; Claude Code's loopback redirect is allowed by a built-in rule and must not be listed here. |
-| `OAUTH_REGISTRATION_ENABLED` | `false` | Whether `POST /oauth/register` accepts anonymous Dynamic Client Registration. Off by default: the endpoint cannot require a credential, so leaving it on is an unauthenticated database write anyone who finds it can repeat. Closed, it 404s and the metadata document omits `registration_endpoint` entirely. Register clients with `python -m register_oauth_client` instead — both Claude Code (`--client-id`) and claude.ai (Advanced settings) accept one. |
+| `OAUTH_REGISTRATION_ENABLED` | `false` | Whether `POST /oauth/register` accepts anonymous Dynamic Client Registration. Off by default: the endpoint cannot require a credential, so leaving it on is an unauthenticated database write anyone who finds it can repeat. Closed, it 404s and the metadata document omits `registration_endpoint` entirely. Register clients with `POST /oauth-clients` instead (requires `users:admin` and an interactive login) — both Claude Code (`--client-id`) and claude.ai (Advanced settings) accept the resulting credentials. |
 
 ## Browser client
 

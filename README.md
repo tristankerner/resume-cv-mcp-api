@@ -41,6 +41,13 @@ Filled-in documents are personal, so none are checked in here. `examples/`
 holds small, fictional fixtures that validate against the three models above —
 enough structure to see every field, none of it real.
 
+**A new account starts with these three already in place.** `POST /users` and
+application startup's admin bootstrap both seed a private (`public: false`)
+`resume`, `metadata` and `skill` document from `examples/` on creation, so a
+fresh account is never empty — see `services/user/document_seeder.py`.
+`examples/seed-documents.sh` is still useful afterwards, for re-seeding or for
+loading real content over the fictional starting point.
+
 ### Revisions
 
 `GET /documents/{resume,metadata,skill}/{document_name}` always returns the
@@ -87,7 +94,7 @@ One scope per document type per verb, plus one for user administration:
 
 | Scope | Grants |
 | --- | --- |
-| `users:admin` | creating users, managing anyone's keys |
+| `users:admin` | listing and creating users, resetting a password, clearing a lock, stripping MFA, and registering an OAuth client — see "Administration" below |
 
 Split by type rather than one `resume:*` family covering all three, because
 the three documents are not equally sensitive: the skill document is
@@ -138,6 +145,11 @@ than the password hasher on purpose: verification runs on every request, and
 these are 32 random bytes with no dictionary to attack — a deliberately slow
 KDF would only be a self-inflicted denial of service.
 
+Keys are **strictly self-service**: `POST /api-keys`, `GET /api-keys` and
+`DELETE /api-keys/{id}` all act on the caller's own keys only, with no
+admin-on-behalf path. An admin managing someone else's account uses the
+routes under "Administration" below instead.
+
 **A key cannot manage keys.** Minting and revoking require an interactive
 login, so a leaked key cannot issue its own replacement ahead of revocation.
 
@@ -152,6 +164,36 @@ interactive login, since that scope is only ever granted by someone who
 already holds the role. Changing your own password has its own route,
 `POST /users/me/password`, which additionally requires the *current* password
 — `PATCH` never checks it.
+
+### Administration
+
+Every route below requires `users:admin`. Each also states whether an API key
+holding that scope is enough, or whether it demands an interactive login (a
+password JWT) — the same asymmetry `unlock_user` draws against `reset_mfa`
+above, applied consistently: an operation a locked-out admin needs to reach
+for *themselves* stays open to a key; one that could become a fresh way into
+the service, or into someone else's account, does not.
+
+| Route | API key | Why |
+| --- | --- | --- |
+| `GET /users` | yes | Read-only. |
+| `POST /users` | yes | Creates an account bounded by roles the caller already holds — no different from registration always being reachable with the right scope. |
+| `POST /users/{id}/password` | no | An admin key that could set any password would own every account outright. |
+| `DELETE /users/{id}/mfa` | no | An admin key that could strip second factors would make MFA optional service-wide for whoever steals it. |
+| `DELETE /users/{id}/lock` | **yes** | The documented escape hatch — a lock only blocks the password path, so a locked-out admin's own key must still be able to clear it. |
+| `GET /oauth-clients` | no | Grouped with the other two below rather than treated as merely read-only: this is the same admin surface, and a key that can enumerate registered clients is most of the way to registering one. |
+| `POST /oauth-clients` | no | An API key that can mint an OAuth client can mint itself a fresh path into the service. |
+| `DELETE /oauth-clients/{id}` | no | Same reasoning as registering one. |
+
+`GET /oauth-clients`, `POST /oauth-clients` and `DELETE /oauth-clients/{id}`
+manage clients pre-registered for OAuth 2.1 connectors — see
+[`docs/oauth-setup.md`](docs/oauth-setup.md). Registering one this way is the
+same operation Dynamic Client Registration performs, gated behind
+`users:admin` instead of being anonymous: it delegates to the same
+redirect-allowlist check either way, so a URI outside
+`OAUTH_ALLOWED_REDIRECT_HOSTS` is refused regardless of which path registered
+it. Deregistering a client invalidates every authorization code and refresh
+token it holds, in the same transaction as the client row going away.
 
 ### Second factors
 
@@ -203,11 +245,11 @@ is ever lost — there is nothing there to decrypt.
 `DELETE /users/{id}/mfa`, which — unlike the lock-clearing route — requires
 an interactive login, not just `users:admin`: a key that could disable MFA
 would make MFA optional service-wide for whoever steals it. When there is no
-admin to ask, `python -m reset_mfa <username>` does the same thing directly
-against the database, and needs no encryption key to do it — it deletes rows
-rather than reading them, which is what makes it the break-glass path when
-`MFA_ENCRYPTION_KEYS` itself is the thing that is wrong or lost. Backup codes
-exist precisely so neither of these is usually needed.
+admin to ask, `python -m admin_cli reset-mfa <username>` does the same thing
+directly against the database, and needs no encryption key to do it — it
+deletes rows rather than reading them, which is what makes it the break-glass
+path when `MFA_ENCRYPTION_KEYS` itself is the thing that is wrong or lost.
+Backup codes exist precisely so neither of these is usually needed.
 
 **Back the encryption key up somewhere other than beside the database dump.**
 A backup containing both the encrypted secrets and the key that opens them is
@@ -297,9 +339,9 @@ escalation back on the bottom rung.
 flag — that one is checked on every credential, so clearing it would kill live
 sessions and API keys too. An admin locked out of `/token` can still act with
 a key they already hold, including calling `DELETE /users/{id}/lock` on
-themselves. When there is no such key, `python -m unlock_user <username>` does
-the same thing against the database directly; `--list` shows what is locked and
-`--address` clears a banned address.
+themselves. When there is no such key, `python -m admin_cli unlock <username>`
+does the same thing against the database directly; `--list` shows what is
+locked and `--address` clears a banned address.
 
 The per-address tally catches what the per-account one cannot see: one guess
 each across a list of usernames, where no single account accumulates enough
@@ -508,12 +550,15 @@ The test suite runs on SQLite regardless of what `DATABASE_URL` says.
 ```
 routers/          HTTP routes, and the MCP tool
 services/auth/    authentication, scopes, Principal, API keys, login throttling, MFA (services/auth/mfa/)
-services/user/    user CRUD and first-admin bootstrap
+services/user/    user CRUD, first-admin bootstrap, and seeding a new account's example documents (document_seeder.py)
+services/oauth/   OAuth 2.1 authorization server, and admin client registration (client_admin_service.py)
 services/document/ document reads, writes, and the public projection
 persistence/      SQLAlchemy models
 alembic/          migrations, run automatically at startup
+admin_cli.py      last-resort account recovery direct against the database — see "Administration" above
 ```
 
-`reset_mfa.py` is a root script like `unlock_user.py` and `reset_password.py`
-— the break-glass path for an account whose second factor and every backup
-code are gone. See "Second factors" above.
+`admin_cli.py` is the one root script now — `unlock`, `reset-password`,
+`reset-mfa` and `bootstrap-admin` used to be four separate ones. Its
+`reset-mfa` subcommand is the break-glass path for an account whose second
+factor and every backup code are gone; see "Second factors" above.
