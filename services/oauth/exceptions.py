@@ -11,9 +11,15 @@ never import Starlette.
 request with a redirect carrying `error=`, and an unvalidated one with an
 HTML page — never a redirect to a URI that was never checked. Two exception
 types for the two outcomes.
+
+`OAuthClientAdminErrors` at the bottom is none of the above: `/oauth-clients`
+is an ordinary admin JSON API, not part of the RFC surface, and answers in the
+app's usual `{"detail": ...}` shape via a plain HTTPException.
 """
 
 from __future__ import annotations
+
+from fastapi import HTTPException, status
 
 
 class OAuthError(Exception):
@@ -101,3 +107,18 @@ class AuthorizeMfaRequired(Exception):
         self.mfa_token = mfa_token
         self.detail = detail
         super().__init__(detail or "MFA required")
+
+
+class OAuthClientAdminErrors:
+    """Refusals for the admin client-management routes. Ordinary
+    HTTPExceptions, unlike everything above — see the module docstring."""
+
+    @staticmethod
+    def not_found() -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="OAuth client not found"
+        )
+
+    @staticmethod
+    def invalid_request(detail: str) -> HTTPException:
+        return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)

@@ -2,7 +2,9 @@
 one, since that is the vocabulary a client implementation was written
 against."""
 
-from pydantic import BaseModel, Field, field_validator
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class AuthorizationServerMetadata(BaseModel):
@@ -77,3 +79,55 @@ class TokenResponse(BaseModel):
     expires_in: int
     refresh_token: str | None = None
     scope: str
+
+
+# --- Admin client management -------------------------------------------
+#
+# The shapes for /oauth-clients, which is not part of the RFC 6749/7591
+# surface above: an ordinary admin JSON API with {"detail": ...} errors and
+# bearer auth. ClientRegistrationRequest/Response stay untouched — these are
+# the admin equivalents, and creation still delegates to
+# OAuthClientRegistry.create so the one allowlist check applies identically.
+
+
+class AdminCreateClientRequest(BaseModel):
+    client_name: str = Field(min_length=1)
+    redirect_uris: list[str] = Field(min_length=1)
+    public: bool = False
+    scope: str | None = None
+
+    @field_validator("client_name")
+    @classmethod
+    def strip_name(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("client_name must not be blank.")
+        return stripped
+
+
+class AdminClientDto(BaseModel):
+    """A registered client's admin-facing metadata. Never carries
+    `client_secret_hash` — `confidential` says whether one exists, without
+    exposing it. Not a column, so `OAuthClientAdminService` sets it after
+    `model_validate`, the same pattern `UserDto.scopes` uses."""
+
+    client_id: str
+    client_name: str
+    redirect_uris: list[str]
+    grant_types: list[str]
+    response_types: list[str]
+    token_endpoint_auth_method: str
+    scope: str | None = None
+    created_at: datetime
+    confidential: bool = False
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class AdminCreateClientResponse(BaseModel):
+    client: AdminClientDto
+    client_secret: str | None  # shown once, exactly like an API key
+
+
+class ListClientsResponse(BaseModel):
+    data: list[AdminClientDto]

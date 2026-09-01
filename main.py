@@ -24,7 +24,7 @@ from persistence.auth_failure import AuthFailure
 from persistence.mfa_credential import MfaCredential
 from persistence.oauth_authorization_code import OAuthAuthorizationCode
 from persistence.oauth_refresh_token import OAuthRefreshToken
-from routers import api_keys, auth, docs, documents, mfa, oauth, users
+from routers import api_keys, auth, docs, documents, mfa, oauth, oauth_clients, users
 from services.auth.mcp_verifier import McpTokenVerifier
 from services.auth.mfa.secret_box import MfaSecretBox
 from services.config.config_service import ConfigService
@@ -207,6 +207,7 @@ class Application:
         self._app.include_router(documents.router)
         self._app.include_router(api_keys.router)
         self._app.include_router(oauth.router)
+        self._app.include_router(oauth_clients.router)
         self._app.include_router(mfa.router)
 
         self._register_client_route(self._app, self.settings.client_html_path)

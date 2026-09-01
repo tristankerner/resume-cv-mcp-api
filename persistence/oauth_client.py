@@ -54,3 +54,22 @@ class OAuthClient(SQAlchemyBase):
             .scalars()
             .first()
         )
+
+    @staticmethod
+    async def list_all(db: AsyncSession) -> list[OAuthClient]:
+        return list(
+            (await db.execute(select(OAuthClient).order_by(OAuthClient.created_at)))
+            .scalars()
+            .all()
+        )
+
+    @staticmethod
+    async def delete_by_client_id(db: AsyncSession, client_id: str) -> bool:
+        """Does not commit — the caller owns the transaction, since a
+        deregistration also removes the client's authorization codes and
+        refresh tokens in the same one. Returns whether a row was found."""
+        client = await OAuthClient.get_by_client_id(db, client_id)
+        if client is None:
+            return False
+        await db.delete(client)
+        return True

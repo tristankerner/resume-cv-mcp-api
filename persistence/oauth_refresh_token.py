@@ -122,3 +122,13 @@ class OAuthRefreshToken(SQAlchemyBase):
         )
         await db.commit()
         return cast(CursorResult, result).rowcount or 0
+
+    @staticmethod
+    async def delete_for_client(db: AsyncSession, client_id: str) -> int:
+        """Every token descended from this client, live, revoked or expired.
+        Does not commit — called ahead of deleting the client row itself, in
+        one transaction; see OAuthClientAdminService.delete_client."""
+        result = await db.execute(
+            delete(OAuthRefreshToken).where(OAuthRefreshToken.client_id == client_id)
+        )
+        return cast(CursorResult, result).rowcount or 0

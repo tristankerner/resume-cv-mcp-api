@@ -100,3 +100,15 @@ class OAuthAuthorizationCode(SQAlchemyBase):
         )
         await db.commit()
         return cast(CursorResult, result).rowcount or 0
+
+    @staticmethod
+    async def delete_for_client(db: AsyncSession, client_id: str) -> int:
+        """Every code this client holds, live or already consumed. Does not
+        commit — called ahead of deleting the client row itself, in one
+        transaction; see OAuthClientAdminService.delete_client."""
+        result = await db.execute(
+            delete(OAuthAuthorizationCode).where(
+                OAuthAuthorizationCode.client_id == client_id
+            )
+        )
+        return cast(CursorResult, result).rowcount or 0
