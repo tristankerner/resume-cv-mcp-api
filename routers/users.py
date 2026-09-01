@@ -6,6 +6,7 @@ from services.auth.auth_service import AuthService
 from services.auth.dtos.user import UserDto
 from services.user.dtos import CreateUserRequest, CreateUserResponse
 from services.user.dtos.change_password import ChangePasswordRequest
+from services.user.dtos.reset_password import AdminResetPasswordRequest
 from services.user.dtos.update_user import UpdateUserRequest
 from services.user.user_service import UserService
 
@@ -24,6 +25,11 @@ class UsersRouter:
         self.router.patch("/users/{user_id}", status_code=204)(self.update_user)
         self.router.post("/users/me/password", status_code=204)(
             self.change_own_password
+        )
+        # Must stay registered after /users/me/password, or "me" is parsed as
+        # this route's int user_id and 422s.
+        self.router.post("/users/{user_id}/password", status_code=204)(
+            self.reset_password
         )
         self.router.delete("/users/{user_id}/lock", status_code=204)(self.unlock_user)
         self.router.delete("/users/{user_id}/mfa", status_code=204)(self.reset_mfa)
@@ -53,6 +59,18 @@ class UsersRouter:
         """The logged-in user's own password change. Requires an interactive
         login (a password JWT) and the current password — see UserService."""
         await user_service.change_own_password(auth_service, request)
+        return Response(status_code=204)
+
+    async def reset_password(
+        self,
+        user_id: int,
+        request: AdminResetPasswordRequest,
+        user_service: UserServiceDep,
+    ) -> Response:
+        """Admin password reset, bypassing the current one. Requires
+        users:admin and an interactive login — see UserService.reset_password.
+        """
+        await user_service.reset_password(user_id, request)
         return Response(status_code=204)
 
     async def unlock_user(self, user_id: int, user_service: UserServiceDep) -> Response:

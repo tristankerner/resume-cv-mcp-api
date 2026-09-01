@@ -14,6 +14,7 @@ from services.auth.scopes import ScopeResolver, Scopes
 from services.config.config_service import ConfigService
 from services.database.database_service import DatabaseService
 from services.user.dtos.change_password import ChangePasswordRequest
+from services.user.dtos.reset_password import AdminResetPasswordRequest
 from services.user.dtos.update_user import UpdateUserRequest
 from services.user.exceptions import UserErrors
 
@@ -155,6 +156,27 @@ class UserService(ServiceProviderInterface):
             request.current_password.get_secret_value(),
             request.new_password.get_secret_value(),
         )
+
+    async def reset_password(
+        self, user_id: int, request: AdminResetPasswordRequest
+    ) -> None:
+        """Set a user's password without knowing the current one. Requires
+        users:admin and an interactive login — an admin key that can set any
+        password owns every account outright, the same reasoning as
+        `reset_mfa`. `python -m admin_cli reset-password` is the break-glass
+        path when there is no interactive login to be had.
+        """
+        self.principal.require_scope(Scopes.USERS_ADMIN)
+        self.principal.require_interactive()
+
+        user = await User.get_user_by_id(self.db, user_id)
+        if user is None:
+            raise UserErrors.not_found()
+
+        user.password = AuthService.get_password_hash(
+            request.new_password.get_secret_value()
+        )
+        await self.db.commit()
 
     async def unlock_user(self, user_id: int) -> bool:
         """Clear a login lockout, temporary or permanent.

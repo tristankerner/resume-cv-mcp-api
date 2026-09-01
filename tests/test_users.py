@@ -778,6 +778,113 @@ class TestEffectiveScopes:
         assert Scopes.RESUME_READ.value in after.json()["scopes"]
 
 
+class TestAdminResetPassword:
+    """`POST /users/{id}/password` — requires users:admin and an interactive
+    login, the same reasoning as reset_mfa: an admin key that can set any
+    password owns every account outright."""
+
+    async def test_admin_resets_a_members_password(
+        self, client, admin, roleless, password
+    ):
+        new_password = password + "X9?"
+        response = await client.post(
+            f"/users/{roleless.user_id}/password",
+            headers=admin.headers,
+            json={"new_password": new_password, "new_password_retype": new_password},
+        )
+        assert response.status_code == 204
+
+        assert (
+            await client.post(
+                "/token",
+                data={"username": roleless.username, "password": new_password},
+            )
+        ).status_code == 200
+
+    async def test_the_old_password_stops_working(
+        self, client, admin, roleless, password
+    ):
+        new_password = password + "X9?"
+        await client.post(
+            f"/users/{roleless.user_id}/password",
+            headers=admin.headers,
+            json={"new_password": new_password, "new_password_retype": new_password},
+        )
+        assert (
+            await client.post(
+                "/token", data={"username": roleless.username, "password": password}
+            )
+        ).status_code == 401
+
+    async def test_a_non_admin_is_refused(self, client, member, roleless, password):
+        new_password = password + "X9?"
+        response = await client.post(
+            f"/users/{roleless.user_id}/password",
+            headers=member.headers,
+            json={"new_password": new_password, "new_password_retype": new_password},
+        )
+        assert response.status_code == 403
+
+    async def test_an_admin_api_key_is_refused_not_interactive(
+        self, client, admin, roleless, password
+    ):
+        headers = await narrowed_api_key(client, admin, Scopes.USERS_ADMIN)
+        new_password = password + "X9?"
+        response = await client.post(
+            f"/users/{roleless.user_id}/password",
+            headers=headers,
+            json={"new_password": new_password, "new_password_retype": new_password},
+        )
+        assert response.status_code == 403
+
+    async def test_an_unknown_user_is_404(self, client, admin, password):
+        response = await client.post(
+            f"/users/{admin.user_id + 999}/password",
+            headers=admin.headers,
+            json={"new_password": password, "new_password_retype": password},
+        )
+        assert response.status_code == 404
+
+    async def test_policy_violation_is_422(self, client, admin, roleless):
+        response = await client.post(
+            f"/users/{roleless.user_id}/password",
+            headers=admin.headers,
+            json={"new_password": "weak", "new_password_retype": "weak"},
+        )
+        assert response.status_code == 422
+
+    async def test_mismatched_retype_is_422(self, client, admin, roleless, password):
+        response = await client.post(
+            f"/users/{roleless.user_id}/password",
+            headers=admin.headers,
+            json={
+                "new_password": password + "X9?",
+                "new_password_retype": password + "different",
+            },
+        )
+        assert response.status_code == 422
+
+    async def test_requires_a_credential(self, client, roleless, password):
+        response = await client.post(
+            f"/users/{roleless.user_id}/password",
+            json={"new_password": password, "new_password_retype": password},
+        )
+        assert response.status_code == 401
+
+    async def test_does_not_require_the_current_password(
+        self, client, admin, roleless, password
+    ):
+        """The point of this route: recovering an account whose current
+        password is exactly what is unknown or unusable."""
+        new_password = password + "X9?"
+        response = await client.post(
+            f"/users/{roleless.user_id}/password",
+            headers=admin.headers,
+            json={"new_password": new_password, "new_password_retype": new_password},
+        )
+        assert response.status_code == 204
+
+
 class TestResetMfa:
     """`DELETE /users/{id}/mfa` — requires users:admin and an interactive
     login, unlike `unlock_user`, which a locked-out admin's own API key must
