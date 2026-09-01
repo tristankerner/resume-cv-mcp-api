@@ -315,11 +315,12 @@ class Application:
         so the API depends on no build artifact and nothing changes for a
         deployment that does not want this.
 
-        `CLIENT_HTML_PATH` is /app/clients/web/index.html in the deploy image,
-        the copy `COPY . /app` puts there. A locally built
-        clients/web/dist/index.html works too, but .dockerignore keeps that
-        one out of the image on purpose: it is gitignored, so nothing reviews
-        what would be served.
+        Which file is the deployment's business. Clients live in their own
+        repositories; one is copied into the build context before `COPY . /app`
+        and named here. The reference deployment uses
+        /app/clients/web/index.html. A locally built clients/web/dist/index.html
+        works too, but .dockerignore keeps that one out of any image on purpose:
+        it is gitignored, so nothing reviews what would be served.
 
         The path is resolved once, here, rather than per request — a file
         that is missing at startup will still be missing on the next

@@ -1,3 +1,0 @@
-[submodule "clients"]
-	path = clients
-	url = git@github.com:tristankerner/resume-mcp-api-clients.git

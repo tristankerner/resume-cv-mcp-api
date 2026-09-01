@@ -446,15 +446,18 @@ allowlist, and why it is stamped whether or not the caller sent an `Origin`.
 
 ## Browser client
 
-[`clients/web/`](clients/web/) is a hand-authored single-page UI for managing
-documents and API keys, pulled in as a submodule from
 [`resume-mcp-api-clients`](https://github.com/tristankerner/resume-mcp-api-clients)
-— see its README for what's there and how to run it. Clone with
-`git clone --recurse-submodules`, or `git submodule update --init` afterwards;
-the API runs fine either way. If the submodule is not checked out and
-`CLIENT_HTML_PATH` points at it, `GET /client` simply declines to register and
-logs a warning naming the path it looked for — nothing else about the service
-is affected.
+is a hand-authored single-page UI for managing documents and API keys — see its
+README for what's there and how to run it. It is a separate repository and not
+a submodule of this one: this API has no build-time dependency on any client,
+and nothing here needs it to be present.
+
+To develop against it, clone it wherever you like and point `CLIENT_HTML_PATH`
+at its `web/index.html`. Cloning it to `./clients` is the convention the
+deployment follows, and `.gitignore` and `.dockerignore` both expect that name,
+but nothing enforces it. If the path does not exist, `GET /client` declines to
+register and logs a warning naming the file it looked for — nothing else about
+the service is affected.
 
 Unlike the public projection above, the routes the client calls (`/token`,
 `/documents`, `/api-keys`, `/users/*`) are authenticated, so they cannot use a
@@ -468,13 +471,14 @@ request will reach the server and have its response discarded unread. See
 [`docs/configuration.md`](docs/configuration.md) for the `null`-origin caveat.
 
 `CLIENT_HTML_PATH` sidesteps all of that by serving the client same-origin:
-set it and `GET /client` returns that file. In the deploy image the path is
-`/app/clients/web/index.html`, where `COPY . /app` already puts it; a built
-`clients/web/dist/index.html` works locally, but `.dockerignore` keeps `dist/`
-and `node_modules/` out of the image, since both are gitignored and a stale
-build would be served with nothing having reviewed it. Unset by default, so
-this depends on no build artifact and changes nothing for a deployment that
-does not want it.
+set it and `GET /client` returns that file. Which file is the deployment's
+business — it copies a client into the build context before `COPY . /app`, and
+this repository never learns which one. The reference deployment puts it at
+`/app/clients/web/index.html`. A built `clients/web/dist/index.html` works
+locally, but `.dockerignore` keeps `dist/` and `node_modules/` out of any image,
+since both are gitignored and a stale build would be served with nothing having
+reviewed it. Unset by default, so this depends on no build artifact and changes
+nothing for a deployment that does not want it.
 
 This is the path of least resistance for putting the client in front of a
 deployed API. `CLIENT_ALLOWED_ORIGINS` does not need to name it, no static
@@ -512,7 +516,6 @@ services/user/    user CRUD and first-admin bootstrap
 services/document/ document reads, writes, and the public projection
 persistence/      SQLAlchemy models
 alembic/          migrations, run automatically at startup
-clients/          submodule: front-end clients (resume-mcp-api-clients)
 ```
 
 `reset_mfa.py` is a root script like `unlock_user.py` and `reset_password.py`
