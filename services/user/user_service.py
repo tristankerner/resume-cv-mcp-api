@@ -15,6 +15,7 @@ from services.auth.principal import Principal
 from services.auth.scopes import ScopeResolver, Scopes
 from services.config.config_service import ConfigService
 from services.database.database_service import DatabaseService
+from services.user.document_seeder import DocumentSeeder
 from services.user.dtos.change_password import ChangePasswordRequest
 from services.user.dtos.list_users import AdminUserDto, ListUsersResponse
 from services.user.dtos.reset_password import AdminResetPasswordRequest
@@ -101,6 +102,12 @@ class UserService(ServiceProviderInterface):
         if request.disabled is not None:
             new_user.active = not request.disabled
         self.db.add(new_user)
+        # Flushed rather than committed, so the seeded documents land in the
+        # same transaction as the user row — a user is never created without
+        # them. Document.created_by is a foreign key to users.id, so the id
+        # has to exist in the database before DocumentSeeder can use it.
+        await self.db.flush()
+        await DocumentSeeder().seed(self.db, new_user.id)
         await self.db.commit()
         return CreateUserResponse(id=new_user.id)
 

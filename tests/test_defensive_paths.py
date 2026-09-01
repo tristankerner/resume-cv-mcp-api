@@ -87,13 +87,18 @@ class TestStorageFailure:
 
 class TestBootstrapRace:
     async def test_losing_the_race_reports_already_claimed(self, monkeypatch, password):
-        """Two instances starting against the same fresh database."""
+        """Two instances starting against the same fresh database.
+
+        `flush`, not `commit`: that is where `ensure_admin` now sends the
+        INSERT and catches the conflict, ahead of seeding documents for a
+        user that turned out not to be new.
+        """
 
         async def raise_conflict(self):
             raise IntegrityError("INSERT", {}, Exception("duplicate"))
 
         async with DatabaseService.session() as db:
-            monkeypatch.setattr(type(db), "commit", raise_conflict)
+            monkeypatch.setattr(type(db), "flush", raise_conflict)
             outcome, created = await AdminBootstrapper(db).ensure_admin(
                 "racer", password
             )

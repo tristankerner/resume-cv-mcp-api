@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from persistence.user import User
 from services.auth.auth_service import AuthService
 from services.auth.roles import Roles
+from services.user.document_seeder import DocumentSeeder
 from services.user.dtos import CreateUserRequest
 
 
@@ -75,22 +76,26 @@ class AdminBootstrapper:
                 "Choose a different bootstrap username, or grant the role directly."
             )
 
-        self.db.add(
-            User(
-                username=request.username,
-                email=request.email,
-                password=AuthService.get_password_hash(
-                    request.password.get_secret_value()
-                ),
-                roles=[Roles.ADMIN.value],
-            )
+        new_admin = User(
+            username=request.username,
+            email=request.email,
+            password=AuthService.get_password_hash(request.password.get_secret_value()),
+            roles=[Roles.ADMIN.value],
         )
+        self.db.add(new_admin)
         try:
-            await self.db.commit()
+            # Flushed rather than committed: this is where the race with
+            # another instance claiming the same fresh database would surface
+            # as an IntegrityError, and it has to happen before the seeded
+            # documents can reference the new admin's id.
+            await self.db.flush()
         except IntegrityError:
             # Two instances racing to claim the same fresh database. The other
             # one won; there is an admin now either way.
             await self.db.rollback()
             return BootstrapOutcome.ALREADY_CLAIMED, None
+
+        await DocumentSeeder().seed(self.db, new_admin.id)
+        await self.db.commit()
 
         return BootstrapOutcome.CREATED, request.username

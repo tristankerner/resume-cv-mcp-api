@@ -9,6 +9,7 @@ import bootstrap_admin
 import main
 from bootstrap_admin import BootstrapAdminCommand
 from main import StartupTasks
+from persistence.document import Document
 from persistence.user import User
 from services.auth.roles import Roles
 from services.config.config_service import ConfigService
@@ -68,6 +69,18 @@ class TestEnsureAdmin:
         assert outcome is BootstrapOutcome.CREATED
         assert created == username
         assert await role_of(username) == [Roles.ADMIN.value]
+
+    async def test_the_bootstrap_admin_is_seeded_with_documents(self, credentials):
+        """The bootstrap admin is a new user like any other — see
+        services/user/document_seeder.py."""
+        username, password = credentials
+        await run(username, password)
+        async with DatabaseService.session() as db:
+            user = await User.get_user_by_username(db, username)
+            assert user is not None
+            docs = await Document.list_latest(db, user.id)
+        assert {doc.name for doc in docs} == {"resume", "metadata", "skill"}
+        assert all(doc.public is False for doc in docs)
 
     async def test_created_admin_can_log_in(self, client, credentials):
         username, password = credentials
@@ -149,6 +162,18 @@ class TestStartupHook:
 
         await bootstrap_admin_user()
         assert await role_of(username) == [Roles.ADMIN.value]
+
+    async def test_the_startup_hook_seeds_documents_too(self, monkeypatch, credentials):
+        username, password = credentials
+        monkeypatch.setenv("BOOTSTRAP_ADMIN_USERNAME", username)
+        monkeypatch.setenv("BOOTSTRAP_ADMIN_PASSWORD", password)
+
+        await bootstrap_admin_user()
+        async with DatabaseService.session() as db:
+            user = await User.get_user_by_username(db, username)
+            assert user is not None
+            docs = await Document.list_latest(db, user.id)
+        assert {doc.name for doc in docs} == {"resume", "metadata", "skill"}
 
     async def test_warns_but_starts_when_unconfigured(self, startup_logs):
         await bootstrap_admin_user()

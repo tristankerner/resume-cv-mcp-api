@@ -16,6 +16,10 @@
 # per-file list silently stopped covering resume.json and resume.metadata.json
 # the moment those were added.
 /docs/
+# Unlike /docs/ above, examples/ is NOT excluded and must stay that way:
+# services/user/document_seeder.py reads examples/*.example.json at runtime to
+# seed every new account. Excluding it for image size would build fine and
+# fail every user registration and bootstrap in the running container.
 .venv/
 data/
 .idea/
