@@ -1,7 +1,10 @@
 """User registration, self-service updates, and the admin boundary."""
 
+from datetime import timedelta
+
 import pytest
 
+from persistence.base import utcnow
 from persistence.user import User
 from services.auth.roles import Roles
 from services.auth.scopes import Scopes
@@ -776,6 +779,93 @@ class TestEffectiveScopes:
 
         after = await client.get("/users/me", headers=roleless.headers)
         assert Scopes.RESUME_READ.value in after.json()["scopes"]
+
+
+class TestListUsers:
+    """`GET /users` — the row an admin UI needs to render its actions,
+    without a call per user."""
+
+    async def test_admin_sees_every_user(self, client, admin, roleless):
+        response = await client.get("/users", headers=admin.headers)
+        assert response.status_code == 200
+        usernames = {u["username"] for u in response.json()["data"]}
+        assert {admin.username, roleless.username} <= usernames
+
+    async def test_locked_is_true_for_a_live_temporary_lock(
+        self, client, admin, make_actor
+    ):
+        victim = await make_actor("locked-victim", [])
+        async with DatabaseService.session() as db:
+            user = await User.get_user_by_id(db, victim.user_id)
+            assert user is not None
+            user.locked_until = utcnow() + timedelta(hours=1)
+            await db.commit()
+
+        response = await client.get("/users", headers=admin.headers)
+        row = next(
+            u for u in response.json()["data"] if u["username"] == victim.username
+        )
+        assert row["locked"] is True
+
+    async def test_locked_is_false_once_a_lock_has_lapsed(
+        self, client, admin, make_actor
+    ):
+        victim = await make_actor("lapsed-victim", [])
+        async with DatabaseService.session() as db:
+            user = await User.get_user_by_id(db, victim.user_id)
+            assert user is not None
+            user.locked_until = utcnow() - timedelta(hours=1)
+            await db.commit()
+
+        response = await client.get("/users", headers=admin.headers)
+        row = next(
+            u for u in response.json()["data"] if u["username"] == victim.username
+        )
+        assert row["locked"] is False
+
+    async def test_locked_is_true_for_a_permanent_lock(self, client, admin, make_actor):
+        victim = await make_actor("permanent-victim", [])
+        async with DatabaseService.session() as db:
+            user = await User.get_user_by_id(db, victim.user_id)
+            assert user is not None
+            user.locked_permanently_at = utcnow()
+            await db.commit()
+
+        response = await client.get("/users", headers=admin.headers)
+        row = next(
+            u for u in response.json()["data"] if u["username"] == victim.username
+        )
+        assert row["locked"] is True
+
+    async def test_mfa_enrolled_is_reported(self, client, admin, enrolled):
+        response = await client.get("/users", headers=admin.headers)
+        row = next(
+            u
+            for u in response.json()["data"]
+            if u["username"] == enrolled.actor.username
+        )
+        assert row["mfa_enrolled"] is True
+
+    async def test_unenrolled_is_reported_false(self, client, admin, roleless):
+        response = await client.get("/users", headers=admin.headers)
+        row = next(
+            u for u in response.json()["data"] if u["username"] == roleless.username
+        )
+        assert row["mfa_enrolled"] is False
+
+    async def test_a_member_is_refused(self, client, member):
+        response = await client.get("/users", headers=member.headers)
+        assert response.status_code == 403
+
+    async def test_an_admin_api_key_may_list(self, client, admin):
+        """Read-only, so — unlike reset_password and reset_mfa — a key is
+        enough, consistent with unlock_user."""
+        headers = await narrowed_api_key(client, admin, Scopes.USERS_ADMIN)
+        response = await client.get("/users", headers=headers)
+        assert response.status_code == 200
+
+    async def test_requires_a_credential(self, client):
+        assert (await client.get("/users")).status_code == 401
 
 
 class TestAdminResetPassword:

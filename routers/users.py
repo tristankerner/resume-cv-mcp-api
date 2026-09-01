@@ -6,6 +6,7 @@ from services.auth.auth_service import AuthService
 from services.auth.dtos.user import UserDto
 from services.user.dtos import CreateUserRequest, CreateUserResponse
 from services.user.dtos.change_password import ChangePasswordRequest
+from services.user.dtos.list_users import ListUsersResponse
 from services.user.dtos.reset_password import AdminResetPasswordRequest
 from services.user.dtos.update_user import UpdateUserRequest
 from services.user.user_service import UserService
@@ -21,6 +22,9 @@ class UsersRouter:
 
     def _register(self) -> None:
         self.router.get("/users/me")(self.read_users_me)
+        # Registered before the /{user_id} routes for readability; there is no
+        # collision since every one of those carries a path segment after it.
+        self.router.get("/users")(self.list_users)
         self.router.post("/users")(self.create_user)
         self.router.patch("/users/{user_id}", status_code=204)(self.update_user)
         self.router.post("/users/me/password", status_code=204)(
@@ -36,6 +40,11 @@ class UsersRouter:
 
     async def read_users_me(self, user_service: UserServiceDep) -> UserDto:
         return await user_service.get_current_user()
+
+    async def list_users(self, user_service: UserServiceDep) -> ListUsersResponse:
+        """Every user. Requires users:admin; read-only, so an API key holding
+        that scope may call it too — see UserService.list_users."""
+        return await user_service.list_users()
 
     async def create_user(
         self, request: CreateUserRequest, user_service: UserServiceDep

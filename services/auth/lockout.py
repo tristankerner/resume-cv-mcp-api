@@ -157,6 +157,21 @@ class AccountLock:
     unconditional, and `clear` is also called by the CLI break-glass path."""
 
     @staticmethod
+    def is_locked(user: User, now: datetime) -> bool:
+        """Whether the account's own state is locked right now, independent
+        of whether `AUTH_LOCKOUT_ENABLED` currently says locks apply.
+
+        For admin-facing displays — `GET /users` — rather than the login
+        path, which asks `AccountPolicy.status` instead: a row can carry a
+        lock from before the setting was flipped off, and an admin deciding
+        whether to clear one needs the row's own truth, not the login
+        decision that setting currently produces.
+        """
+        if user.locked_permanently_at is not None:
+            return True
+        return user.locked_until is not None and user.locked_until > now
+
+    @staticmethod
     def clear(user: User) -> None:
         """Forget the failure history after a successful login.
 

@@ -1,8 +1,10 @@
 from typing import Annotated
 
 from fastapi import Depends
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from persistence.base import utcnow
 from persistence.mfa_credential import MfaCredential
 from persistence.user import User
 from services.auth.auth_service import AuthService
@@ -14,6 +16,7 @@ from services.auth.scopes import ScopeResolver, Scopes
 from services.config.config_service import ConfigService
 from services.database.database_service import DatabaseService
 from services.user.dtos.change_password import ChangePasswordRequest
+from services.user.dtos.list_users import AdminUserDto, ListUsersResponse
 from services.user.dtos.reset_password import AdminResetPasswordRequest
 from services.user.dtos.update_user import UpdateUserRequest
 from services.user.exceptions import UserErrors
@@ -40,6 +43,43 @@ class UserService(ServiceProviderInterface):
             self.db, self.config_service.settings
         ).is_enrolled(user)
         return dto
+
+    async def list_users(self) -> ListUsersResponse:
+        """Every user, with the fields an admin UI needs to render the
+        unlock / reset-password / reset-mfa / deactivate actions without a
+        call per row. Requires users:admin; read-only, so an API key holding
+        that scope may call it too, the same as `unlock_user`.
+        """
+        self.principal.require_scope(Scopes.USERS_ADMIN)
+
+        now = utcnow()
+        users = (
+            (await self.db.execute(select(User).order_by(User.username)))
+            .scalars()
+            .all()
+        )
+        # One query for MFA enrolment across every user, rather than
+        # MfaVerifier.is_enrolled per row — an N+1 that grows with the
+        # account table.
+        enrolled_ids = frozenset(
+            (
+                await self.db.execute(
+                    select(MfaCredential.user_id)
+                    .where(MfaCredential.activated_at.is_not(None))
+                    .distinct()
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        data: list[AdminUserDto] = []
+        for user in users:
+            dto = AdminUserDto.model_validate(user)
+            dto.mfa_enrolled = user.id in enrolled_ids
+            dto.locked = AccountLock.is_locked(user, now)
+            data.append(dto)
+        return ListUsersResponse(data=data)
 
     async def register_user(self, request: CreateUserRequest) -> CreateUserResponse:
         self.principal.require_scope(Scopes.USERS_ADMIN)
