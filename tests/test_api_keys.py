@@ -81,23 +81,20 @@ class TestMinting:
         assert secret not in json.dumps([row.key_hash, row.prefix, row.name])
         assert row.key_hash == ApiKeyToken.hash_secret(secret)
 
-    async def test_admin_mints_for_another_user(self, client, admin, member):
-        created = await mint(client, admin, user_id=member.user_id)
-        assert created["api_key"]["user_id"] == member.user_id
-
-    async def test_minting_for_another_user_needs_users_admin(
-        self, client, member, admin
-    ):
+    async def test_a_user_id_field_is_rejected(self, client, admin, member):
+        """Keys are strictly self-service now: naming someone else's user_id
+        — the shape the old admin-on-behalf path took — is an unknown field,
+        not a request the server tries to honour."""
         response = await client.post(
             "/api-keys",
-            headers=member.headers,
+            headers=admin.headers,
             json={
                 "name": "k",
                 "scopes": [Scopes.RESUME_READ.value],
-                "user_id": admin.user_id,
+                "user_id": member.user_id,
             },
         )
-        assert response.status_code == 403
+        assert response.status_code == 422
 
     async def test_cannot_grant_scopes_the_owner_lacks(self, client, member):
         response = await client.post(
@@ -107,31 +104,6 @@ class TestMinting:
         )
         assert response.status_code == 403
         assert Scopes.USERS_ADMIN.value in response.json()["detail"]
-
-    async def test_ceiling_is_the_owner_not_the_minter(self, client, admin, member):
-        """An admin minting for someone else is capped by that user's roles."""
-        response = await client.post(
-            "/api-keys",
-            headers=admin.headers,
-            json={
-                "name": "k",
-                "scopes": [Scopes.USERS_ADMIN.value],
-                "user_id": member.user_id,
-            },
-        )
-        assert response.status_code == 403
-
-    async def test_minting_for_a_missing_user(self, client, admin):
-        response = await client.post(
-            "/api-keys",
-            headers=admin.headers,
-            json={
-                "name": "k",
-                "scopes": [Scopes.RESUME_READ.value],
-                "user_id": admin.user_id + 10_000,
-            },
-        )
-        assert response.status_code == 404
 
     @pytest.mark.parametrize(
         "body",
@@ -191,7 +163,7 @@ class TestUsingKeys:
     async def test_key_scopes_shrink_when_the_owner_loses_a_role(
         self, client, admin, member, stored_resume
     ):
-        key = (await mint(client, admin, user_id=member.user_id))["key"]
+        key = (await mint(client, member))["key"]
         async with DatabaseService.session() as db:
             user = await User.get_user_by_id(db, member.user_id)
             assert user is not None
@@ -202,7 +174,7 @@ class TestUsingKeys:
         assert response.status_code == 403
 
     async def test_key_dies_with_its_owner(self, client, admin, member, stored_resume):
-        key = (await mint(client, admin, user_id=member.user_id))["key"]
+        key = (await mint(client, member))["key"]
         async with DatabaseService.session() as db:
             user = await User.get_user_by_id(db, member.user_id)
             assert user is not None
@@ -330,7 +302,7 @@ class TestKeyManagementRequiresLogin:
 class TestListing:
     async def test_lists_only_your_own(self, client, admin, member):
         await mint(client, admin, name="mine")
-        await mint(client, admin, user_id=member.user_id, name="theirs")
+        await mint(client, member, name="theirs")
 
         names = [
             k["name"]
@@ -340,18 +312,14 @@ class TestListing:
         ]
         assert names == ["mine"]
 
-    async def test_admin_can_list_another_users_keys(self, client, admin, member):
-        await mint(client, admin, user_id=member.user_id, name="theirs")
+    async def test_a_user_id_query_param_is_ignored(self, client, admin, member):
+        """No admin-on-behalf listing — the route takes no such parameter, so
+        one arriving on the query string is simply unused."""
+        await mint(client, admin, name="mine")
         response = await client.get(
             f"/api-keys?user_id={member.user_id}", headers=admin.headers
         )
-        assert [k["name"] for k in response.json()["data"]] == ["theirs"]
-
-    async def test_listing_another_user_needs_users_admin(self, client, member, admin):
-        response = await client.get(
-            f"/api-keys?user_id={admin.user_id}", headers=member.headers
-        )
-        assert response.status_code == 403
+        assert [k["name"] for k in response.json()["data"]] == ["mine"]
 
     async def test_empty_when_none_minted(self, client, admin):
         assert (await client.get("/api-keys", headers=admin.headers)).json() == {
@@ -407,9 +375,10 @@ class TestRevocation:
         # 404, not 403: whose key this is isn't the caller's business.
         assert response.status_code == 404
 
-    async def test_admin_can_revoke_anyones(self, client, admin, member):
-        created = await mint(client, admin, user_id=member.user_id)
+    async def test_admin_cannot_revoke_a_members_key(self, client, admin, member):
+        """No admin-on-behalf escape hatch — revocation is self-service only."""
+        created = await mint(client, member)
         response = await client.delete(
             f"/api-keys/{created['api_key']['id']}", headers=admin.headers
         )
-        assert response.status_code == 200
+        assert response.status_code == 404

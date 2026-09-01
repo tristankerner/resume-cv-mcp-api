@@ -30,9 +30,9 @@ class ApiKeysRouter:
         return await api_key_service.create(request)
 
     async def list_api_keys(
-        self, api_key_service: ApiKeyServiceDep, user_id: int | None = None
+        self, api_key_service: ApiKeyServiceDep
     ) -> ListApiKeysResponse:
-        return await api_key_service.list_keys(user_id)
+        return await api_key_service.list_keys()
 
     async def revoke_api_key(
         self, key_id: int, api_key_service: ApiKeyServiceDep

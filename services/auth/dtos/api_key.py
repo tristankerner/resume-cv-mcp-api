@@ -8,9 +8,12 @@ from services.auth.scopes import Scopes
 class CreateApiKeyRequest(BaseModel):
     name: str = Field(min_length=1)  # what this key is for, e.g. "mcp-server"
     scopes: list[Scopes] = Field(min_length=1)
-    # Omit to mint for yourself. Naming someone else requires users:admin.
-    user_id: int | None = None
     expires_in_days: int | None = Field(default=None, gt=0)
+
+    # Keys are strictly self-service now, so an unknown field — most likely a
+    # leftover `user_id` from the admin-on-behalf path this used to have — is
+    # rejected rather than silently ignored.
+    model_config = ConfigDict(extra="forbid")
 
     @field_validator("name")
     @classmethod
