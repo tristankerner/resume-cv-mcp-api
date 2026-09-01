@@ -248,8 +248,9 @@ class UserService(ServiceProviderInterface):
         Unlike `unlock_user`, this also requires an interactive login: a lock
         must stay clearable with an API key so a locked-out admin can still
         act, but an admin key that could strip second factors would make MFA
-        optional service-wide for whoever steals it. `python -m reset_mfa` is
-        the break-glass path when there is no interactive login to be had.
+        optional service-wide for whoever steals it. `python -m admin_cli
+        reset-mfa` is the break-glass path when there is no interactive login
+        to be had.
 
         Idempotent: an account with no MFA returns having done nothing.
         """

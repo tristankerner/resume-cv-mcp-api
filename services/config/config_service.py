@@ -141,8 +141,8 @@ class ConfigServiceModel(BaseSettings):
     # credential-free, so an open one is an unauthenticated database write any
     # stranger can repeat. Closed, `registration_endpoint` disappears from the
     # authorization server metadata and the route 404s; clients are
-    # pre-registered with `python -m register_oauth_client` instead. Open it
-    # only to onboard a client that speaks nothing but DCR.
+    # pre-registered with `POST /oauth-clients` instead. Open it only to
+    # onboard a client that speaks nothing but DCR.
     oauth_registration_enabled: bool = Field(
         default=False, alias="OAUTH_REGISTRATION_ENABLED"
     )

@@ -715,6 +715,48 @@ class TestBreakGlass:
         assert user.locked_permanently_at is None
         assert user.lock_count == 0
 
+    async def test_an_admin_api_key_can_unlock(
+        self, client, admin, make_actor, quick_lockout, no_address_throttle
+    ):
+        """The documented escape hatch: a lockout closes the password path
+        only, so an admin's own API key must still be able to clear one —
+        including on someone else's account, not just its own."""
+        created = await client.post(
+            "/api-keys",
+            headers=admin.headers,
+            json={"name": "break-glass", "scopes": ["users:admin"]},
+        )
+        assert created.status_code == 200, created.text
+        key_headers = {"Authorization": f"Bearer {created.json()['key']}"}
+
+        victim = await make_actor("api-key-victim", [])
+        await fail_login(client, victim.username, 3)
+        assert (
+            await client.post(
+                "/token",
+                data={"username": victim.username, "password": victim.password},
+            )
+        ).status_code == 429
+
+        response = await client.delete(
+            f"/users/{victim.user_id}/lock", headers=key_headers
+        )
+        assert response.status_code == 204
+
+        response = await client.post(
+            "/token", data={"username": victim.username, "password": victim.password}
+        )
+        assert response.status_code == 200
+
+    async def test_unlocking_an_already_open_account_is_a_no_op(
+        self, client, admin, make_actor
+    ):
+        victim = await make_actor("never-locked", [])
+        response = await client.delete(
+            f"/users/{victim.user_id}/lock", headers=admin.headers
+        )
+        assert response.status_code == 204
+
     async def test_unlocking_requires_users_admin(self, client, roleless, make_actor):
         victim = await make_actor("victim", [])
         response = await client.delete(
@@ -731,94 +773,3 @@ class TestBreakGlass:
             f"/users/{admin.user_id + 999}/lock", headers=admin.headers
         )
         assert response.status_code == 404
-
-
-class TestUnlockCommand:
-    async def test_it_clears_a_permanent_lock(self, admin, capsys):
-        from unlock_user import UnlockCommand
-
-        async with DatabaseService.session() as db:
-            user = await User.get_user_by_id(db, admin.user_id)
-            assert user is not None
-            user.locked_permanently_at = utcnow()
-            await db.commit()
-
-        assert await UnlockCommand().run([admin.username]) == 0
-        assert "Unlocked" in capsys.readouterr().out
-
-        user = await read_user(admin.user_id)
-        assert user.locked_permanently_at is None
-
-    async def test_it_reports_an_unknown_user(self, capsys):
-        from unlock_user import UnlockCommand
-
-        assert await UnlockCommand().run(["nobody-at-all"]) == 1
-        assert "No user named" in capsys.readouterr().err
-
-    async def test_it_clears_a_banned_address(self, capsys):
-        from unlock_user import UnlockCommand
-
-        async with DatabaseService.session() as db:
-            db.add(
-                AuthFailure(
-                    address="203.0.113.7",
-                    last_failure_at=utcnow(),
-                    banned_until=utcnow() + timedelta(hours=1),
-                )
-            )
-            await db.commit()
-
-        assert await UnlockCommand().run(["--list"]) == 0
-        assert "203.0.113.7" in capsys.readouterr().out
-
-        assert await UnlockCommand().run(["--address", "203.0.113.7"]) == 0
-
-        async with DatabaseService.session() as db:
-            assert await AuthFailure.get_by_address(db, "203.0.113.7") is None
-
-    async def test_it_lists_what_is_locked(self, admin, capsys):
-        from unlock_user import UnlockCommand
-
-        async with DatabaseService.session() as db:
-            user = await User.get_user_by_id(db, admin.user_id)
-            assert user is not None
-            user.locked_until = utcnow() + timedelta(hours=1)
-            await db.commit()
-
-        assert await UnlockCommand().run(["--list"]) == 0
-        assert admin.username in capsys.readouterr().out
-
-    async def test_it_needs_something_to_do(self, capsys):
-        from unlock_user import UnlockCommand
-
-        assert await UnlockCommand().run([]) == 1
-
-    async def test_it_says_so_when_nothing_is_locked(self, capsys):
-        from unlock_user import UnlockCommand
-
-        assert await UnlockCommand().run(["--list"]) == 0
-        assert "Nothing is locked" in capsys.readouterr().out
-
-    async def test_it_lists_a_permanent_lock(self, admin, capsys):
-        from unlock_user import UnlockCommand
-
-        async with DatabaseService.session() as db:
-            user = await User.get_user_by_id(db, admin.user_id)
-            assert user is not None
-            user.locked_permanently_at = utcnow()
-            await db.commit()
-
-        assert await UnlockCommand().run(["--list"]) == 0
-        assert "locked permanently" in capsys.readouterr().out
-
-    async def test_unlocking_an_open_account_changes_nothing(self, admin, capsys):
-        from unlock_user import UnlockCommand
-
-        assert await UnlockCommand().run([admin.username]) == 0
-        assert "was not locked" in capsys.readouterr().out
-
-    async def test_clearing_an_unknown_address_is_not_an_error(self, capsys):
-        from unlock_user import UnlockCommand
-
-        assert await UnlockCommand().run(["--address", "203.0.113.99"]) == 0
-        assert "No failures recorded" in capsys.readouterr().out

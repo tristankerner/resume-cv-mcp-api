@@ -2,8 +2,8 @@
 
 The initial migration deliberately seeds no users, so a fresh deployment needs
 some way to get its first credential. This module is that way, and it is shared
-by two callers: application startup (env-driven, for containers) and the
-`bootstrap_admin` CLI (interactive, for local use).
+by two callers: application startup (env-driven, for containers) and
+`python -m admin_cli bootstrap-admin` (interactive, for local use).
 
 The operation is idempotent by design — it does nothing once any admin exists —
 so it is safe to leave wired into startup and safe to run twice.

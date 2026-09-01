@@ -1,13 +1,13 @@
-"""Claiming a database that has no admin: startup path and CLI path."""
+"""Claiming a database that has no admin: `AdminBootstrapper` itself, and the
+startup hook that calls it. The CLI path (`python -m admin_cli
+bootstrap-admin`) has its own tests in test_admin_cli.py."""
 
 import logging
 import secrets
 
 import pytest
 
-import bootstrap_admin
 import main
-from bootstrap_admin import BootstrapAdminCommand
 from main import StartupTasks
 from persistence.document import Document
 from persistence.user import User
@@ -183,7 +183,7 @@ class TestStartupHook:
         await bootstrap_admin_user()
         combined = " ".join(startup_logs)
         assert "BOOTSTRAP_ADMIN_USERNAME" in combined
-        assert "bootstrap_admin" in combined
+        assert "admin_cli bootstrap-admin" in combined
 
     async def test_is_quiet_when_already_claimed(self, admin, startup_logs):
         await bootstrap_admin_user()
@@ -206,61 +206,3 @@ class TestStartupHook:
 
         with pytest.raises(BootstrapError):
             await bootstrap_admin_user()
-
-
-class TestCli:
-    async def test_uses_the_environment_without_prompting(
-        self, monkeypatch, credentials
-    ):
-        username, password = credentials
-        monkeypatch.setenv("BOOTSTRAP_ADMIN_USERNAME", username)
-        monkeypatch.setenv("BOOTSTRAP_ADMIN_PASSWORD", password)
-        monkeypatch.setattr(
-            "builtins.input", lambda *a: pytest.fail("should not prompt")
-        )
-
-        assert await BootstrapAdminCommand().run() == 0
-        assert await role_of(username) == [Roles.ADMIN.value]
-
-    async def test_prompts_when_nothing_is_configured(self, monkeypatch, credentials):
-        username, password = credentials
-        monkeypatch.setattr("builtins.input", lambda *a: username)
-        monkeypatch.setattr(bootstrap_admin.getpass, "getpass", lambda *a: password)
-
-        assert await BootstrapAdminCommand().run() == 0
-        assert await role_of(username) == [Roles.ADMIN.value]
-
-    async def test_rejects_mismatched_retype(self, monkeypatch, credentials, capsys):
-        username, password = credentials
-        answers = iter([password, password + "different"])
-        monkeypatch.setattr("builtins.input", lambda *a: username)
-        monkeypatch.setattr(
-            bootstrap_admin.getpass, "getpass", lambda *a: next(answers)
-        )
-
-        assert await BootstrapAdminCommand().run() == 1
-        assert "do not match" in capsys.readouterr().err
-
-    async def test_rejects_a_blank_username(self, monkeypatch, password, capsys):
-        monkeypatch.setattr("builtins.input", lambda *a: "   ")
-        monkeypatch.setattr(bootstrap_admin.getpass, "getpass", lambda *a: password)
-
-        assert await BootstrapAdminCommand().run() == 1
-        assert "required" in capsys.readouterr().err
-
-    async def test_does_not_prompt_when_already_claimed(
-        self, admin, monkeypatch, capsys
-    ):
-        monkeypatch.setattr(
-            "builtins.input", lambda *a: pytest.fail("should not prompt")
-        )
-        assert await BootstrapAdminCommand().run() == 0
-        assert "already exists" in capsys.readouterr().out
-
-    async def test_reports_a_validation_failure(self, monkeypatch, credentials, capsys):
-        username, _ = credentials
-        monkeypatch.setattr("builtins.input", lambda *a: username)
-        monkeypatch.setattr(bootstrap_admin.getpass, "getpass", lambda *a: "weak")
-
-        assert await BootstrapAdminCommand().run() == 1
-        assert "at least 8 characters" in capsys.readouterr().err

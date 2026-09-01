@@ -47,11 +47,12 @@ class OAuthClientRegistry:
         """Create a client row, returning it with its secret if it has one.
 
         The single place a client is created, shared by anonymous DCR and by
-        `python -m register_oauth_client`. Pre-registration is the normal path
-        — `OAUTH_REGISTRATION_ENABLED` is off by default — and it goes through
-        the same validation deliberately: a redirect URI typed at a terminal
-        deserves the allowlist check just as much as one arriving over HTTP,
-        and having one caller skip it is how the two drift apart.
+        `OAuthClientAdminService` (`POST /oauth-clients`). Pre-registration is
+        the normal path — `OAUTH_REGISTRATION_ENABLED` is off by default —
+        and it goes through the same validation deliberately: a redirect URI
+        registered by an admin deserves the allowlist check just as much as
+        one arriving over HTTP, and having one caller skip it is how the two
+        drift apart.
 
         The secret is returned rather than stored in the clear, and is the
         only time it exists in a readable form.

@@ -39,7 +39,7 @@ def upgrade() -> None:
     # mcp/mcp, which meant every fresh deployment came up with two known
     # credentials live on /token. Create the first admin explicitly:
     #
-    #     python -m bootstrap_admin
+    #     python -m admin_cli bootstrap-admin
     #
     # ### end Alembic commands ###
 

@@ -75,7 +75,7 @@ class StartupTasks:
                 "No admin user exists. Public documents will be served, but nothing "
                 "can be written until one is created: set BOOTSTRAP_ADMIN_USERNAME "
                 "and BOOTSTRAP_ADMIN_PASSWORD and restart, or run "
-                "`python -m bootstrap_admin`."
+                "`python -m admin_cli bootstrap-admin`."
             )
 
     async def verify_mfa_key(self) -> None:

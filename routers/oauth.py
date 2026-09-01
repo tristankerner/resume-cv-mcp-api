@@ -106,7 +106,8 @@ class OAuthRouter:
         if not config_service.settings.oauth_registration_enabled:
             log.warning(
                 "Refused client registration: OAUTH_REGISTRATION_ENABLED is off. "
-                "Pre-register with `python -m register_oauth_client`."
+                "Pre-register with `POST /oauth-clients` (requires users:admin and "
+                "an interactive login), or through the browser client's admin screen."
             )
             return JSONResponse(status_code=404, content={"detail": "Not Found"})
         try:

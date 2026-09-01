@@ -81,9 +81,10 @@ class OAuthService(ServiceProviderInterface):
             ),
             revocation_endpoint=f"{base}/oauth/revoke",
             scopes_supported=sorted(str(scope) for scope in OAUTH_ISSUABLE_SCOPES),
-            # With registration closed, `register_oauth_client` issues a secret
-            # unless asked not to, so "none" is a shape this deployment does
-            # not normally hand out. It stays supported for --public clients.
+            # With registration closed, POST /oauth-clients issues a secret
+            # unless asked not to (public=true), so "none" is a shape this
+            # deployment does not normally hand out. It stays supported for
+            # public clients registered that way.
             token_endpoint_auth_methods_supported=(
                 ["client_secret_post", "none"]
                 if settings.oauth_registration_enabled

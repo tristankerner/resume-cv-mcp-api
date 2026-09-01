@@ -56,7 +56,8 @@ def query_of(response) -> dict[str, str]:
 async def pre_register(
     redirect_uris=(REDIRECT_URI,), *, public=True, name="Test Client"
 ):
-    """Create a client the way `python -m register_oauth_client` does.
+    """Create a client the way `POST /oauth-clients` does — see
+    tests/test_oauth_clients.py for that route directly.
 
     This is the default posture: OAUTH_REGISTRATION_ENABLED is off, so a
     pre-registered client is how one comes to exist at all. Most tests only

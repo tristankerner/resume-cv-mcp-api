@@ -256,8 +256,8 @@ class TestCliRace:
     ):
         """The CLI pre-checks for an admin before prompting; ensure_admin checks
         again, and that second check is what settles a concurrent claim."""
-        import bootstrap_admin
-        from bootstrap_admin import BootstrapAdminCommand
+        import admin_cli
+        from admin_cli import AdminCli
 
         # False for the CLI's pre-check, then the truth for ensure_admin's —
         # exactly what a claim landing in between looks like.
@@ -268,11 +268,9 @@ class TestCliRace:
 
         monkeypatch.setattr(User, "any_with_role", stale_then_current)
         monkeypatch.setattr("builtins.input", lambda *a: "late-arrival")
-        monkeypatch.setattr(
-            bootstrap_admin.getpass, "getpass", lambda *a: "Val1d!password"
-        )
+        monkeypatch.setattr(admin_cli.getpass, "getpass", lambda *a: "Val1d!password")
 
-        assert await BootstrapAdminCommand().run() == 0
+        assert await AdminCli().run(["bootstrap-admin"]) == 0
         assert "already exists" in capsys.readouterr().out
 
 

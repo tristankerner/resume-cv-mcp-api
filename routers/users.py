@@ -88,7 +88,7 @@ class UsersRouter:
         Reachable with an API key, which is the point: a lockout only blocks
         the password path, so an admin locked out of /token can still unlock
         themselves with a key they already hold. When there is no such key,
-        `python -m unlock_user` does the same thing against the database.
+        `python -m admin_cli unlock` does the same thing against the database.
         """
         await user_service.unlock_user(user_id)
         return Response(status_code=204)
@@ -101,8 +101,8 @@ class UsersRouter:
         clearable that way so a locked-out admin can still act, but MFA has
         no such constraint, and an admin key that can strip second factors
         would make MFA optional service-wide for whoever steals that key.
-        `python -m reset_mfa` is the break-glass path when there is no
-        interactive login to be had.
+        `python -m admin_cli reset-mfa` is the break-glass path when there is
+        no interactive login to be had.
         """
         await user_service.reset_mfa(user_id)
         return Response(status_code=204)
