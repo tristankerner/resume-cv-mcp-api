@@ -24,10 +24,8 @@ class UnexpectedNoSettings(Exception):
 class Environment(StrEnum):
     """Which deployment this process is.
 
-    Only used to decide what to lock down; nothing branches on it to change
-    behaviour that a developer then cannot reproduce locally. Development is
-    the default so an unset value is the permissive-to-run, safe-to-forget one
-    — but note that means a production deployment has to say so explicitly.
+    Only used to decide what to lock down. Development is the default, so a
+    production deployment has to say so explicitly.
     """
 
     DEVELOPMENT = auto()
@@ -39,10 +37,9 @@ class ConfigServiceModel(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
-        # Opt-in, so local runs are unaffected. A container sets
-        # SECRETS_DIR=/run/secrets and any setting below can then be supplied
-        # as a Docker secret file instead of an environment variable — env vars
-        # are readable via `docker inspect` and leak into child processes.
+        # With SECRETS_DIR set, any setting below may come from a Docker secret
+        # file instead of an environment variable — env vars are readable via
+        # `docker inspect` and leak into child processes.
         secrets_dir=os.environ.get("SECRETS_DIR"),
     )
 
@@ -57,14 +54,11 @@ class ConfigServiceModel(BaseSettings):
     )
 
     # --- Login throttling -------------------------------------------------
-    # Off switches the whole mechanism, account and address alike, and is
-    # meant for the test suite rather than for a deployment: a lockout that is
-    # disabled locally is a lockout nobody notices is broken.
+    # Off is for the test suite, not for a deployment.
     auth_lockout_enabled: bool = Field(default=True, alias="AUTH_LOCKOUT_ENABLED")
-    # Failures inside the window that trip a lock, and how far back the window
-    # reaches. The window is fixed rather than sliding: the count resets once
-    # it lapses, which concedes a sustained (max_attempts - 1) per window to a
-    # patient attacker and costs two columns instead of a table of events.
+    # Fixed window rather than sliding: the count resets once the window
+    # lapses, conceding a sustained (max_attempts - 1) per window in exchange
+    # for two columns instead of a table of events.
     auth_lockout_max_attempts: int = Field(
         default=5, ge=1, alias="AUTH_LOCKOUT_MAX_ATTEMPTS"
     )
@@ -72,33 +66,29 @@ class ConfigServiceModel(BaseSettings):
         default=15, ge=1, alias="AUTH_LOCKOUT_WINDOW_MINUTES"
     )
     # The first lock lasts this long; each further lock without a successful
-    # login in between doubles it. Escalating is what removes the need for a
-    # second "N locks within M minutes" window — the curve already encodes it.
+    # login in between doubles it.
     auth_lockout_base_minutes: int = Field(
         default=15, ge=1, alias="AUTH_LOCKOUT_BASE_MINUTES"
     )
     # Which lock becomes permanent. At the default of four: 15 minutes, then
-    # 30, then 60, then an admin has to intervene. A successful login resets
-    # the count, so this is only reached by an account nobody is logging into.
+    # 30, then 60, then an admin has to intervene.
     auth_lockout_permanent_after_locks: int = Field(
         default=4, ge=1, alias="AUTH_LOCKOUT_PERMANENT_AFTER_LOCKS"
     )
 
     # The same idea keyed on the caller's address, which is what catches
-    # spraying across many usernames — a per-account counter never sees it,
-    # because no single account accumulates enough failures to trip.
+    # spraying across many usernames — no single account accumulates enough
+    # failures to trip a per-account counter.
     auth_ip_max_failures: int = Field(default=20, ge=1, alias="AUTH_IP_MAX_FAILURES")
     auth_ip_window_minutes: int = Field(
         default=15, ge=1, alias="AUTH_IP_WINDOW_MINUTES"
     )
     auth_ip_ban_minutes: int = Field(default=15, ge=1, alias="AUTH_IP_BAN_MINUTES")
-    # How many proxies sit in front of this process, counted from the right of
+    # Proxies in front of this process, counted from the right of
     # X-Forwarded-For. A client can send that header itself and Cloud Run
-    # appends rather than replaces, so the leftmost entry is attacker-chosen;
-    # only a fixed number of hops from the right is trustworthy. 1 is correct
-    # for Cloud Run with no load balancer in front. 0 disables address-based
-    # throttling, which is the honest setting for a deployment with no proxy,
-    # where the header cannot be trusted at all.
+    # appends rather than replaces, so the leftmost entry is attacker-chosen.
+    # 1 suits Cloud Run with no load balancer; 0 disables address-based
+    # throttling, the honest setting where there is no proxy at all.
     auth_trusted_proxy_hops: int = Field(
         default=1, ge=0, alias="AUTH_TRUSTED_PROXY_HOPS"
     )
@@ -108,16 +98,10 @@ class ConfigServiceModel(BaseSettings):
     # password hashes on every user write.
     database_echo: bool = Field(default=False, alias="DATABASE_ECHO")
 
-    # On by default, so a local run or a compose file comes up with a current
-    # schema and nothing extra to remember. A deployment that migrates from its
-    # pipeline turns this off: on a scale-to-zero host every cold start would
-    # otherwise pay for `alembic upgrade head` before serving its first request,
-    # and concurrent starts would race for the same migration lock.
-    #
-    # Turning it off makes the pipeline responsible for the schema. That is the
-    # intended trade: if the migration step fails, startup then fails too — the
-    # bootstrap below is the first thing to touch a table — rather than serving
-    # against a schema the code does not expect.
+    # On by default so a local run comes up with a current schema. A deployment
+    # that migrates from its pipeline turns this off: on a scale-to-zero host
+    # every cold start would otherwise pay for `alembic upgrade head`, and
+    # concurrent starts would race for the same migration lock.
     run_migrations_on_startup: bool = Field(
         default=True, alias="RUN_MIGRATIONS_ON_STARTUP"
     )
@@ -135,112 +119,78 @@ class ConfigServiceModel(BaseSettings):
     )
 
     # --- OAuth 2.1 (MCP connectors) ----------------------------------------
-    # The authorization server's issuer URL and the resource server's resource
-    # URL. Neither is derivable from a request header a caller controls, so
-    # both are configuration. Optional locally, where a developer talks to the
-    # service directly; required in production, where getting it wrong rejects
-    # every OAuth token with no useful error, so it fails loudly at startup
-    # instead.
+    # Not derivable from a request header a caller controls, so it is
+    # configuration. Required in production — see the validator below.
     public_base_url: AnyHttpUrl = Field(
         default=AnyHttpUrl("http://localhost:8000"), alias="PUBLIC_BASE_URL"
     )
 
-    # Comma-separated hosts a DCR-registered client's redirect_uri may target.
-    # No default: an empty or unset value would silently block every
-    # registration, which is a configuration error, not a valid empty policy.
-    # Full parsing and validation rules in services/oauth/redirect_allowlist.py.
+    # Comma-separated hosts a DCR-registered client's redirect_uri may target;
+    # rules in services/oauth/redirect_allowlist.py. No default: an unset value
+    # would silently block every registration, which is a configuration error
+    # rather than a valid empty policy.
     # NoDecode: pydantic-settings otherwise tries to JSON-decode any complex
-    # annotation (a frozenset qualifies) before a validator ever sees it, so
-    # a plain comma-separated string would fail to parse before reaching
-    # `_parse_oauth_allowed_redirect_hosts` below.
+    # annotation (a frozenset qualifies) before a validator sees it, so a plain
+    # comma-separated string never reaches the parser below.
     oauth_allowed_redirect_hosts: Annotated[frozenset[str], NoDecode] = Field(
         alias="OAUTH_ALLOWED_REDIRECT_HOSTS"
     )
 
     # Whether POST /oauth/register accepts anonymous Dynamic Client
-    # Registration. Closed by default, because the endpoint is necessarily
-    # credential-free and therefore an unauthenticated database write that
-    # anyone who finds it can repeat: the redirect allowlist bounds *where an
-    # authorization code may be delivered*, not how many client rows a
-    # stranger can create. Closed, `registration_endpoint` disappears from the
-    # authorization server metadata (RFC 8414 makes it OPTIONAL) and the route
-    # 404s, so there is no anonymous write path at all rather than a bounded
-    # one. Clients are pre-registered instead — `python -m
-    # register_oauth_client` — which both Claude Code (--client-id) and
-    # claude.ai (Advanced settings) accept.
-    #
-    # Turn it on only to onboard a client that speaks nothing but DCR, and
-    # turn it off again afterwards.
+    # Registration. Closed by default: the endpoint is necessarily
+    # credential-free, so an open one is an unauthenticated database write any
+    # stranger can repeat. Closed, `registration_endpoint` disappears from the
+    # authorization server metadata and the route 404s; clients are
+    # pre-registered with `python -m register_oauth_client` instead. Open it
+    # only to onboard a client that speaks nothing but DCR.
     oauth_registration_enabled: bool = Field(
         default=False, alias="OAUTH_REGISTRATION_ENABLED"
     )
 
     # --- Browser client (clients/web/index.html) -----------------------------
-    # Origins allowed to call the authenticated routes (/token, /documents,
-    # /api-keys, /users/*) from a browser — see middleware/client_cors.py.
-    # Comma-separated, empty by default, which is exactly today's behaviour:
-    # no origin is allowlisted, so the middleware is a no-op everywhere.
-    # "null" is the origin of a page opened directly from disk (file://); safe
-    # to allowlist because none of these routes take a cookie — the one
-    # cookie this service issues (docs_session, see services/auth/docs_session.py)
-    # is HttpOnly and answers only the four documentation routes, which this
-    # setting does not gate at all — so a hostile page granted "null" still
-    # has no way to obtain a token that lives in the client origin's
-    # localStorage. Recommended for local use only, not production.
-    # NoDecode: see oauth_allowed_redirect_hosts above for why a plain
-    # comma-separated string needs this to reach the validator unparsed.
+    # Comma-separated origins allowed to call the authenticated routes from a
+    # browser — see middleware/client_cors.py. "null" is the origin of a page
+    # opened from disk (file://); safe to allowlist because none of these
+    # routes take a cookie, but local use only. NoDecode: see
+    # oauth_allowed_redirect_hosts above.
     client_allowed_origins: Annotated[frozenset[str], NoDecode] = Field(
         default=frozenset(), alias="CLIENT_ALLOWED_ORIGINS"
     )
 
-    # Unset by default, so the API depends on no build artifact and nothing
-    # changes for a deployment that does not want this. Set to serve the
-    # client same-origin instead — either clients/web/index.html directly or a
-    # built clients/web/dist/index.html — at GET /client. Same-origin means
-    # CLIENT_ALLOWED_ORIGINS does not even need to name it.
+    # Set to serve the browser client same-origin at GET /client, from either
+    # clients/web/index.html or a built clients/web/dist/index.html.
+    # Same-origin means CLIENT_ALLOWED_ORIGINS need not name it.
     client_html_path: str | None = Field(default=None, alias="CLIENT_HTML_PATH")
 
     # --- Multi-factor authentication ---------------------------------------
-    # MFA is per-account and opt-in, so there is deliberately no global
-    # on/off switch: a setting that silently stops demanding a second factor
-    # from accounts that enrolled one is a footgun, not a feature. What is
-    # configurable is the shape of the challenge, not whether it happens.
+    # MFA is per-account and opt-in, so there is deliberately no global on/off
+    # switch: what is configurable is the shape of the challenge, not whether
+    # it happens.
 
-    # How long the token returned by the first step stays redeemable. Long
-    # enough to find a phone, short enough that one left in a shell history
-    # is worthless.
+    # How long the token returned by the first step stays redeemable.
     mfa_challenge_ttl_minutes: int = Field(
         default=5, ge=1, alias="MFA_CHALLENGE_TTL_MINUTES"
     )
-    # Thirty-second steps either side of now that a TOTP code is accepted
-    # for. 1 tolerates roughly a minute and a half of clock skew between a
-    # phone and this server, which is the usual recommendation; 0 demands
-    # perfectly synchronised clocks and will generate support requests.
+    # Thirty-second steps either side of now a TOTP code is accepted for. 1
+    # tolerates about ninety seconds of clock skew; 0 demands perfectly
+    # synchronised clocks and will generate support requests.
     mfa_totp_drift_steps: int = Field(default=1, ge=0, alias="MFA_TOTP_DRIFT_STEPS")
     mfa_backup_code_count: int = Field(default=10, ge=1, alias="MFA_BACKUP_CODE_COUNT")
-    # The issuer an authenticator app shows beside the account name. Purely
-    # cosmetic, and worth setting when one person runs more than one of these.
+    # The issuer an authenticator app shows beside the account name.
     mfa_issuer: str = Field(default="resume-api", alias="MFA_ISSUER")
 
-    # Fernet keys for the TOTP secrets at rest, newest first: every key
-    # listed can decrypt, the first one encrypts. Rotating is therefore
-    # prepending a new key and leaving the old one until the lazy re-seal in
-    # TotpMethod.verify has worked through the enrolled accounts.
-    #
-    # Deliver this through SECRETS_DIR in production, not an environment
-    # variable — `docker inspect` reads env vars, and this key is the whole
-    # of what stands between a database dump and everyone's second factor.
-    #
-    # NoDecode for the same reason the two frozensets above carry it:
-    # pydantic-settings tries to JSON-decode any complex annotation before a
-    # validator sees it, so a plain comma-separated string never reaches
-    # `_parse_mfa_encryption_keys`.
+    # Fernet keys for the TOTP secrets at rest, newest first: every key listed
+    # can decrypt, the first one encrypts. Rotating is prepending a new key and
+    # leaving the old one until the lazy re-seal in TotpMethod.verify has
+    # worked through the enrolled accounts. Deliver it through SECRETS_DIR in
+    # production, not an environment variable. NoDecode: see
+    # oauth_allowed_redirect_hosts above.
     mfa_encryption_keys: Annotated[list[SecretStr], NoDecode] = Field(
         default_factory=list, alias="MFA_ENCRYPTION_KEYS"
     )
 
-    # How long a documentation login lasts. The docs are read, not acted on,
-    # so this is a browsing session rather than a credential lifetime.
+    # The docs are read, not acted on, so this is a browsing session rather
+    # than a credential lifetime.
     docs_session_minutes: int = Field(default=60, ge=1, alias="DOCS_SESSION_MINUTES")
 
     @field_validator("oauth_allowed_redirect_hosts", mode="before")
@@ -269,10 +219,8 @@ class ConfigServiceModel(BaseSettings):
     def _validate_mfa_encryption_keys(cls, value):
         """Reject key material Fernet cannot use, at settings load.
 
-        A malformed key is otherwise a 500 on the first enrolment and a
-        lockout on every login after it. Fernet wants exactly 32 bytes,
-        url-safe base64 encoded; anything else fails here, where the message
-        can say so.
+        A malformed key is otherwise a 500 on the first enrolment and a lockout
+        on every login after it.
         """
         for key in value:
             try:
@@ -291,10 +239,8 @@ class ConfigServiceModel(BaseSettings):
     def _normalise_environment(cls, value):
         """Accept PRODUCTION and Production as well as production.
 
-        Deployment platforms are not consistent about case, and the cost of
-        being strict here is a service that refuses to start. An unrecognised
-        value is still rejected — silently falling back to development would
-        turn a typo into an open production deployment.
+        An unrecognised value is still rejected — silently falling back to
+        development would turn a typo into an open production deployment.
         """
         return value.strip().lower() if isinstance(value, str) else value
 
@@ -304,11 +250,10 @@ class ConfigServiceModel(BaseSettings):
 
     @property
     def public_base_url_str(self) -> str:
-        """`public_base_url`, with any trailing slash pydantic added stripped.
+        """`public_base_url`, with the trailing slash `AnyHttpUrl` adds stripped.
 
-        `AnyHttpUrl` normalizes a bare host into `https://host/` — this is
-        the form every OAuth URL in this service is built from, so the strip
-        happens once, here, rather than at each call site.
+        Every OAuth URL in this service is built from this form, so the strip
+        happens once here rather than at each call site.
         """
         return str(self.public_base_url).rstrip("/")
 
@@ -335,10 +280,7 @@ class ConfigServiceModel(BaseSettings):
     @model_validator(mode="after")
     def _require_mfa_encryption_key_in_production(self) -> ConfigServiceModel:
         """Plaintext TOTP secrets are a development affordance, not a
-        deployment option. Locally there is nothing worth encrypting and a
-        required key would only be ceremony before `uv run pytest`; in
-        production the absence of one is a configuration mistake nobody
-        notices until a database leaks."""
+        deployment option."""
         if self.is_production and not self.mfa_encryption_keys:
             raise ValueError(
                 "MFA_ENCRYPTION_KEYS is required in production: TOTP secrets "
@@ -362,14 +304,10 @@ class ConfigService(ServiceProviderInterface):
     def get_with_deps(cls) -> ConfigService:
         """Settings are read once and reused for the life of the process.
 
-        This runs as a dependency on every request; without the cache each one
-        re-read and re-validated the .env file from disk. The consequence is
-        that changing configuration now needs a restart.
-
-        The check-then-assign is not atomic, and FastAPI runs sync dependencies
-        in a thread pool, so two requests can race here on the very first call.
-        That is harmless: both build the same values from the same environment,
-        and whichever assignment lands last is equivalent to the other.
+        This runs as a dependency on every request, so the cache saves re-
+        reading .env from disk each time; changing configuration needs a
+        restart. Two first requests can race on the check-then-assign, which is
+        harmless — both build the same values from the same environment.
         """
         if cls._cached is None:
             cls._cached = ConfigServiceModel()

@@ -1,17 +1,12 @@
 """Pre-register an OAuth client from the command line.
 
-The normal way a client gets a client_id here. Anonymous Dynamic Client
-Registration is off by default (`OAUTH_REGISTRATION_ENABLED`), because
-POST /oauth/register cannot require a credential — a client registers before
-any user is involved — and an endpoint like that is an unauthenticated
-database write anyone who finds it can repeat. The redirect allowlist bounds
-where an authorization code may be *delivered*; it does nothing about how many
-rows a stranger may create. Closing the endpoint removes the write path
-instead of bounding it.
+The normal way a client gets a client_id here, since anonymous Dynamic Client
+Registration is off by default (`OAUTH_REGISTRATION_ENABLED`) — POST
+/oauth/register cannot require a credential, so an open one is an
+unauthenticated database write anyone who finds it can repeat.
 
-Registering here rather than over HTTP is what makes that affordable: this
-talks to the database directly, so it needs whatever DATABASE_URL the
-deployment uses, and it cannot be reached with a stolen token.
+This talks to the database directly, so it needs whatever DATABASE_URL the
+deployment uses and cannot be reached with a stolen token.
 
 Both Claude surfaces accept a client_id issued this way:
 
@@ -99,9 +94,8 @@ class RegisterOAuthClientCommand:
         settings = ConfigService.get_without_deps().settings
 
         # Validated against the same allowlist an HTTP registration would
-        # face — a URI typed at a terminal is no more trustworthy than one
-        # that arrives over the wire, and a typo caught here is a typo not
-        # debugged later at authorize time.
+        # face: a URI typed at a terminal is no more trustworthy than one that
+        # arrives over the wire.
         try:
             async with DatabaseService.session() as db:
                 client, secret = await OAuthClientRegistry(db).create(

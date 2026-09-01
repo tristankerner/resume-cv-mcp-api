@@ -1,23 +1,20 @@
 # OAuth setup — operator steps
 
-Connecting an MCP client to this service over OAuth 2.1. Everything here is
-outside the repository: deployment variables, edge/proxy rules, registering a
-client, and the connection itself.
+Connecting an MCP client to this service over OAuth 2.1: the settings to get
+right, registering a client, and making the connection.
 
 For the static-API-key alternative — simpler for scripts, and the only option
 for a client that cannot do OAuth — see [mcp-clients.md](mcp-clients.md). Both
 work; neither replaces the other.
 
-**Contains no secrets and is safe to commit.** Nothing below is a credential,
-and `mcp.example.com` stands in for the real hostname throughout. Keep it that
-way: if a step ever needs a real value, put a placeholder here and the value in
-`.env.prod`.
+`mcp.example.com` stands in for the real hostname throughout. How the settings
+below reach the process is your deployment's business; this repository only
+cares that they arrive.
 
 **There is no self-service registration.** Anonymous Dynamic Client
 Registration is off by default, so a client cannot create its own credentials —
-you issue them in §6 and paste them into the client in §7. That ordering is
-what makes the rest of this document make sense: §6 needs a deployed, migrated
-database, so it comes after the deploy, not before.
+you issue them in §6 and paste them into the client in §7. Registration writes
+to the database, so it comes after the deploy rather than before.
 
 | | Step |
 | --- | --- |
@@ -27,34 +24,22 @@ database, so it comes after the deploy, not before.
 
 ---
 
-## 1. Add `PUBLIC_BASE_URL`
+## 1. Set `PUBLIC_BASE_URL`
 
 The authorization server has to know its own issuer URL, and the resource
 server its own resource URL. Neither can be derived from a request header a
 caller controls, so it is configuration.
 
-**Manual deploy** — add to `.env.prod`:
-
 ```
 PUBLIC_BASE_URL=https://mcp.example.com
 ```
 
-**CI deploy** — a repository variable of the same name, under
-**Settings → Secrets and variables → Actions → Variables**:
-
-```bash
-gh variable set PUBLIC_BASE_URL --body https://mcp.example.com
-```
-
-A variable rather than a secret: it is a public hostname, and the deploy prints
-the settings list on every run.
-
 No scheme-less or trailing-slash forms — `https://mcp.example.com` exactly. It
 is compared against the `aud` claim of every OAuth access token, so a mismatch
-rejects every token with no useful error. `deploy/lib.sh` refuses both shapes
-before deploying.
+rejects every token with no useful error. It is a public hostname, not a
+secret, so it needs no secret-handling on the way in.
 
-## 2. Add `OAUTH_ALLOWED_REDIRECT_HOSTS`
+## 2. Set `OAUTH_ALLOWED_REDIRECT_HOSTS`
 
 This decides where an authorization code may be delivered. It is checked when
 you register a client **and again at every authorization**, so it is live
@@ -66,10 +51,6 @@ A comma-separated list taking as many hosts as you need:
 OAUTH_ALLOWED_REDIRECT_HOSTS=claude.ai
 OAUTH_ALLOWED_REDIRECT_HOSTS=claude.ai,chatgpt.com
 OAUTH_ALLOWED_REDIRECT_HOSTS=claude.ai, chatgpt.com, *.staging.example.com
-```
-
-```bash
-gh variable set OAUTH_ALLOWED_REDIRECT_HOSTS --body 'claude.ai,chatgpt.com'
 ```
 
 Surrounding whitespace and a trailing comma are ignored, and matching is
@@ -113,8 +94,7 @@ absent from the authorization server metadata, which is how a conforming client
 knows to expect credentials rather than to register itself.
 
 **Only turn it on** for a client that speaks nothing but DCR: set it `true`,
-deploy, connect that client, set it back to `false`, deploy again. The deploy
-prints a warning on every run while it is on.
+deploy, connect that client, set it back to `false`, deploy again.
 
 ## 4. Rate-limit the token endpoint
 
@@ -142,17 +122,12 @@ redirect to another.
 
 ## 5. Deploy
 
-```bash
-./deploy/deploy.sh
-```
+Nothing OAuth-specific to do here beyond getting the three settings above into
+the running process — see [running.md](running.md).
 
-Nothing special, but note that step 5 asserts the revision carries secret
-*references* rather than values. `PUBLIC_BASE_URL` and the two OAuth settings
-are plain settings, not secrets, so they appear in the deploy's settings line.
-That is expected.
-
-The migration in this release creates the three OAuth tables. §6 writes to one
-of them, which is why it comes after this.
+Migrations create the OAuth tables (`oauth_clients`,
+`oauth_authorization_codes`, `oauth_refresh_tokens`). §6 writes to one of them,
+which is why it comes after this rather than before.
 
 ## 6. Register a client
 
@@ -162,9 +137,9 @@ Registration is a deliberate act performed by you, against the database:
 uv run python -m register_oauth_client --name "Claude" --redirect-uri https://claude.ai/api/mcp/auth_callback
 ```
 
-It needs the deployment's `DATABASE_URL` in the environment — the same value
-`.env.prod` holds. That is the point of a CLI rather than an admin endpoint:
-it requires database access, so a stolen API token cannot register a client.
+It needs the deployment's `DATABASE_URL` in the environment. That is the point
+of a CLI rather than an admin endpoint: it requires database access, so a
+stolen API token cannot register a client.
 
 It prints a `client_id` and a `client_secret`. **The secret is shown once** —
 only its hash is stored. Re-run to issue a new client if you lose it.
@@ -265,8 +240,7 @@ you did not intend it. Note that `issuer` carries a trailing slash and matches
 `authorization_servers` in the previous document byte for byte; that is
 deliberate, and a client will reject the document if they ever differ.
 
-**Confirm nothing regressed** — this must still be the password login, not the
-OAuth token endpoint:
+**`/token` must still be the password login**, not the OAuth token endpoint:
 
 ```bash
 curl -sS -o /dev/null -w '%{http_code}\n' -X POST https://mcp.example.com/token -d 'username=x&password=y'
@@ -275,14 +249,8 @@ curl -sS -o /dev/null -w '%{http_code}\n' -X POST https://mcp.example.com/token 
 Expect `401`, the ordinary wrong-password answer. A `400` with an
 `{"error": ...}` body would mean the OAuth token endpoint was mounted over it.
 
-**Static API keys must still work.** The bridge is unaffected by any of this:
-
-```json
-{"mcpServers":{"resume":{"command":"npx","args":["-y","mcp-remote","https://mcp.example.com/resume/mcp","--header","Authorization: Bearer YOUR_KEY"]}}}
-```
-
-If that stops working after the deploy, it is a backwards-compatibility
-regression rather than a configuration problem.
+**Static API keys still work alongside OAuth** — enabling one does not disable
+the other. See [mcp-clients.md](mcp-clients.md).
 
 ## 9. After it works
 

@@ -23,14 +23,10 @@ class DatabaseService:
             cls._engine = create_async_engine(
                 str(settings.database_url),
                 echo=settings.database_echo,
-                # A serverless Postgres suspends its compute when idle — Neon
-                # after five minutes — and every pooled connection dies with
-                # it. Without this the first request after a quiet spell is
-                # served a dead socket and fails; pre_ping spends one round
-                # trip proving the connection before handing it over, and
-                # recycle keeps the pool from holding anything long enough to
-                # be dropped by an idle timeout in the first place. Both are
-                # no-ops on SQLite.
+                # A serverless Postgres suspends its compute when idle (Neon
+                # after five minutes) and every pooled connection dies with it,
+                # so the first request after a quiet spell would be served a
+                # dead socket. Both settings are no-ops on SQLite.
                 pool_pre_ping=True,
                 pool_recycle=300,
             )

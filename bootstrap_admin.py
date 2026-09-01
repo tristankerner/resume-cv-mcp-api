@@ -30,8 +30,8 @@ class BootstrapAdminCommand:
         )
 
         # Checked before prompting so a claimed database doesn't ask for a
-        # credential it is only going to throw away. ensure_admin checks
-        # again, which is what actually settles the race.
+        # credential it will throw away. ensure_admin checks again, which is
+        # what settles the race.
         async with DatabaseService.session() as db:
             if await User.any_with_role(db, Roles.ADMIN):
                 print("An admin already exists; nothing to do.")

@@ -126,8 +126,7 @@ class TestDatabaseServiceCaching:
         pool_before = first.pool
         await DatabaseService.reset()
         assert DatabaseService._engine is None
-        # Disposed, not merely dropped: dispose() closes the pool's
-        # connections and swaps in a fresh pool, so a changed pool is what
+        # dispose() swaps in a fresh pool, so a changed pool is what
         # distinguishes a disposed engine from an abandoned one.
         assert first.pool is not pool_before
         assert DatabaseService.engine() is not first

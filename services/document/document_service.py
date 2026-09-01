@@ -55,10 +55,8 @@ class DocumentService(ServiceProviderInterface):
         self.principal.require_scope(scope)
 
     def _owner(self) -> int:
-        """The caller's own id. Every private read, every write, and the
-        delete filter on this — a document owned by someone else is a 404,
-        not a 403, the same reasoning ApiKeyService.revoke already uses for
-        whose row a request may act on."""
+        """The caller's own id, which every private read, write and delete
+        filters on. A document owned by someone else is a 404, not a 403."""
         if self.principal is None:
             raise AuthErrors.credentials()
         return self.principal.user_id
@@ -111,12 +109,11 @@ class DocumentService(ServiceProviderInterface):
         user = await User.get_user_by_id(self.db, user_id)
         return await self._read_public(user, document_name)
 
-    # The resume and its two companions — the field metadata and the tailoring
-    # instructions — differ only in the model their payload validates against.
-    # The scope check, the type check, and the load are shared; each envelope
-    # is built by its own method so the type parameter stays concrete, which is
-    # what lets FastAPI enforce the shape and document the three payloads
-    # separately in OpenAPI.
+    # The resume and its two companions differ only in the model their payload
+    # validates against, so the scope check, type check and load are shared.
+    # Each envelope is built by its own method to keep the type parameter
+    # concrete, which is what lets FastAPI document the three payloads
+    # separately.
     async def _read_private(
         self,
         document_name: str,
@@ -129,9 +126,8 @@ class DocumentService(ServiceProviderInterface):
         docs = await self._reader(owner_id).revisions(
             document_name, limit=revisions, newest_first=(order == "newest_first")
         )
-        # Type is immutable per document, so checking the first revision
-        # returned is enough to know every one of them belongs under this
-        # route. 404 rather than 400: under this route, that name is not a
+        # Type is immutable per document, so the first revision speaks for all
+        # of them. 404 rather than 400: under this route, that name is not a
         # document of this type.
         if not docs or docs[0].type != expected:
             raise DocumentErrors.not_found()
@@ -219,10 +215,9 @@ class DocumentService(ServiceProviderInterface):
     def _readable_types(self) -> set[DocumentType]:
         """Whichever document types the caller holds a read scope for.
 
-        Shared by list_documents and get_schemas: both span all three types
-        and answer with whichever the caller may read, refusing only when
-        that is none of them — a key narrowed to the skill document sees the
-        skill type, not a 403 for the two it was deliberately not given.
+        Shared by list_documents and get_schemas, which refuse only when the
+        caller may read none of the three — a key narrowed to the skill
+        document sees the skill type, not a 403 for the other two.
         """
         if self.principal is None:
             raise AuthErrors.credentials()
@@ -257,8 +252,8 @@ class DocumentService(ServiceProviderInterface):
     async def get_schemas(self) -> GetSchemasResponse:
         """The JSON Schema for each document type the caller may read.
 
-        Authorization mirrors list_documents exactly. The schemas themselves
-        are precomputed in DocumentTypeRegistry.SCHEMAS_BY_TYPE — model_json_schema() is not cheap,
+        Authorization mirrors list_documents. The schemas are precomputed in
+        DocumentTypeRegistry.SCHEMAS_BY_TYPE: model_json_schema() is not cheap
         and these never change at runtime.
         """
         readable = self._readable_types()
@@ -273,11 +268,9 @@ class DocumentService(ServiceProviderInterface):
         """Delete every revision of one of the caller's own documents.
 
         The route names only a document, so which delete scope applies is not
-        known until the document is loaded. That ordering — 401, then 404,
-        then 403 — is deliberate: a name the caller does not own is not
-        distinguishable from one that does not exist, which is the rule
-        everywhere else here, and it is only after the document is known to be
-        theirs that they are told they may not delete it.
+        known until it is loaded. The resulting 401, then 404, then 403
+        ordering is deliberate: a name the caller does not own stays
+        indistinguishable from one that does not exist.
         """
         owner_id = self._owner()
         document = await self._reader(owner_id).latest(document_name)
@@ -302,11 +295,9 @@ class DocumentService(ServiceProviderInterface):
         """Move every revision of one of the caller's own documents to a new
         name.
 
-        Same 401, then 404, then 403 ordering as delete_document, for the same
-        reason: a name the caller does not own must stay indistinguishable
-        from one that does not exist. Requires both the type's write and
-        delete scopes — a rename writes rows under the new name and destroys
-        rows under the old one, so it needs permission for both halves.
+        Same 401, then 404, then 403 ordering as delete_document. Requires both
+        the type's write and delete scopes: a rename writes rows under the new
+        name and destroys rows under the old one.
         """
         owner_id = self._owner()
         document = await self._reader(owner_id).latest(document_name)

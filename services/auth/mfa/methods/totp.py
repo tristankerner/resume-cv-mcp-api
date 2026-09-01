@@ -17,14 +17,12 @@ from services.auth.mfa.secret_box import MfaSecretBox
 class TotpMethod(MfaMethod):
     """RFC 6238 TOTP, six digits on a thirty-second step.
 
-    The whole of the algorithm comes from pyotp; what is here is enrolment,
-    the drift window, and the replay guard — the three things a library
-    cannot decide for a deployment.
+    The algorithm comes from pyotp; what is here is enrolment, the drift
+    window, and the replay guard.
 
-    The only class in the codebase that handles a TOTP seed in the clear, and
-    it holds one for the length of a method call. Everything on either side —
-    the column, the DTOs, the registry — sees either a sealed string or
-    nothing at all. See MfaSecretBox.
+    The only class that handles a TOTP seed in the clear, and it holds one for
+    the length of a method call — the column, the DTOs and the registry all
+    see a sealed string. See MfaSecretBox.
     """
 
     KIND = MfaMethodKind.TOTP
@@ -78,18 +76,16 @@ class TotpMethod(MfaMethod):
 
         secret = self.secret_box.open(credential.secret)
         if secret is None:
-            # The stored value will not open under any configured key. Refused
-            # rather than raised: this is the wrong-key failure, and a login
-            # path that 500s on it tells an unauthenticated caller more about
-            # the deployment than a refusal does. `verify_mfa_key` is what is
-            # supposed to catch this, at startup, before anyone tries.
+            # No configured key opens the stored value. Refused rather than
+            # raised: a login path that 500s tells an unauthenticated caller
+            # more about the deployment than a refusal does. `verify_mfa_key`
+            # is what catches this, at startup.
             return False
 
-        # utcnow() is naive UTC by project convention (persistence/base.py);
-        # pyotp treats a naive datetime as local time, so it is made aware
-        # here, once, and the same aware value feeds both calls below — using
-        # a fresh conversion for each would let the drift window and the
-        # recorded step disagree by the local UTC offset outside of UTC.
+        # utcnow() is naive UTC by project convention (persistence/base.py) and
+        # pyotp reads a naive datetime as local time. Converted once, so the
+        # drift window and the recorded step cannot disagree by the local UTC
+        # offset.
         aware_now = now.replace(tzinfo=UTC)
         totp = pyotp.TOTP(secret)
         drift = self.settings.mfa_totp_drift_steps
@@ -98,16 +94,12 @@ class TotpMethod(MfaMethod):
             if not hmac.compare_digest(expected, cleaned):
                 continue
             step = totp.timecode(aware_now) + offset
-            # The code matched; whether it is *spent* is decided by the
-            # database, not here. `claim_totp_step` records the step only if
-            # nothing at or past it is recorded already, so a code already
-            # accepted cannot be presented again — not even within the same
-            # thirty-second step it was minted for, not by walking backwards
-            # inside the drift window, and not by a second request racing
-            # this one. Its return is the verdict.
-            #
-            # The re-seal rides on the same statement, so key rotation
-            # completes itself as people log in rather than needing a sweep.
+            # The code matched; whether it is *spent* is the database's call.
+            # `claim_totp_step` records the step only if nothing at or past it
+            # is recorded already, which is what stops a replay from within the
+            # same step, from walking backwards through the drift window, and
+            # from a second request racing this one. The re-seal rides on the
+            # same statement, so key rotation completes itself as people log in.
             return await MfaCredential.claim_totp_step(
                 credential,
                 self.db,

@@ -368,11 +368,9 @@ class TestFullFlow:
         assert set(token["scope"].split()) == {"resume:read", "metadata:read"}
         assert token["refresh_token"]
 
-        # This is the same seam tests/test_mcp.py::TestTokenVerifier uses to
-        # prove a credential authenticates on the MCP surface — a live
+        # The same seam tests/test_mcp.py::TestTokenVerifier uses: a live
         # streamable-HTTP session needs the app's lifespan running, which the
-        # test client does not start, so this is the established way this
-        # project verifies "a call to /resume/mcp with this token succeeds".
+        # test client does not start.
         access = await McpTokenVerifier().verify_token(token["access_token"])
         assert access is not None
         assert access.claims["user_id"] == admin.user_id

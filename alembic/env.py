@@ -28,11 +28,8 @@ def _configured_url() -> str | None:
 
     Startup runs `alembic upgrade head` in-process, so without this the
     migrations would go to whatever alembic.ini hardcodes while the app talked
-    to DATABASE_URL — fine locally where they agree, silently wrong in a
-    container where the database lives on a mounted volume.
-
-    Falls back to the ini value when settings can't be loaded, so alembic
-    remains usable without a full environment.
+    to DATABASE_URL. Falls back to the ini value when settings can't be loaded,
+    so alembic remains usable without a full environment.
     """
     try:
         from services.config.config_service import ConfigService
@@ -51,9 +48,8 @@ def _configured_url() -> str | None:
 
     # The two Postgres drivers spell TLS differently: asyncpg takes `ssl`,
     # psycopg takes libpq's `sslmode`. Swapping only the driver would hand
-    # psycopg a parameter it rejects, so a managed database that requires TLS —
-    # Neon, and most others — could not be migrated with the URL the
-    # application uses. Translate rather than ask for the setting twice.
+    # psycopg a parameter it rejects, so a managed database requiring TLS could
+    # not be migrated with the URL the application uses.
     if url.drivername == "postgresql+psycopg" and "ssl" in url.query:
         query = dict(url.query)
         query["sslmode"] = query.pop("ssl")
@@ -62,12 +58,8 @@ def _configured_url() -> str | None:
     return url.render_as_string(hide_password=False)
 
 
-# this is the Alembic Config object, which provides
-# access to the values within the .ini file in use.
 config = context.config
 
-# Interpret the config file for Python logging.
-# This line sets up loggers basically.
 if config.config_file_name is not None:
     # disable_existing_loggers defaults to True, which would switch off every
     # logger already configured — including the one the app logs to. Startup
@@ -75,30 +67,12 @@ if config.config_file_name is not None:
     # silently swallows every log line the application emits afterwards.
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
-# add your model's MetaData object here
-# for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
 target_metadata = SQAlchemyBase.metadata
-
-# other values from the config, defined by the needs of env.py,
-# can be acquired:
-# my_important_option = config.get_main_option("my_important_option")
-# ... etc.
 
 
 def run_migrations_offline() -> None:
-    """Run migrations in 'offline' mode.
-
-    This configures the context with just a URL
-    and not an Engine, though an Engine is acceptable
-    here as well.  By skipping the Engine creation
-    we don't even need a DBAPI to be available.
-
-    Calls to context.execute() here emit the given string to the
-    script output.
-
-    """
+    """Run migrations against a URL rather than an Engine, emitting SQL to the
+    script output instead of executing it."""
     url = _configured_url() or config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
@@ -112,12 +86,7 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode.
-
-    In this scenario we need to create an Engine
-    and associate a connection with the context.
-
-    """
+    """Run migrations against a live connection from a created Engine."""
     section = config.get_section(config.config_ini_section, {})
     configured_url = _configured_url()
     if configured_url:

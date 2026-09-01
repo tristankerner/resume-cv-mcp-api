@@ -12,11 +12,9 @@ class AuthorizationServerMetadata(BaseModel):
     issuer: str
     authorization_endpoint: str
     token_endpoint: str
-    # Absent, not null, when registration is closed — RFC 8414 marks it
-    # OPTIONAL, and its absence is how a client is told to expect a
-    # pre-registered client_id instead of registering itself. The route
-    # serving this sets response_model_exclude_none so it is omitted rather
-    # than emitted as JSON null, which would be a malformed metadata document.
+    # Absent, not null, when registration is closed: RFC 8414 marks it
+    # OPTIONAL, and a JSON null here is a malformed metadata document. The
+    # route serving this sets response_model_exclude_none.
     registration_endpoint: str | None = None
     revocation_endpoint: str
     scopes_supported: list[str]
@@ -26,10 +24,9 @@ class AuthorizationServerMetadata(BaseModel):
     token_endpoint_auth_methods_supported: list[str] = ["client_secret_post", "none"]
 
 
-# The two auth methods this server issues clients under. "none" is the
-# expected shape for an MCP client: it cannot keep a secret, so PKCE is what
-# binds the exchange instead. RFC 7591 defines several others; anything not
-# in this pair is refused as unsupported rather than silently downgraded.
+# "none" is the expected shape for an MCP client: it cannot keep a secret, so
+# PKCE binds the exchange instead. The other methods RFC 7591 defines are
+# refused as unsupported rather than silently downgraded.
 SUPPORTED_AUTH_METHODS = frozenset({"none", "client_secret_post"})
 
 

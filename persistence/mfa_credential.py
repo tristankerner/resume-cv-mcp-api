@@ -36,11 +36,9 @@ class MfaCredential(SQAlchemyBase):
     )
     kind: Mapped[str] = mapped_column(nullable=False)
     label: Mapped[str] = mapped_column(nullable=False)
-    # Sealed, not plaintext — MfaSecretBox owns the format and the "v1:"
-    # prefix that marks it (§4.8). Nothing outside TotpMethod reads this
-    # column, and nothing at all should compare it to a secret in hand.
-    # Unbounded String, so a Fernet token (~100 base64 characters for a
-    # 32-character base32 seed) needs no migration for length.
+    # Sealed, not plaintext — MfaSecretBox owns the format and the "v1:" prefix
+    # that marks it. Nothing outside TotpMethod reads this column. Unbounded
+    # String, so a Fernet token needs no migration for length.
     secret: Mapped[str | None]
     # The TOTP time step most recently accepted for this credential. A code is
     # refused if its step is not strictly greater, which is what stops the
@@ -112,17 +110,14 @@ class MfaCredential(SQAlchemyBase):
         """Record `step` as used, if and only if nothing at or past it has
         been recorded already. Returns whether this caller won the claim.
 
-        The replay guard, and the reason it is one statement rather than a
-        read-modify-write: two requests presenting the same code both read
-        `last_used_step` before either writes, so comparing in Python and
-        assigning afterwards accepts the code twice — which is exactly the
-        real-time relay this guard exists to stop. `with_for_update()` would
-        close it on Postgres and silently do nothing on SQLite (see
-        `User.lock_for_update`), leaving the guard unenforced on the database
-        the tests run against; a conditional UPDATE is atomic on both.
+        One statement rather than a read-modify-write: two requests presenting
+        the same code both read `last_used_step` before either writes, so
+        comparing in Python would accept the code twice — the real-time relay
+        this guard exists to stop. `with_for_update()` would close that on
+        Postgres and silently do nothing on SQLite (see `User.lock_for_update`);
+        a conditional UPDATE is atomic on both.
 
-        `secret` rides along because the lazy re-seal writes the same row —
-        one statement, not two.
+        `secret` rides along because the lazy re-seal writes the same row.
         """
         result = await db.execute(
             update(MfaCredential)
@@ -139,9 +134,9 @@ class MfaCredential(SQAlchemyBase):
         if not cast(CursorResult, result).rowcount:
             return False
 
-        # The UPDATE went round the ORM, so the instance still holds the old
-        # values. Marked as already-persisted rather than assigned, so the
-        # object matches the row without the next flush re-writing it.
+        # The UPDATE went round the ORM. Marked as already-persisted rather
+        # than assigned, so the instance matches the row without the next flush
+        # re-writing it.
         set_committed_value(credential, "last_used_step", step)
         set_committed_value(credential, "last_used_at", now)
         set_committed_value(credential, "secret", secret)

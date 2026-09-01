@@ -236,10 +236,9 @@ class FieldGuide(Base):
     """What one field of the resume payload means and how it may be used."""
 
     # Rooted at the MCP tool's response rather than at the resume, matching
-    # `ResumeSkill`: instructions and guidance both reach across documents, and
-    # a path that means one thing in one document and another thing in the next
-    # is a bug waiting for someone to resolve it against the wrong root. List
-    # elements are marked `[]`: resume.jobs[].highlights[].summary
+    # `ResumeSkill`, since instructions and guidance both reach across
+    # documents. List elements are marked `[]`:
+    # resume.jobs[].highlights[].summary
     path: str
     type: str  # human-readable, e.g. "string", "list[Highlight]"
     description: str

@@ -5,8 +5,8 @@ Counters for the fail2ban-style throttle on password logins: five columns on
 tally that catches spraying across many usernames.
 
 Additive only, and every new column is either nullable or carries a server
-default, so the revision applied ahead of the deploy (see deploy/03-migrate.sh)
-is readable by the code already running in front of it.
+default, so a database migrated ahead of the deploy stays readable by the code
+already running in front of it.
 
 Revision ID: c1e5a7d92b30
 Revises: d3f2b8c91a04

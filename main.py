@@ -38,12 +38,10 @@ log = logging.getLogger("uvicorn")
 class StartupTasks:
     """Migrations, admin bootstrap, and the two startup sweeps.
 
-    Grouped because `Application._lifespan` runs them in this fixed order,
-    once per start, and nothing else calls any of them individually except
-    tests. Takes a `ConfigService` rather than reading one of its own so a
-    caller controls exactly which settings snapshot it acts on — `_lifespan`
-    reads a fresh one on every run, which is what lets a test change the
-    environment and immediately observe it here.
+    `Application._lifespan` runs them in this fixed order, once per start.
+    Takes a `ConfigService` rather than reading one of its own so a caller
+    controls which settings snapshot it acts on — that is what lets a test
+    change the environment and immediately observe it here.
     """
 
     def __init__(self, config_service: ConfigService):
@@ -81,19 +79,13 @@ class StartupTasks:
             )
 
     async def verify_mfa_key(self) -> None:
-        """Open one sealed TOTP secret, to prove the configured key is the
-        one this database was written with.
+        """Open one sealed TOTP secret, to prove the configured key is the one
+        this database was written with.
 
         A wrong key is otherwise silent until somebody tries to log in, at
-        which point every enrolled account is locked out at once and the
-        cause is several layers away from the symptom. Refusing to start is
-        the same call `bootstrap_admin_user` makes when it cannot create the
-        admin it was configured with: a deployment that cannot serve its
-        users should fail visibly rather than serve them badly.
-
-        Nothing to check on a database with no sealed rows, which is every
-        database before the first enrolment — so this is silent on a fresh
-        deployment and only ever speaks when it has evidence.
+        which point every enrolled account is locked out at once. A database
+        with no sealed rows has nothing to check, so this is silent on a fresh
+        deployment and only speaks when it has evidence.
         """
         async with DatabaseService.session() as db:
             sealed = (
@@ -121,10 +113,8 @@ class StartupTasks:
     async def prune_oauth_grants(self) -> None:
         """Drop authorization codes and refresh tokens past their TTL.
 
-        Same reasoning and the same startup-sweep placement as
-        `prune_auth_failures`: there is no scheduler, and a scale-to-zero
-        deployment cold-starts often enough that the tables cannot grow far
-        between sweeps. A revoked-but-unexpired refresh token is kept — see
+        Same startup-sweep placement as `prune_auth_failures`. A
+        revoked-but-unexpired refresh token is kept — see
         `OAuthRefreshToken.prune` — since presenting it again is the reuse
         signal the rotation chain depends on.
         """
@@ -139,11 +129,9 @@ class StartupTasks:
     async def prune_auth_failures(self) -> None:
         """Drop login-failure rows that no longer decide anything.
 
-        Startup is the whole schedule: there is no scheduler in this service,
-        and a scale-to-zero deployment cold-starts often enough that the table
-        cannot grow far between sweeps. The window is generous — a row is only
-        removed once it is both outside the counting window and past any ban —
-        so a sweep that never runs costs disk, not correctness.
+        Startup is the whole schedule: there is no scheduler in this service. A
+        row is only removed once it is both outside the counting window and
+        past any ban, so a sweep that never runs costs disk, not correctness.
         """
         settings = self.config_service.settings
         window = timedelta(
@@ -158,17 +146,11 @@ class StartupTasks:
 class Application:
     """Assembles the ASGI app: MCP mount, middleware, routers, client route."""
 
-    # Served from the API's own origin, this page is same-origin with every
-    # authenticated route, so it is worth a little more care than a static
-    # file elsewhere would need.
-    #
-    # No `script-src`, deliberately: the page is one inline module plus two
-    # CDN imports, so locking scripts down would need either `unsafe-inline`
-    # — which buys nothing — or a hash that changes on every edit to the
-    # file. Integrity for the CDN modules comes from the SRI hashes in the
-    # page itself. What is left is still worth having: `frame-ancestors`
-    # because this page has a login form on it and framing it is only useful
-    # to someone else, and the other two because they cost nothing.
+    # No `script-src`, deliberately: the page is one inline module plus two CDN
+    # imports, so locking scripts down would need either `unsafe-inline` —
+    # which buys nothing — or a hash that changes on every edit to the file.
+    # Integrity for the CDN modules comes from the SRI hashes in the page
+    # itself. `frame-ancestors` matters because the page carries a login form.
     CLIENT_HEADERS: ClassVar[dict[str, str]] = {
         "Content-Security-Policy": (
             "frame-ancestors 'none'; base-uri 'self'; object-src 'none'"
@@ -192,9 +174,9 @@ class Application:
         self._app = FastAPI(
             lifespan=combine_lifespans(self._lifespan, mcp_app.lifespan),
             swagger_ui_parameters={"defaultModelsExpandDepth": -1},
-            # The built-in docs are served without a credential. routers/docs.py
-            # serves the same three paths behind a login instead; switching
-            # these off is what leaves them free for it.
+            # The built-in docs are served without a credential. Switching them
+            # off leaves the three paths free for routers/docs.py, which serves
+            # them behind a login.
             docs_url=None,
             redoc_url=None,
             openapi_url=None,
@@ -207,22 +189,15 @@ class Application:
 
         # The résumé page is a separate site on a separate origin, so the
         # public document routes have to declare themselves cross-origin
-        # readable or a browser will fetch them and then discard the
-        # response. Only those routes — see the class docstring for why the
-        # header is a literal `*` and why it is stamped even on requests
-        # that send no Origin.
+        # readable or a browser will fetch them and then discard the response.
         self._app.add_middleware(PublicCorsMiddleware)
 
-        # Lets a browser-based client (clients/web/index.html) call the
-        # authenticated routes from an allowlisted origin. Empty by default,
-        # so an unconfigured deployment behaves exactly as it did before
-        # this existed.
         self._app.add_middleware(ClientCorsMiddleware)
 
-        # RFC 9728 requires the protected-resource document at the origin
-        # root, but http_app() registers it under the /resume mount, where a
-        # client's discovery would never look. The copy left inside the
-        # sub-app is harmless; this is the one that is actually reached.
+        # RFC 9728 requires the protected-resource document at the origin root,
+        # but http_app() registers it under the /resume mount, where a client's
+        # discovery would never look. The copy left inside the sub-app is
+        # harmless; this is the one that is actually reached.
         for route in auth_provider.get_well_known_routes(mcp_path="/mcp"):
             self._app.router.routes.append(route)
 
@@ -247,32 +222,26 @@ class Application:
     def _build_auth_provider(self) -> RemoteAuthProvider:
         """Resource server (this endpoint) plus the authorization servers a
         client may trust to issue it a token — here, just this service's own
-        AS at /oauth/*. `resource_base_url` compensates for the /resume
-        mount: http_app() only knows its own "/mcp" suffix, so left unset the
+        AS at /oauth/*. `resource_base_url` compensates for the /resume mount:
+        http_app() only knows its own "/mcp" suffix, so left unset the
         advertised resource URL would be wrong by construction.
         """
         settings = self.settings
         return RemoteAuthProvider(
             token_verifier=McpTokenVerifier(),
-            # AnyHttpUrl renders a bare host with a trailing slash —
-            # "http://host/" — whatever is passed in, so this entry always
-            # carries one. That is the string a client adopts as the issuer
-            # identifier, and RFC 8414 §3.3 then requires the `issuer` it
-            # gets back from /.well-known/oauth-authorization-server to be
-            # *identical* to it, on pain of discarding the document
-            # entirely. So the metadata in services/oauth/oauth_service.py
-            # deliberately renders its issuer the same way rather than from
-            # the slash-stripped public_base_url_str. Change either one and
-            # change both.
+            # AnyHttpUrl always renders this with a trailing slash, and that is
+            # the string a client adopts as the issuer identifier. RFC 8414
+            # §3.3 then requires the `issuer` from
+            # /.well-known/oauth-authorization-server to be identical to it, so
+            # services/oauth/oauth_service.py renders its issuer the same way.
+            # Change either one and change both.
             authorization_servers=[AnyHttpUrl(settings.public_base_url_str)],
             base_url=settings.public_base_url_str,
             resource_base_url=f"{settings.public_base_url_str}/resume",
             # Only what the MCP tools actually use. A client takes its scope
-            # request straight from this list, so advertising the whole enum
-            # is what made Claude ask for users:admin — and an OAuth token
-            # authenticates on the REST surface too, so granting it would
-            # let a connector delete users. Widening this is a deliberate
-            # act; see OAUTH_ISSUABLE_SCOPES.
+            # request straight from this list, and an OAuth token authenticates
+            # on the REST surface too, so advertising the whole enum would let
+            # a connector ask for — and get — users:admin.
             scopes_supported=sorted(str(scope) for scope in OAUTH_ISSUABLE_SCOPES),
             resource_name="resume-api MCP",
         )
@@ -284,17 +253,12 @@ class Application:
         """FastAPI's 422, minus the echo of what was sent.
 
         The stock handler puts the offending value in an `input` key, so a
-        request that fails validation *on some other field* still comes back
-        carrying whatever else it contained — and several routes here carry a
-        password: `POST /users/me/password` and the three under
-        `/users/me/mfa`. A plaintext password in a response body reaches
-        browser devtools, proxy logs and any error tracker watching 4xx.
-
+        request failing validation on some *other* field still echoes back
+        whatever else it carried — and several routes here carry a password.
         `SecretStr` does not help: `input` is the raw body as it arrived,
-        before any field was parsed into one. Dropping the key is what fixes
-        it, and nothing needs it — the browser client reads `loc` and `msg`
-        (see `parseValidationErrors` in clients/web/index.html) and ignores
-        the rest.
+        before any field was parsed into one.
+
+        Nothing needs the key; the browser client reads `loc` and `msg`.
         """
         errors = [
             {key: value for key, value in error.items() if key != "input"}
@@ -309,31 +273,16 @@ class Application:
     def _register_client_route(app_: FastAPI, configured_path: str | None) -> bool:
         """Serve the browser client at GET /client, if one is configured.
 
-        Same-origin, which is what makes this the simplest way to put the
-        client in front of a deployed API: CLIENT_ALLOWED_ORIGINS does not
-        need to name it, and neither does anything else. Unset by default,
-        so the API depends on no build artifact and nothing changes for a
-        deployment that does not want this.
+        Served same-origin, so CLIENT_ALLOWED_ORIGINS does not need to name it.
+        Which file is the deployment's business: clients live in their own
+        repositories and one is copied into the build context before
+        `COPY . /app`. .dockerignore keeps a locally built
+        clients/web/dist/index.html out of any image on purpose — it is
+        gitignored, so nothing reviews what would be served.
 
-        Which file is the deployment's business. Clients live in their own
-        repositories; one is copied into the build context before `COPY . /app`
-        and named here. The reference deployment uses
-        /app/clients/web/index.html. A locally built clients/web/dist/index.html
-        works too, but .dockerignore keeps that one out of any image on purpose:
-        it is gitignored, so nothing reviews what would be served.
-
-        The path is resolved once, here, rather than per request — a file
-        that is missing at startup will still be missing on the next
-        request, and declining to register the route is more honest than a
-        404 that never changes. Returns whether it was registered, which is
-        the only thing worth asserting about it.
-
-        A staticmethod taking `app_` explicitly, rather than an instance
-        method reading `self.app`: it is called once from `__init__` against
-        the app under construction, and tests exercise both branches against
-        a bare `FastAPI()` they build themselves, which would otherwise mean
-        constructing a whole `Application` — migrations, MCP mount and all —
-        just to check a warning gets logged.
+        The path is resolved once here rather than per request: declining to
+        register the route is more honest than a 404 that never changes.
+        Returns whether it was registered.
         """
         if not configured_path:
             return False
@@ -358,10 +307,9 @@ class Application:
     @asynccontextmanager
     async def _lifespan(self, app_):
         log.info("Starting up...")
-        # A fresh ConfigService, not self.config_service: this runs once per
-        # process in production, but tests reuse the same Application across
-        # many runs after monkeypatching the environment, and only a fresh
-        # read observes that.
+        # A fresh ConfigService, not self.config_service: tests reuse the same
+        # Application across many runs after monkeypatching the environment,
+        # and only a fresh read observes that.
         tasks = StartupTasks(ConfigService.get_without_deps())
         if tasks.config_service.settings.run_migrations_on_startup:
             log.info("run alembic upgrade head...")

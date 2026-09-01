@@ -20,12 +20,12 @@ class User(SQAlchemyBase):
     roles: Mapped[list[str]] = mapped_column(MutableList.as_mutable(JSON))
     active: Mapped[bool] = mapped_column(default=True, nullable=False)
 
-    # Login throttling. Distinct from `active` on purpose: `active` is checked
-    # on every credential, so clearing it kills live sessions and API keys,
-    # whereas these are read only where a password is presented. A locked-out
-    # owner can therefore still reach the API with a key they already hold and
-    # unlock themselves — which is what keeps a permanent lock from being a
-    # kill switch any stranger can pull. See services/auth/lockout.py.
+    # Login throttling, distinct from `active` on purpose: `active` is checked
+    # on every credential, whereas these are read only where a password is
+    # presented. A locked-out owner can therefore still reach the API with a
+    # key they already hold and unlock themselves, which keeps a permanent lock
+    # from being a kill switch any stranger can pull. See
+    # services/auth/lockout.py.
     failed_login_count: Mapped[int] = mapped_column(default=0, nullable=False)
     first_failed_login_at: Mapped[datetime | None]
     locked_until: Mapped[datetime | None]

@@ -575,9 +575,9 @@ class TestChangePassword:
 
 
 class TestInteractiveLoginRequiredForRecoveryFields:
-    """§1.6 / §2.6 part two: a self PATCH touching password, username or
-    email needs a password login, closing the hole where any credential for
-    the account — an API key, an OAuth token — could take it over."""
+    """A self PATCH touching password, username or email needs a password
+    login, closing the hole where any credential for the account — an API key,
+    an OAuth token — could take it over."""
 
     async def test_api_key_self_patch_of_password_is_refused(
         self, client, member, password

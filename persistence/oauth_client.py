@@ -22,9 +22,8 @@ class OAuthClient(SQAlchemyBase):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     client_id: Mapped[str] = mapped_column(unique=True, index=True, nullable=False)
-    # None for a public client (PKCE, no secret) — a DCR request with
-    # token_endpoint_auth_method "none", which is the expected shape for an
-    # MCP client that cannot keep a secret.
+    # None for a public client (PKCE, no secret): a DCR request with
+    # token_endpoint_auth_method "none".
     client_secret_hash: Mapped[str | None]
     client_name: Mapped[str] = mapped_column(nullable=False)
     redirect_uris: Mapped[list[str]] = mapped_column(

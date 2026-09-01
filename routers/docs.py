@@ -6,17 +6,13 @@ that is a public index of every route the service has, its payload shapes
 and its authentication scheme, so they are re-declared here behind a login
 instead — `main` disables the built-ins, which is what frees the paths.
 
-All three, not just the two pages. The UIs are only renderers for
-`/openapi.json`; guarding them while leaving the schema open would guard
-nothing. Outside production `DocsAccessGuard.check` waves everyone through, so
-what a developer browses locally is the same surface that is deployed, minus
-the prompt.
+All three, not just the two pages: the UIs are only renderers for
+`/openapi.json`, so guarding them while leaving the schema open would guard
+nothing. Outside production `DocsAccessGuard.check` waves everyone through.
 
-The login itself is an HTML form, not HTTP Basic: a password, then — for an
+The login is an HTML form, not HTTP Basic: a password, then — for an
 MFA-enrolled account — a code, then a signed `HttpOnly` cookie. This is the
-one surface in the service that takes a cookie at all; see
-middleware/client_cors.py and ConfigServiceModel.client_allowed_origins for
-what that does and does not change about the rest of the API.
+one surface in the service that takes a cookie at all.
 """
 
 from typing import Annotated, ClassVar
@@ -50,9 +46,9 @@ class DocsRouter:
     OAUTH2_REDIRECT_URL: ClassVar[str] = "/docs/oauth2-redirect"
     LOGIN_URL: ClassVar[str] = "/docs/login"
 
-    # An open-redirect guard, not tidiness: `next` arrives as attacker-
-    # controlled query or form input, and the only acceptable destinations
-    # are the docs paths this router itself serves.
+    # An open-redirect guard: `next` arrives as attacker-controlled query or
+    # form input, and the only acceptable destinations are the docs paths this
+    # router serves.
     NEXT_ALLOWLIST: ClassVar[frozenset[str]] = frozenset(
         {OPENAPI_URL, DOCS_URL, REDOC_URL, OAUTH2_REDIRECT_URL}
     )
@@ -123,9 +119,9 @@ class DocsRouter:
         request: Request,
         db: DbSession,
         config_service: Settings,
-        # Every field defaults to "" rather than being required, the same
-        # reasoning routers/oauth.py's authorize_submit gives: a missing
-        # value should re-render this form with an error, not 422.
+        # Every field defaults to "" for the same reason authorize_submit in
+        # routers/oauth.py does: a missing value should re-render this form
+        # with an error, not 422.
         username: Annotated[str, Form()] = "",
         password: Annotated[str, Form()] = "",
         next: Annotated[str, Form()] = DOCS_URL,
@@ -161,10 +157,9 @@ class DocsRouter:
             await auth_service.clear_login_failures(user)
             return self._issue_cookie(user, next_path, settings)
 
-        # AuthErrors.account_locked(_permanently) propagating out of here as
-        # a 429/401 is fine and correct — the same throttle /token uses, and
-        # not swallowing it is what keeps the docs login from being a way
-        # around it.
+        # AuthErrors.account_locked(_permanently) is deliberately not caught:
+        # letting it out as a 429/401 keeps the docs login from being a way
+        # around the throttle /token uses.
         user = await auth_service.authenticate_user(username, password)
         if not user:
             html = DocsLoginPageRenderer.render_login_form(
@@ -199,9 +194,8 @@ class DocsRouter:
         token, expires_in = DocsSessionToken.mint(settings, user)
         response = RedirectResponse(next_path, status_code=303)
         # Path=/ rather than /docs: /openapi.json and /redoc are outside a
-        # /docs prefix. Secure only in production, where the deployment is
-        # reachable over HTTPS; a local run over plain HTTP would otherwise
-        # never see the cookie come back.
+        # /docs prefix. Secure only in production — a local run over plain HTTP
+        # would never see the cookie come back.
         response.set_cookie(
             DocsSessionToken.COOKIE_NAME,
             token,

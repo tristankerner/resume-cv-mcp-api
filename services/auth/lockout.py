@@ -2,23 +2,20 @@
 
 Two counters, the same shape, different keys. One hangs off the user row and
 answers "has this account been guessed at"; one hangs off an address and
-answers "has this caller been guessing at accounts". Neither knows about HTTP —
-they read and mutate a row and return a verdict, so the whole policy is
-testable by constructing an object and calling a function.
+answers "has this caller been guessing at accounts". Neither knows about HTTP.
 
 Both count within a *fixed* window: the tally resets once the window lapses
-rather than sliding with each attempt. That concedes a sustained rate of
-(max_attempts - 1) per window to an attacker patient enough to pace themselves,
-which is the same concession fail2ban makes, and it costs two columns instead
-of a row per attempt — the row-per-attempt design hands an attacker an
-unbounded write amplification on the very path they are hammering.
+rather than sliding. That concedes a sustained (max_attempts - 1) per window to
+a patient attacker, and costs two columns instead of a row per attempt — the
+row-per-attempt design hands an attacker unbounded write amplification on the
+path they are already hammering.
 
-Account locks escalate: the first lasts `base_lock`, and each further lock
-without a successful login in between doubles it, until `permanent_after_locks`
-makes it permanent. A successful login clears the escalation, so an account
-someone actually uses cannot be walked up to a permanent lock by an outsider.
-That property is load-bearing — see `docs`/README on why a permanent lock is
-survivable rather than a stranger's kill switch on the owner's own API.
+Account locks escalate: the first lasts `base_lock`, each further lock without
+a successful login in between doubles it, and `permanent_after_locks` makes it
+permanent. A successful login clears the escalation, so an account someone
+actually uses cannot be walked up to a permanent lock by an outsider — see the
+README on why a permanent lock is survivable rather than a stranger's kill
+switch on the owner's own API.
 """
 
 from __future__ import annotations
@@ -35,9 +32,8 @@ if TYPE_CHECKING:
     from persistence.user import User
     from services.config.config_service import ConfigServiceModel
 
-# Guards the doubling against a nonsensically high `permanent_after_locks`.
-# Reached only if a deployment configures a permanent lock more than sixteen
-# locks out, at which point the duration is already measured in years.
+# Guards the doubling against a nonsensically high `permanent_after_locks`. At
+# sixteen the duration is already measured in years.
 MAX_ESCALATION = 16
 
 
@@ -51,15 +47,13 @@ class LockKind(StrEnum):
 class LockStatus:
     """The verdict on one login attempt.
 
-    The two verdicts that carry no duration are singletons on the class
-    rather than module constants: they are values of this type, and nothing
-    outside it should have to import them separately from the thing they are
-    instances of. Assigned below the class because a frozen dataclass cannot
-    name instances of itself inside its own body.
+    The two verdicts that carry no duration are singletons on the class rather
+    than module constants. They are assigned below the class because a frozen
+    dataclass cannot name instances of itself inside its own body.
     """
 
-    # Declared as ClassVar so the dataclass machinery treats them as class
-    # attributes rather than fields with no default.
+    # ClassVar so the dataclass machinery treats these as class attributes
+    # rather than fields with no default.
     OPEN: ClassVar[LockStatus]
     PERMANENT: ClassVar[LockStatus]
 
@@ -167,8 +161,7 @@ class AccountLock:
         """Forget the failure history after a successful login.
 
         Resets the escalation as well as the tally, which is what keeps a
-        stranger from walking a live account up to a permanent lock: every
-        real login puts the ladder back on the bottom rung.
+        stranger from walking a live account up to a permanent lock.
         `locked_permanently_at` is untouched because no successful login can
         happen while it is set — only `unlock` clears it.
         """
@@ -209,16 +202,13 @@ class AddressPolicy:
     def client_address(self, request: Request | None) -> str | None:
         """The caller's address, taken a fixed number of hops from the right.
 
-        Never the leftmost X-Forwarded-For entry, which is the conventional
-        answer and the wrong one here: a client may send the header itself,
-        and the proxy in front appends to it rather than replacing it, so
-        everything to the left of our own trusted hops is a string the
-        attacker chose. Counting from the right is what makes the value mean
-        "who connected to the proxy we trust".
+        Never the leftmost X-Forwarded-For entry: a client may send the header
+        itself and the proxy in front appends rather than replaces, so
+        everything left of our trusted hops is a string the attacker chose.
 
-        Returns None when the header is too short to satisfy the configured
-        hop count — a request that reached us by some other route than the
-        expected proxy, whose address we therefore cannot establish.
+        Returns None when the header is too short for the configured hop count
+        — a request that arrived by some route other than the expected proxy,
+        whose address cannot be established.
         """
         if request is None or not self.enabled:
             return None
@@ -237,9 +227,8 @@ class AddressPolicy:
     def status(self, failure: AuthFailure | None, now: datetime) -> LockStatus:
         """Whether this address may attempt a password login.
 
-        Never permanent: an address is not an identity, it is reassigned,
-        shared behind NAT, and trivially changed by anyone who cares to.
-        Banning one forever punishes whoever holds the lease next.
+        Never permanent: an address is reassigned and shared behind NAT, so
+        banning one forever punishes whoever holds the lease next.
         """
         if not self.enabled or failure is None:
             return LockStatus.OPEN

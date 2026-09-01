@@ -24,20 +24,13 @@ class ClientCorsMiddleware(CorsMiddleware):
     """Echo an allowlisted `Origin` back on the non-public routes.
 
     **Echo-and-`Vary`, not a literal `*`.** Unlike `/public/*`, these routes
-    are not behind a cache that ignores `Vary` — see PublicCorsMiddleware's
-    docstring for why that rule is different there — so an allowlist that
-    echoes the caller's own origin is both safe and tighter than a wildcard
-    would be.
+    sit behind no cache that ignores `Vary` (see PublicCorsMiddleware), so
+    echoing the caller's own origin is both safe and tighter than a wildcard.
 
-    **No `Access-Control-Allow-Credentials`.** Every API credential travels
-    in an `Authorization` header the client sets explicitly. The one
-    exception is the `docs_session` cookie the production docs login sets
-    (services/auth/docs_session.py) — `HttpOnly`, `SameSite=Lax`, and read by
-    nothing outside routers/docs.py — but omitting this header still matters
-    for it: without `Access-Control-Allow-Credentials: true`, a browser
-    refuses to let cross-origin JavaScript read a credentialed response even
-    if the cookie rode along, so there is nothing for a cross-site request to
-    gain by carrying it.
+    **No `Access-Control-Allow-Credentials`.** Every API credential travels in
+    an `Authorization` header the client sets explicitly. The `docs_session`
+    cookie is the one exception, and omitting this header is what keeps
+    cross-origin JavaScript from reading a response it rode along on.
     """
 
     ALLOWED_METHODS: ClassVar[str] = "GET, POST, PATCH, DELETE, OPTIONS"
@@ -48,10 +41,9 @@ class ClientCorsMiddleware(CorsMiddleware):
         return not scope["path"].startswith(PUBLIC_PATH_PREFIX)
 
     def _allow_origin(self, origin: str | None) -> str | None:
-        # Read fresh on every request rather than captured once at app
-        # construction: ConfigService's own cache (dropped by the test suite's
-        # fresh_settings fixture between tests) is what makes this behave like
-        # every other setting, not a special case for this one middleware.
+        # Read fresh on every request rather than captured at app construction,
+        # so this behaves like every other setting: ConfigService's own cache
+        # keeps it cheap, and the test suite drops that cache between tests.
         allowed_origins = (
             ConfigService.get_without_deps().settings.client_allowed_origins
         )
@@ -73,9 +65,8 @@ class ClientCorsMiddleware(CorsMiddleware):
     def _stamp_headers(self, headers: MutableHeaders, allowed_origin: str) -> None:
         headers[ALLOW_ORIGIN] = allowed_origin
         # `append`, not assignment: MutableHeaders.__setitem__ replaces every
-        # existing value for the key, so assigning here would silently drop a
-        # `Vary` the response already carries. Nothing in this service sets
-        # one today, but a compression middleware or a future MCP release
-        # would set `Vary: Accept-Encoding`, and dropping that in front of a
-        # cache serves the wrong encoding to somebody.
+        # existing value for the key, so assigning would drop a `Vary` the
+        # response already carries. Nothing sets one today, but a compression
+        # middleware would set `Vary: Accept-Encoding`, and dropping that in
+        # front of a cache serves somebody the wrong encoding.
         headers.append(VARY, "Origin")

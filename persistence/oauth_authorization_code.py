@@ -8,9 +8,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import SQAlchemyBase, utcnow
 
-# 60 seconds — long enough for the redirect round trip,
-# short enough that a code leaked in a referrer or a log is worthless by the
-# time anyone could use it.
+# 60 seconds: long enough for the redirect round trip, short enough that a
+# code leaked in a referrer or a log is worthless by the time it is found.
 TTL = timedelta(seconds=60)
 
 

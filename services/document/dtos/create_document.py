@@ -23,10 +23,8 @@ class CreateDocumentRequest[T](BaseModel):
     revision_note: str
     # Three-valued on purpose. Omitting it leaves the flag as the current
     # revision has it, so an edit that only changes content cannot silently
-    # unpublish a document — the failure mode of a plain `bool = False`, and
-    # one whose symptom is a website serving 404 after an ordinary write. A
-    # document with no current revision defaults closed, which is the
-    # deny-by-default rule that used to live in PUBLIC_DOCUMENTS.
+    # unpublish a document — the failure mode of a plain `bool = False`. A
+    # document with no current revision defaults closed.
     public: bool | None = None
     data: T
 

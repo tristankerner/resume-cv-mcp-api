@@ -38,17 +38,14 @@ class TokenIssuer:
         """A JWT access token, discriminated from a password JWT by `token_use`.
 
         Signed with the same key and algorithm as every other token this
-        service issues, so no new key material —
-        `AuthService._authenticate_oauth` dispatches on `token_use`'s presence
-        rather than on how the signature was produced.
+        service issues; `AuthService._authenticate_oauth` dispatches on
+        `token_use` rather than on how the signature was produced.
 
-        Shaped to RFC 9068, the JWT profile for OAuth access tokens: `iss`,
-        `exp`, `aud`, `sub`, `client_id`, `iat` and `jti` are all REQUIRED
-        there, and the `typ` header is `at+jwt`. That is not decoration. An
-        access token issued from an OAuth flow is inspectable by whoever
-        receives it, and a client that checks conformance will refuse a token
-        it was just issued rather than present it — which looks, from the
-        server's logs, like a successful exchange followed by silence.
+        Shaped to RFC 9068, which makes `iss`, `exp`, `aud`, `sub`,
+        `client_id`, `iat` and `jti` REQUIRED and the `typ` header `at+jwt`. A
+        client that checks conformance refuses a non-conforming token rather
+        than presenting it, which reads in the logs as a successful exchange
+        followed by silence.
 
         `iss` is rendered exactly as the authorization server metadata renders
         it, trailing slash included, so a client comparing the two finds them
@@ -108,26 +105,20 @@ class TokenIssuer:
     ) -> tuple[OAuthRefreshToken, str]:
         """Redeem a refresh token for a new one, revoking the one presented.
 
-        A token that is already revoked being presented again is reuse —
-        either it was stolen and used by someone else, or the legitimate
-        holder is replaying a stale copy — and RFC 6819's answer is to revoke
-        the whole chain rather than trust either party's copy from this point
-        on. That case, an unknown token, and a merely expired one all raise
-        the same `invalid_grant`: telling them apart would tell an attacker
-        which guess was closer.
+        Re-presenting an already-revoked token is reuse, and RFC 6819's answer
+        is to revoke the whole chain rather than trust either party's copy from
+        here on. That case, an unknown token, and a merely expired one all
+        raise the same `invalid_grant`: telling them apart would tell an
+        attacker which guess was closer.
 
         The row is locked before any of these checks (see
         `OAuthRefreshToken.lock_by_hash`), so two concurrent uses of the same
         token cannot both observe it as live.
 
-        Every outcome is logged server-side, including which of the four
-        rejection reasons applied — the response to the caller deliberately
-        does not make that distinction (see above), but an operator
-        diagnosing unexpectedly frequent re-authentication needs exactly the
-        distinction the client is not told, chiefly between "reuse" (the
-        chain is being revoked out from under a legitimate client, e.g. by a
-        client-side retry racing itself) and "unknown token" (the client
-        likely never presented a stored refresh token at all).
+        Every outcome is logged server-side with which of the four rejection
+        reasons applied — the distinction the caller is deliberately not given
+        is exactly the one an operator needs when diagnosing frequent
+        re-authentication.
         """
         record = await OAuthRefreshToken.lock_by_hash(
             self.db, ApiKeyToken.hash_secret(presented_token)

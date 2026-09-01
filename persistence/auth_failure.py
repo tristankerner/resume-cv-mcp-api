@@ -90,6 +90,6 @@ class AuthFailure(SQAlchemyBase):
             )
         )
         await db.commit()
-        # execute() is annotated as returning Result, but a DELETE always
-        # yields a CursorResult, which is what carries rowcount.
+        # execute() is annotated as returning Result, but a DELETE yields a
+        # CursorResult, which is what carries rowcount.
         return cast(CursorResult, result).rowcount or 0

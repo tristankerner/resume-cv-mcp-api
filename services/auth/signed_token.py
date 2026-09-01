@@ -16,15 +16,12 @@ class SignedToken:
     the MFA challenge (services/auth/mfa/challenge.py) and the docs-session
     cookie (services/auth/docs_session.py).
 
-    Both are stateless — nothing needs revoking, nothing needs pruning, and a
-    scale-to-zero deployment pays no write to issue one. Both are bound to
-    the password hash in force when minted, so a password change invalidates
-    every one outstanding against the old one. And both must be refused if
-    ever presented as `Authorization: Bearer ...` — that is
-    `AuthService._authenticate_jwt`'s `token_use` guard, which every
-    subclass here exists to be caught by if it leaks; keeping the claim name
-    and the encode/decode path in one place is what keeps a new subclass
-    from forgetting to set it.
+    Both are stateless — nothing to revoke, nothing to prune — and both are
+    bound to the password hash in force when minted, so a password change
+    invalidates every one outstanding. Both must also be refused if presented
+    as `Authorization: Bearer ...`, which is `AuthService._authenticate_jwt`'s
+    `token_use` guard; keeping the claim and the encode/decode path here is
+    what stops a new subclass from forgetting to set it.
     """
 
     TOKEN_USE: ClassVar[str]

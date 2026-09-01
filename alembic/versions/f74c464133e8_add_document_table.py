@@ -30,21 +30,15 @@ def upgrade() -> None:
     )
     # ### end Alembic commands ###
 
-    # `documents` is append-only, enforced in the database rather than in the
-    # service, so a revision cannot be rewritten by anything holding the
-    # connection. There is no portable way to say that: SQLite raises from a
-    # statement trigger, Postgres needs a trigger function. Same guarantee,
-    # written twice.
-    #
-    # The SQLite branch is byte-for-byte what this migration always emitted.
-    # Databases that already ran it are unaffected — the branch exists so a
-    # fresh Postgres gets the equivalent, not to change what SQLite gets.
+    # `documents` is append-only, enforced in the database so a revision cannot
+    # be rewritten by anything holding the connection. There is no portable way
+    # to say that: SQLite raises from a statement trigger, Postgres needs a
+    # trigger function. The SQLite branch is byte-for-byte what this migration
+    # always emitted, so databases that already ran it are unaffected.
     if op.get_bind().dialect.name == "postgresql":
-        # A function per operation, each with a fixed message. plpgsql reads a
-        # lone `%` in a RAISE as a substitution placeholder, so building one
-        # message from TG_OP would mean escaping it — and the escape then has to
-        # survive the DBAPI's own paramstyle on the way in. Two static strings
-        # avoid the question.
+        # A function per operation, each with a fixed message: plpgsql reads a
+        # lone `%` in a RAISE as a placeholder, so one message built from TG_OP
+        # would need an escape that also survives the DBAPI's paramstyle.
         op.execute("""
             CREATE OR REPLACE FUNCTION documents_no_update()
             RETURNS trigger AS $$

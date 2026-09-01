@@ -49,10 +49,10 @@ volume inherits the mountpoint's ownership from the image instead. If you want
 to open the SQLite file directly from the host, run the app outside the
 container — the native-Python path above.
 
-Clone with `git clone --recurse-submodules` (or `git submodule update --init`
-afterwards) if you want the browser client baked into the image — see the
-README's "Browser client" section. The image builds and runs fine without it;
-`GET /client` just won't be registered.
+To bake the browser client into the image, copy one into the build context
+before building and set `CLIENT_HTML_PATH` to where `COPY . /app` puts it — see
+the README's "Browser client". The image builds and runs fine without one;
+`GET /client` just is not registered.
 
 ## Docker Compose
 

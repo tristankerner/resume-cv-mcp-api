@@ -6,9 +6,9 @@ from services.auth.mfa.kinds import MfaMethodKind
 
 
 class PasswordConfirmRequest(BaseModel):
-    """Shared by every mutating MFA route — enrolment, regeneration and
-    removal all require the current password (§7.2), so one small request
-    body does for three routes rather than three near-identical ones."""
+    """Shared by every mutating MFA route: enrolment, regeneration and removal
+    all require the current password, so one small request body does for three
+    routes rather than three near-identical ones."""
 
     current_password: str
 

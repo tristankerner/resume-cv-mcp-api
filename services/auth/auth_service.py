@@ -67,13 +67,10 @@ class AuthService(ServiceProviderInterface):
         """Verify a username and password, throttling repeated failures.
 
         The single place a password is checked — `/token` and the docs Basic
-        login both arrive here — which is what stops the throttle from being
-        something the docs prompt can be used to walk around.
+        login both arrive here — so the throttle cannot be walked around.
 
         Returns the user, or False for any ordinary refusal. A refusal *for
-        being locked* raises instead, because it needs to carry the wait, and
-        because a caller that treated it as a plain wrong password would go on
-        to spend an argon2 hash on the next attempt.
+        being locked* raises instead, because it needs to carry the wait.
         """
         account_policy = AccountPolicy.from_settings(self.config_services.settings)
         address_policy = AddressPolicy.from_settings(self.config_services.settings)
@@ -90,13 +87,12 @@ class AuthService(ServiceProviderInterface):
             raise AuthErrors.account_locked(banned.retry_after_seconds)
 
         user = await User.get_user_by_username(self.db, username)
-        # Users provisioned without a password (service accounts, or an admin
-        # seeded before their password is set) cannot log in at all; pwdlib
+        # A user provisioned without a password cannot log in at all; pwdlib
         # raises rather than returning False if handed None.
         if not user or not user.password:
-            # No account to count against, so an unknown username is charged
-            # to the address alone. Without this, spraying one guess each
-            # across a list of names would be entirely free.
+            # No account to count against, so an unknown username is charged to
+            # the address alone. Without this, spraying one guess each across a
+            # list of names would be free.
             await self._register_address_failure(address, address_policy, now)
             return False
 
@@ -133,9 +129,8 @@ class AuthService(ServiceProviderInterface):
         """Charge one failure to the account and the address, and raise if
         either has just closed.
 
-        Raising on the attempt that trips the lock rather than on the next one
-        is what lets the caller be told how long to wait at the moment it
-        starts mattering.
+        Raising on the attempt that trips the lock, rather than on the next
+        one, is what lets the caller be told how long to wait.
         """
         locked = await User.lock_for_update(self.db, user.id)
         state = (
@@ -161,11 +156,9 @@ class AuthService(ServiceProviderInterface):
     ) -> LockStatus:
         """Charge one failure to the calling address, creating its row if new.
 
-        Committed on its own rather than with the account's counter: this is
-        the only write on the login path that can collide — two instances
-        seeing an address for the first time at once both insert — and giving
-        it its own transaction means losing that race cannot roll back the
-        account tally, which is the one that matters.
+        Committed on its own rather than with the account's counter: two
+        instances seeing an address for the first time at once both insert, and
+        losing that race must not roll back the account tally.
         """
         if address is None or not policy.enabled:
             return LockStatus.OPEN
@@ -179,11 +172,9 @@ class AuthService(ServiceProviderInterface):
         try:
             await self.db.commit()
         except IntegrityError:
-            # Lost the insert race: another instance saw this address for the
-            # first time at the same moment. The attempt is conceded rather
-            # than retried — one uncounted failure out of twenty is not worth
-            # a retry loop on the authentication path, and the other instance
-            # has recorded its own.
+            # Lost the insert race. Conceded rather than retried: one uncounted
+            # failure out of twenty is not worth a retry loop on the
+            # authentication path.
             await self.db.rollback()
             return LockStatus.OPEN
         return state
@@ -191,15 +182,12 @@ class AuthService(ServiceProviderInterface):
     async def _clear_login_failures(self, user: User) -> None:
         """Forget this user's failure history after a correct password.
 
-        The address keeps its tally: one person logging in successfully says
-        nothing about the other attempts coming from the same address, and
-        clearing it would hand an attacker a free reset for the price of one
-        account they legitimately hold.
+        The address keeps its tally: clearing it would hand an attacker a free
+        reset for the price of one account they legitimately hold.
         """
-        # Checked before the lock is taken, so the overwhelmingly common case
-        # of a clean login neither writes nor locks a row. `user` was read a
-        # moment ago in this same session; a concurrent failure landing in
-        # between only means it is cleared by the next successful login.
+        # Checked before the lock is taken, so a clean login neither writes nor
+        # locks a row. A concurrent failure landing in between only means it is
+        # cleared by the next successful login.
         if (
             user.failed_login_count == 0
             and user.first_failed_login_at is None
@@ -218,14 +206,11 @@ class AuthService(ServiceProviderInterface):
         """Check a password on an already-authenticated request, throttled the
         same way /token is.
 
-        Left unthrottled, any route that takes a current password is a
-        password oracle for whoever holds a token for the account. Sharing
-        the account and address counters with /token is the right coupling:
-        a lockout tripped here blocks /token and vice versa, because both are
-        ways of proving you know the password.
+        Left unthrottled, any route that takes a current password is a password
+        oracle for whoever holds a token for the account. The counters are
+        shared with /token, so a lockout tripped here blocks /token too.
 
-        Raises rather than returning a bool: every caller's response to a
-        wrong password is identical, and a bool is one `if` away from being
+        Raises rather than returning a bool, which is one `if` away from being
         forgotten.
         """
         account_policy = AccountPolicy.from_settings(self.config_services.settings)
@@ -259,16 +244,9 @@ class AuthService(ServiceProviderInterface):
         """Refuse a login step for an account that is locked right now.
 
         The second factor arrives as a *second request*, so a lock tripped
-        between the two — by guessing against this account from somewhere
-        else — has to be honoured on the way in as well, or a challenge
-        minted a moment before the lock walks straight around it. All three
-        password surfaces redeem a challenge and so all three call this;
-        having one of them forget is how the throttle ends up enforced in
-        two places out of three.
-
-        Read-only and synchronous: `authenticate_user` already refuses a
-        locked account before any password is checked, and this is only the
-        second step catching up with it.
+        between the two has to be honoured on the way in as well, or a
+        challenge minted a moment before the lock walks straight around it.
+        All three password surfaces redeem a challenge, so all three call this.
         """
         state = AccountPolicy.from_settings(self.config_services.settings).status(
             user, utcnow()
@@ -281,11 +259,8 @@ class AuthService(ServiceProviderInterface):
     async def register_mfa_failure(self, user: User) -> None:
         """Charge a failed second factor to the account and the address.
 
-        The same counters /token uses, deliberately: a code is a credential
-        and guessing at one is guessing at the account. Six digits is a
-        million-wide space, which sounds large and is not — at the default
-        five-per-fifteen-minutes it takes centuries, and unthrottled it takes
-        an afternoon.
+        The same counters /token uses: a six-digit code is a million-wide
+        space, which unthrottled is an afternoon's guessing.
 
         Raises AuthErrors.account_locked* when this attempt trips a lock,
         exactly as _register_login_failure does on the password path.
@@ -298,10 +273,8 @@ class AuthService(ServiceProviderInterface):
         )
 
     async def clear_login_failures(self, user: User) -> None:
-        """Forget a user's failure history, the same way a correct password
-        does. Public wrapper so the underscore convention is not violated
-        across module lines — used by the MFA second step on a correct
-        code."""
+        """Public wrapper on `_clear_login_failures`, for the MFA second step
+        on a correct code."""
         await self._clear_login_failures(user)
 
     def create_access_token(self, data: dict, expires_delta: timedelta | None = None):
@@ -324,8 +297,7 @@ class AuthService(ServiceProviderInterface):
 
         The single place a credential is turned into an identity: the HTTP
         dependencies and the MCP token verifier both come through here, so the
-        two surfaces cannot drift apart on what a valid token means, and a new
-        credential type is added once rather than twice.
+        two surfaces cannot drift apart on what a valid token means.
 
         Returns None for absent, malformed, expired, unknown, or deactivated —
         callers decide whether that is a 401 or simply an anonymous request.
@@ -344,14 +316,11 @@ class AuthService(ServiceProviderInterface):
 
         Trusted for routing only, never for authorization: whichever branch
         this sends the token to still verifies its own signature before
-        granting anything (see `_authenticate_oauth`), so a forged claim only
-        sends a tampered token to be rejected by the wrong decoder rather
-        than the right one — it cannot forge a Principal by itself.
+        granting anything, so a forged claim cannot mint a Principal.
 
-        `token_use`'s *absence* is what selects the legacy password-JWT path:
-        tokens minted before OAuth existed carry no such claim, and that is the
-        entire compatibility mechanism. Do not start setting it on a password
-        JWT — they would silently take the OAuth path and lose their scopes.
+        `token_use`'s *absence* selects the password-JWT path. Do not start
+        setting it on a password JWT — they would silently take the OAuth path
+        and lose their scopes.
         """
         try:
             payload = jwt.decode(token, options={"verify_signature": False})
@@ -441,12 +410,9 @@ class AuthService(ServiceProviderInterface):
         except InvalidTokenError:
             return None
 
-        # This branch is reached by elimination — see
-        # `_looks_like_oauth_access_token` — so it must refuse anything that
-        # names a purpose of its own. An MFA challenge and a docs-session
-        # cookie are signed with this same key and carry `sub`; without this
-        # line either one presented as a bearer token would authenticate as
-        # its subject, which is the whole account.
+        # An MFA challenge and a docs-session cookie are signed with this same
+        # key and carry `sub`; without this, either presented as a bearer token
+        # would authenticate as its subject.
         if payload.get("token_use") is not None:
             return None
 
@@ -470,10 +436,9 @@ class AuthService(ServiceProviderInterface):
         by `token_use`.
 
         Unlike `_authenticate_jwt`, this token carries scopes of its own: an
-        OAuth grant is deliberately narrowed at authorize time, so trusting
-        the user's full role scopes here would let a client escalate past
-        whatever the resource owner actually approved — see
-        `ScopeResolver.narrow`.
+        OAuth grant is narrowed at authorize time, so trusting the user's full
+        role scopes here would let a client escalate past what the resource
+        owner approved — see `ScopeResolver.narrow`.
         """
         try:
             payload = jwt.decode(
@@ -481,10 +446,8 @@ class AuthService(ServiceProviderInterface):
                 self.config_services.settings.auth_secret_key.get_secret_value(),
                 algorithms=[str(self.config_services.settings.auth_algorithm)],
                 audience=self.config_services.settings.oauth_resource_url,
-                # Issued by this service and nobody else. Cheap to check now
-                # that mint_access_token sets it, and it means a token signed
-                # with this key for some other deployment sharing it cannot be
-                # replayed here.
+                # A token signed with this key for another deployment sharing
+                # it cannot be replayed here.
                 issuer=str(self.config_services.settings.public_base_url),
             )
         except InvalidTokenError:

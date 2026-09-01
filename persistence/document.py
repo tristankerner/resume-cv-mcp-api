@@ -194,7 +194,6 @@ class Document(SQAlchemyBase):
             if existing.type != document.type:
                 raise DocumentTypeConflict(existing.type, document.type)
             document.public = existing.public if public is None else public
-            # A revision is written when `data` differs or `public` differs.
             # A changed `revision_note` alone is still a no-op.
             if existing.data == document.data and existing.public == document.public:
                 return UpsertResult(existing, created=False)
@@ -208,19 +207,15 @@ class UpsertResult(NamedTuple):
     """What `upsert_document` did: the revision now current, and whether it
     had to write it.
 
-    `created` is a plain bool rather than the enum the API answers with. That
-    enum is the wire contract and lives with the response model in
-    `services/document/dtos/create_document.py`; naming it here would mean a
-    rename in persistence silently changing what the HTTP response says. This
-    layer reports a fact about storage and lets the service say what to call
-    it — the same separation that keeps `Document.type` a plain string rather
-    than the `DocumentType` enum.
+    `created` is a plain bool rather than the enum the API answers with: that
+    enum is the wire contract and lives with the response model, so naming it
+    here would let a rename in persistence change the HTTP response. Same
+    separation that keeps `Document.type` a plain string.
 
     `document` stays optional rather than the whole return being
     `UpsertResult | None`: `upsert_document` cannot produce `None` today, but
     `tests/test_defensive_paths.py` monkeypatches it to simulate the storage
-    layer misbehaving, and the service's `if result.document is None` guard
-    exists for exactly that case.
+    layer misbehaving.
     """
 
     document: Document | None

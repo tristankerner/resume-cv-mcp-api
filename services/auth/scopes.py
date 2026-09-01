@@ -11,22 +11,18 @@ class Scopes(StrEnum):
     """What a caller may do, independent of who they are.
 
     Roles answer "who is this"; scopes answer "what may they do". Keeping them
-    apart is what lets a single owner hand out narrowed credentials — an API
-    key can carry a subset of its owner's scopes without inventing a user per
-    capability, which is how a machine client is given exactly the three reads
-    it needs and nothing else.
+    apart lets a single owner hand out narrowed credentials — an API key can
+    carry a subset of its owner's scopes without inventing a user per
+    capability.
 
     One scope per document type per verb, rather than one `resume:*` family
-    covering all three types. The three documents are not equally sensitive —
-    the skill document is procedure, the metadata is schema documentation, the
-    résumé is contact details and per-bullet figures — and a client that only
-    follows the instructions has no business holding a credential that reads
-    the résumé.
+    covering all three: the three documents are not equally sensitive, and a
+    client that only follows the instructions has no business holding a
+    credential that reads the résumé.
 
-    There is no `resume:read:public`. The published projection takes no
-    credential at all, so the scope that used to name it was checked nowhere
-    and granted nothing, while still being mintable onto a key where it read as
-    though it did something.
+    There is no `resume:read:public` — the published projection takes no
+    credential at all, so such a scope would be checked nowhere while still
+    reading, on a key, as though it did something.
     """
 
     RESUME_READ = "resume:read"
@@ -84,11 +80,8 @@ class ScopeResolver:
         if cls._cache is None or now - cls._loaded_at > cls.CACHE_SECONDS:
             grouped: dict[str, set[Scopes]] = {}
             for role, scope in await RoleScope.all_pairs(db):
-                # An unrecognised scope string in the table is dropped rather
-                # than raised, for the same reason `parse` drops one from a
-                # stored credential: a scope retired from the enum should stop
-                # granting access, not 500 every request that touches the role
-                # that held it.
+                # Dropped rather than raised, for the same reason `parse`
+                # drops one from a stored credential.
                 try:
                     parsed = Scopes(scope)
                 except ValueError:
@@ -121,13 +114,11 @@ class ScopeResolver:
 
         The scopes a credential carries — an API key's, an OAuth grant's — are
         intersected with the owner's *current* role scopes rather than trusted
-        as stored, so revoking a role takes effect on the very next use of
-        every credential the user holds instead of lingering until each one
-        individually expires.
+        as stored, so revoking a role takes effect on the next use of every
+        credential the user holds.
 
-        Takes `roles` rather than a `User` so this stays the one rule about
-        scopes and nothing more: the API-key path, the OAuth authentication
-        path and the OAuth refresh path all apply it, and none of them should
-        have to reach into another service to do so.
+        Takes `roles` rather than a `User` so the API-key, OAuth authentication
+        and OAuth refresh paths can all apply it without reaching into another
+        service.
         """
         return granted & await cls.for_roles(db, roles)

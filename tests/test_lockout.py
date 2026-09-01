@@ -162,9 +162,9 @@ class TestAccountPolicy:
     def test_a_permanent_lock_clears_the_temporary_one(self, policy):
         user = fresh_user()
         now = utcnow()
-        # The jump between locks has to sit between the failures, not inside a
-        # run of them: moving time on every attempt lapses the window each
-        # time and the tally never reaches the limit at all.
+        # The jump has to sit between locks, not inside a run of failures:
+        # moving time on every attempt lapses the window each time and the
+        # tally never reaches the limit.
         for _ in range(policy.permanent_after_locks):
             now = now + timedelta(minutes=30)
             for _ in range(policy.max_attempts):

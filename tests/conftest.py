@@ -45,11 +45,8 @@ os.environ["MFA_ENCRYPTION_KEYS"] = Fernet.generate_key().decode()
 os.environ["BOOTSTRAP_ADMIN_USERNAME"] = ""
 os.environ["BOOTSTRAP_ADMIN_PASSWORD"] = ""
 os.environ["BOOTSTRAP_ADMIN_EMAIL"] = ""
-# Same reasoning, and learned the same way: a developer running the client
-# locally has both of these in their own .env, and without pinning them the
-# suite reads whatever they happen to be. That is not hypothetical — it broke
-# the empty-allowlist tests in test_client_cors.py, which assert that no
-# origin is allowed, and the CLIENT_HTML_PATH default in test_startup.py.
+# Same reasoning: a developer running the client locally has both of these in
+# their own .env, and unpinned the suite reads whatever they happen to be.
 os.environ["CLIENT_ALLOWED_ORIGINS"] = ""
 os.environ["CLIENT_HTML_PATH"] = ""
 os.environ.pop("SECRETS_DIR", None)
@@ -267,11 +264,9 @@ async def enrolled(make_actor) -> Enrolled:
         credential = await MfaCredential.get_for_user(db, user.id, result.credential_id)
         assert credential is not None
         assert result.secret is not None
-        # Activated with the *previous* step's code, not the current one:
-        # this fixture hands the secret back to tests that then call
-        # `totp_code(secret)` for a fresh login — which is `.now()`, i.e.
-        # the current step. Activating with that same step would make the
-        # replay guard correctly refuse the first real test login.
+        # Activated with the *previous* step's code: tests call
+        # `totp_code(secret)` for the current step, and activating with that
+        # same step would make the replay guard refuse their first login.
         totp = pyotp.TOTP(result.secret)
         activation_code = totp.at(datetime.now(UTC), counter_offset=-1)
         await method.complete_enrollment(credential, activation_code)

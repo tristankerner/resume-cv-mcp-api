@@ -65,11 +65,10 @@ publishing and unpublishing are edits, and the history should say when they
 happened.
 
 `public` is three-valued on the way in. Omitting it leaves the flag as the
-current revision has it; a first write that omits it defaults closed. That is
-deliberate rather than incidental: a plain `false` default would mean any
-ordinary content edit that forgot to restate the flag silently took the
-published document offline, and the symptom — a website serving 404 — points
-nowhere near the write that caused it.
+current revision has it; a first write that omits it defaults closed. A plain
+`false` default would mean any content edit that forgot to restate the flag
+silently took the document offline, and the symptom — a website serving 404 —
+points nowhere near the write that caused it.
 
 ## Authorization model
 
@@ -97,8 +96,8 @@ details and per-bullet figures. A client that only follows the instructions
 has no business holding a credential that reads the résumé.
 
 There is no scope for the published projection. It takes no credential at all,
-so the `resume:read:public` that used to name it was checked nowhere — while
-still being mintable onto a key, where it read as though it did something.
+so a scope naming it would be checked nowhere while still being mintable onto a
+key, where it would read as though it did something.
 
 ### Two roles
 
@@ -111,11 +110,10 @@ A member owns their documents outright, so ownership rather than the role is
 what keeps them out of anyone else's, and user administration is the only
 thing left to withhold.
 
-There is no `mcp` role. It gave a machine client a read-only identity of its
-own, back when documents were one shared set. Now that a document has an
-owner, an MCP client authenticates **as that owner** with an API key narrowed
-to the scopes it needs — finer-grained than a role, revocable on its own, and
-without a second account holding a copy of someone's résumé.
+There is no `mcp` role. A document has an owner, so an MCP client
+authenticates **as that owner** with an API key narrowed to the scopes it needs
+— finer-grained than a role, revocable on its own, and without a second account
+holding a copy of someone's résumé.
 
 What each role grants lives in the `role_scopes` table (seeded by migration,
 cached in memory for 60 seconds — see `services/auth/scopes.py`), not in code.
@@ -193,7 +191,7 @@ below — six digits is a small enough space that leaving it unthrottled would
 make guessing practical.
 
 **TOTP secrets are encrypted at rest**, with Fernet under `MFA_ENCRYPTION_KEYS`,
-so a database read alone no longer mints a second factor for someone's
+so a database read alone does not mint a second factor for someone's
 account — the key lives in the application process, not the database, so
 this is not a defence against a compromised host, only against what a leaked
 backup, a SQL-injection read, or a database dump pasted into a support ticket
@@ -448,16 +446,15 @@ allowlist, and why it is stamped whether or not the caller sent an `Origin`.
 
 [`resume-mcp-api-clients`](https://github.com/tristankerner/resume-mcp-api-clients)
 is a hand-authored single-page UI for managing documents and API keys — see its
-README for what's there and how to run it. It is a separate repository and not
-a submodule of this one: this API has no build-time dependency on any client,
-and nothing here needs it to be present.
+README for what's there and how to run it. It is a separate repository, not a
+submodule: this API has no build-time dependency on any client, and nothing
+here needs one to be present.
 
 To develop against it, clone it wherever you like and point `CLIENT_HTML_PATH`
-at its `web/index.html`. Cloning it to `./clients` is the convention the
-deployment follows, and `.gitignore` and `.dockerignore` both expect that name,
-but nothing enforces it. If the path does not exist, `GET /client` declines to
-register and logs a warning naming the file it looked for — nothing else about
-the service is affected.
+at its `web/index.html`. `./clients` is the conventional name — `.dockerignore`
+expects it when keeping a local build out of an image — but nothing enforces
+it. If the path does not exist, `GET /client` declines to register and logs a
+warning naming the file it looked for; nothing else is affected.
 
 Unlike the public projection above, the routes the client calls (`/token`,
 `/documents`, `/api-keys`, `/users/*`) are authenticated, so they cannot use a
@@ -473,12 +470,11 @@ request will reach the server and have its response discarded unread. See
 `CLIENT_HTML_PATH` sidesteps all of that by serving the client same-origin:
 set it and `GET /client` returns that file. Which file is the deployment's
 business — it copies a client into the build context before `COPY . /app`, and
-this repository never learns which one. The reference deployment puts it at
-`/app/clients/web/index.html`. A built `clients/web/dist/index.html` works
-locally, but `.dockerignore` keeps `dist/` and `node_modules/` out of any image,
-since both are gitignored and a stale build would be served with nothing having
-reviewed it. Unset by default, so this depends on no build artifact and changes
-nothing for a deployment that does not want it.
+this repository never learns which one. A locally built
+`clients/web/dist/index.html` works too, but `.dockerignore` keeps `dist/` and
+`node_modules/` out of any image, since both are gitignored and a stale build
+would be served with nothing having reviewed it. Unset by default, so this
+depends on no build artifact.
 
 This is the path of least resistance for putting the client in front of a
 deployed API. `CLIENT_ALLOWED_ORIGINS` does not need to name it, no static
@@ -490,8 +486,9 @@ deliberately absent from that list and why.
 
 ## Databases
 
-SQLite by default, and that is the whole local story — `data/app.db`, no
-service to run. Point `DATABASE_URL` at Postgres and nothing else changes:
+`.env.example` points `DATABASE_URL` at SQLite, and that is the whole local
+story — `data/app.db`, no service to run. Point it at Postgres and nothing else
+changes:
 
 ```
 DATABASE_URL=postgresql+asyncpg://user:pass@host/resume_api?ssl=require
@@ -499,11 +496,10 @@ DATABASE_URL=postgresql+asyncpg://user:pass@host/resume_api?ssl=require
 
 `alembic/env.py` rewrites that to `postgresql+psycopg` for the migrations,
 translating `ssl` to libpq's `sslmode` on the way, so one setting drives both
-engines. `documents` keeps a no-update trigger per dialect — a statement
-trigger on SQLite, a trigger function on Postgres — first written in
-`f74c464133e8` and carried forward by `35808d4a4c1d`, which also drops the
-no-delete trigger that used to sit beside it: deletion is a supported
-operation now, gated on the `resume:delete` scope rather than by the database.
+engines. `documents` carries a no-update trigger per dialect — a statement
+trigger on SQLite, a trigger function on Postgres — so a revision cannot be
+rewritten. Deletion is not blocked there; it is gated on the type's delete
+scope instead.
 
 The test suite runs on SQLite regardless of what `DATABASE_URL` says.
 

@@ -21,33 +21,27 @@ ALLOW_ORIGIN = "access-control-allow-origin"
 class PublicCorsMiddleware(CorsMiddleware):
     """Mark `/public/*` responses readable by any browser origin.
 
-    Three decisions here are deliberate and coupled to how this is deployed.
+    Three decisions here are coupled to how this is deployed.
 
     **A literal `*`, not the caller's origin.** An allowlist would have to echo
-    the request's `Origin` back and set `Vary: Origin`. A CDN in front of
-    `/public/*` that caches the response but does not vary on `Origin` would
-    hold one copy keyed without it and hand whichever origin arrived first to
-    everyone else. Restricting origins would buy nothing anyway: these routes
-    serve unauthenticated to `curl` already, and CORS constrains browsers, not
-    callers.
+    `Origin` back and set `Vary: Origin`; a CDN that caches these responses
+    without varying on it would hand whichever origin arrived first to everyone
+    else. Restricting origins buys nothing anyway — these routes already serve
+    unauthenticated to `curl`, and CORS constrains browsers, not callers.
 
     **Unconditional, not only when `Origin` is present.** Starlette's
-    `CORSMiddleware` returns early on a request that sends no `Origin` at all,
-    which is correct in isolation and wrong behind a cache that does not key on
-    it: one credential-free `curl` — a deploy pipeline's smoke test, a
-    monitor, a warm-up — would fill the entry with a header-less copy and
-    the front end would fail for the rest of the TTL, with nothing reproducible
-    locally to look at.
+    `CORSMiddleware` returns early on a request with no `Origin`, which behind
+    a cache that does not key on it means one credential-free `curl` — a smoke
+    test, a monitor, a warm-up — fills the entry with a header-less copy and
+    the front end fails for the rest of the TTL.
 
-    **Scoped to the public prefix.** Everything else authenticates with a
-    bearer token or an API key, and there is no reason to advertise those
-    routes as browser-readable.
+    **Scoped to the public prefix.** Everything else authenticates, and there
+    is no reason to advertise those routes as browser-readable.
     """
 
     ALLOWED_METHODS: ClassVar[str] = "GET, HEAD, OPTIONS"
-    # A day. Preflights are answered here, not at the edge — Cloudflare's cache
-    # rules cover GET and HEAD — so the browser's own cache is the only thing
-    # keeping them off the origin.
+    # A day. Preflights are answered here rather than at the edge, so the
+    # browser's own cache is the only thing keeping them off the origin.
     PREFLIGHT_MAX_AGE: ClassVar[str] = "86400"
 
     def _applies_to(self, scope: Scope) -> bool:
@@ -64,8 +58,7 @@ class PublicCorsMiddleware(CorsMiddleware):
         No preflight fires for the request this exists to serve — a plain GET
         with no custom headers is a simple request — so this is here for the
         day the front end adds one. Being generous costs nothing: there are no
-        credentials to attach, and a request header the caller chose cannot
-        reach anything a plain `curl` could not.
+        credentials to attach.
         """
         headers = {
             ALLOW_ORIGIN: allowed_origin,

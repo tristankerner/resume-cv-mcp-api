@@ -27,10 +27,8 @@ class MfaRouter:
             self.activate_totp
         )
         self.router.post("/backup-codes")(self.regenerate_backup_codes)
-        # DELETE with a request body is unusual but legal, and FastAPI
-        # supports it. `POST .../remove` reads worse for what is really a
-        # delete, and the browser client's `request()` helper already
-        # passes a body independently of method.
+        # DELETE with a request body is unusual but legal, and reads better
+        # than `POST .../remove` for what is really a delete.
         self.router.delete("/{credential_id}", status_code=204)(self.remove)
 
     async def status(self, mfa_service: MfaServiceDep) -> MfaStatusResponse:

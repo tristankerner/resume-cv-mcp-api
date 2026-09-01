@@ -50,14 +50,11 @@ class ResetPasswordCommand:
     async def run(self, argv: list[str] | None = None) -> int:
         args = self._parse_args(argv)
 
-        # Two short sessions rather than one held open across the prompt.
+        # Two short sessions rather than one held open across the prompt:
         # `getpass` blocks for as long as the operator takes to type, and a
-        # connection left idle in a transaction for minutes is one the server
-        # may well close first — Neon does. That failure would land on the
-        # commit, after the password had already been entered twice, in the
-        # one tool that exists for the case where nothing else works. The
-        # first session is only to fail fast on a name that does not exist,
-        # before asking for anything.
+        # connection idle in a transaction for minutes is one the server may
+        # close first (Neon does). The first session only fails fast on a name
+        # that does not exist, before asking for anything.
         async with DatabaseService.session() as db:
             if await User.get_user_by_username(db, args.username) is None:
                 print(f"No user named {args.username!r}.", file=sys.stderr)
@@ -66,9 +63,9 @@ class ResetPasswordCommand:
         password = self._prompt_new_password()
 
         async with DatabaseService.session() as db:
-            # Re-read rather than reusing the row from the session above: it
-            # belongs to a session that is now closed, and the account may
-            # have been removed while the prompt was open.
+            # Re-read rather than reusing the row above: that session is
+            # closed, and the account may have been removed while the prompt
+            # was open.
             user = await User.get_user_by_username(db, args.username)
             if user is None:
                 print(f"No user named {args.username!r}.", file=sys.stderr)

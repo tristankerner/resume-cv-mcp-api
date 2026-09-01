@@ -14,12 +14,10 @@ class ResumeTools:
     """The two MCP tools, and the auth helpers they share.
 
     `FileSystemProvider` discovers components by scanning this module for
-    top-level `Tool` objects after import — it does not instantiate classes
-    or call methods, so a `@tool`-decorated method here would never be found.
-    The two module-level functions below are the required exception to the
-    "no free-standing functions" rule: one-line adapters whose entire body
-    delegates to this class, so the discovery contract is satisfied without
-    putting any actual logic outside a class.
+    top-level `Tool` objects after import, so a `@tool`-decorated method here
+    would never be found. The two module-level functions below are the
+    required exception to the "no free-standing functions" rule: one-line
+    adapters that delegate straight to this class.
     """
 
     @staticmethod
@@ -27,9 +25,8 @@ class ResumeTools:
         """The caller's id, from the access token's claims.
 
         Both HTTP and MCP resolve a credential through the same
-        `AuthService.authenticate` (see mcp_verifier.py), so this is the one
-        place the MCP surface reads back the identity that authentication
-        already established — nothing here re-derives it.
+        `AuthService.authenticate` (see mcp_verifier.py), so this only reads
+        back an identity already established.
         """
         token = get_access_token()
         if token is None or "user_id" not in token.claims:
@@ -119,8 +116,7 @@ class ResumeTools:
         if skill is not None and skill.type != DocumentType.SKILL:
             raise ToolError(f"{resume_skill_id!r} is not a skill document")
 
-        # The companions are optional in the same way the metadata always
-        # was: a missing one is reported as null so the client can say what
+        # A missing companion is reported as null so the client can say what
         # it is working without, rather than failing the whole retrieval.
         return {
             "resume": resume.data,

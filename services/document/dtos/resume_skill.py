@@ -5,19 +5,16 @@ the pieces join. This says what to *do* with both: the persona to adopt, the
 order to work in, the rules that govern selection and wording, and the shape of
 the document that comes out.
 
-It is a third document rather than another section of either of the others
-because it changes for different reasons — a rule about keyword density has
-nothing to do with taking a new job or renaming a field — and because it makes
-the client-side skill a stub: fetch all three, follow what you find. Editing the
-instructions becomes a document write rather than a skill release, so a running
-client always acts on the current rules.
+A third document rather than a section of either of the others, because it
+changes for different reasons and because it makes the client-side skill a
+stub: fetch all three, follow what you find. Editing the instructions is then a
+document write rather than a skill release.
 
-Nothing here restates resume content. Where an instruction has to name a piece
-of the payload it carries a `path` instead. Paths are rooted at the MCP tool's
-response rather than at the resume, because instructions routinely reach across
-documents: `resume.jobs[].highlights[].summary`,
-`resume_metadata.role_families`. List elements are marked `[]`, matching
-`ResumeMetadata.FieldGuide.path`.
+Nothing here restates resume content. Where an instruction names a piece of the
+payload it carries a `path`, rooted at the MCP tool's response rather than at
+the resume, since instructions reach across documents:
+`resume.jobs[].highlights[].summary`, `resume_metadata.role_families`. List
+elements are marked `[]`, matching `ResumeMetadata.FieldGuide.path`.
 """
 
 from typing import Literal

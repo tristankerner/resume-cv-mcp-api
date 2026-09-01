@@ -265,9 +265,8 @@ class TestProduction:
             "/docs/logout", headers=headers, follow_redirects=False
         )
         assert logout.status_code == 303
-        # A browser deletes the cookie once it sees Max-Age=0; a stateless
-        # design has no server-side session to revoke, so this is the whole
-        # of what logout does.
+        # A stateless design has no server-side session to revoke, so
+        # Max-Age=0 is the whole of what logout does.
         assert "Max-Age=0" in logout.headers["set-cookie"]
 
 

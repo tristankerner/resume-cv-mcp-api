@@ -29,11 +29,8 @@ class TypeScopes(NamedTuple):
 
 
 class DocumentTypeRegistry:
-    # The single place a document type is turned into the scopes that gate it.
-    # Every read, write and delete goes through here, so adding a fourth type
-    # is a row in this table and three members of Scopes, rather than a scope
-    # check to find and copy in each of the service, the router and the MCP
-    # tools.
+    # The single place a document type is turned into the scopes that gate it,
+    # so adding a fourth type is a row here plus three members of Scopes.
     SCOPES_BY_TYPE: ClassVar[dict[DocumentType, TypeScopes]] = {
         DocumentType.RESUME: TypeScopes(
             Scopes.RESUME_READ, Scopes.RESUME_WRITE, Scopes.RESUME_DELETE
@@ -50,11 +47,10 @@ class DocumentTypeRegistry:
         scopes.read for scopes in SCOPES_BY_TYPE.values()
     )
 
-    # Computed once at import rather than per request: model_json_schema() is
-    # not cheap, and these three schemas never change at runtime. extra="forbid"
-    # on each model is what gives every schema here additionalProperties:
-    # false, so the editor that validates against it flags an unknown field
-    # the same way the server would.
+    # Computed once at import: model_json_schema() is not cheap and these never
+    # change at runtime. extra="forbid" on each model is what gives every
+    # schema here additionalProperties: false, so an editor validating against
+    # one flags an unknown field the same way the server would.
     SCHEMAS_BY_TYPE: ClassVar[dict[DocumentType, dict[str, Any]]] = {
         DocumentType.RESUME: ResumePrivate.model_json_schema(),
         DocumentType.METADATA: ResumeMetadata.model_json_schema(),

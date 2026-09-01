@@ -90,10 +90,8 @@ class DocsAccessGuard:
         if user is not None:
             return
 
-        # Slashes left unescaped: `request.url.path` is always one of the
-        # four docs paths this guard is applied to, never attacker-supplied
-        # query content, so there is nothing here for percent-encoding to
-        # defend against beyond making the URL well-formed.
+        # Slashes left unescaped: `request.url.path` is always one of the four
+        # docs paths this guard covers, never attacker-supplied content.
         next_path = quote(request.url.path, safe="/")
         raise HTTPException(
             status_code=303, headers={"Location": f"/docs/login?next={next_path}"}

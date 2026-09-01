@@ -1,24 +1,18 @@
 """Strip every MFA method from an account, from the command line.
 
-The break-glass path for a lost authenticator: `DELETE /users/{id}/mfa` does
-the same thing over the API for an admin who holds a key and an interactive
-login — but MFA management deliberately refuses an API key (see
-UserService.reset_mfa), so an admin with no interactive session and nothing
-but a key has no way in through the API at all. This talks to the database
-directly and answers to nobody, so it needs whatever DATABASE_URL the
-deployment uses.
+The break-glass path for a lost authenticator. `DELETE /users/{id}/mfa` does
+the same over the API, but MFA management refuses an API key (see
+UserService.reset_mfa), so an admin with no interactive session has no way in
+through the API. This talks to the database directly, so it needs whatever
+DATABASE_URL the deployment uses.
 
-It never decrypts a secret. It deletes rows and counts them; it has no
-reason to read `mfa_credentials.secret` and must not start reading one. That
-is what makes it the recovery path when `MFA_ENCRYPTION_KEYS` is wrong or
-lost — a break-glass tool that needs the key it is recovering from is not
-one.
+It never decrypts a secret — it deletes rows and counts them, and must not
+start reading `mfa_credentials.secret`. That is what makes it the recovery
+path when `MFA_ENCRYPTION_KEYS` is wrong or lost.
 
-Backup codes survive a lost key on their own (they are hashed, not
-encrypted), so a user holding one usually needs nothing from this tool at
-all — it exists for the case where the authenticator and every backup code
-are both gone. A user who has lost their authenticator but is not otherwise
-locked out needs nothing else; one who is *also* locked out needs
+Backup codes are hashed rather than encrypted, so they survive a lost key on
+their own; this exists for the case where the authenticator and every backup
+code are gone. An account that is *also* locked out needs
 `python -m unlock_user` as well.
 
     python -m reset_mfa alice

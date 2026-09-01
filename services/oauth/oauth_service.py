@@ -1,6 +1,5 @@
-"""Orchestrates the new endpoints. Routers stay thin — one call each, plus
-turning the exceptions in `services.oauth.exceptions` into the right kind of
-response — everything with a decision to make lives here."""
+"""Orchestrates the OAuth endpoints. Routers stay thin: one call each, plus
+turning the exceptions in `services.oauth.exceptions` into a response."""
 
 from __future__ import annotations
 
@@ -65,23 +64,16 @@ class OAuthService(ServiceProviderInterface):
         settings = self.settings
         base = settings.public_base_url_str
         return AuthorizationServerMetadata(
-            # The AnyHttpUrl rendering, trailing slash and all, so this is
-            # byte identical to the `authorization_servers` entry in the
-            # protected resource document (see main.py) — which is the string
-            # a client took as the issuer identifier before fetching this.
-            # RFC 8414 §3.3 makes that identity load-bearing: "If these values
-            # are not identical, the data contained in the response MUST NOT
-            # be used." A client that compares without normalising would
-            # otherwise discard this document and abandon the flow.
-            #
-            # Endpoints below keep using `base`, which has the slash
-            # stripped, so they do not come out with a doubled one.
+            # The AnyHttpUrl rendering, trailing slash and all, so this is byte
+            # identical to the `authorization_servers` entry in the protected
+            # resource document (see main.py). RFC 8414 §3.3 makes that
+            # identity load-bearing: a mismatch means the client MUST discard
+            # this document. Endpoints below use the slash-stripped `base`.
             issuer=str(settings.public_base_url),
             authorization_endpoint=f"{base}/oauth/authorize",
             token_endpoint=f"{base}/oauth/token",
-            # Omitted entirely when registration is closed, which is how a
-            # client learns to expect a pre-registered client_id rather than
-            # trying to register and failing.
+            # Omitted when registration is closed, which is how a client learns
+            # to expect a pre-registered client_id.
             registration_endpoint=(
                 f"{base}/oauth/register"
                 if settings.oauth_registration_enabled
@@ -89,11 +81,9 @@ class OAuthService(ServiceProviderInterface):
             ),
             revocation_endpoint=f"{base}/oauth/revoke",
             scopes_supported=sorted(str(scope) for scope in OAUTH_ISSUABLE_SCOPES),
-            # With registration closed every client is pre-registered, and
-            # `python -m register_oauth_client` issues a secret unless asked
-            # not to — so advertising "none" would be advertising a shape
-            # this deployment does not normally hand out. It stays supported
-            # for a public client created with --public.
+            # With registration closed, `register_oauth_client` issues a secret
+            # unless asked not to, so "none" is a shape this deployment does
+            # not normally hand out. It stays supported for --public clients.
             token_endpoint_auth_methods_supported=(
                 ["client_secret_post", "none"]
                 if settings.oauth_registration_enabled
@@ -164,10 +154,9 @@ class OAuthService(ServiceProviderInterface):
                 "invalid_request", "code_challenge_method must be S256.", state
             )
         # Capped at what an OAuth grant may ever carry, not merely at what the
-        # user holds — see services/oauth/scopes.py. A client that asks for
-        # more than the metadata advertises is narrowed rather than refused,
-        # since the extra scopes are ones no MCP tool uses and the request is
-        # still satisfiable without them.
+        # user holds — see services/oauth/scopes.py. A client asking for more
+        # is narrowed rather than refused; the extra scopes are ones no MCP
+        # tool uses, so the request is still satisfiable without them.
         requested = (
             ScopeResolver.parse(str(scope or "").split()) & OAUTH_ISSUABLE_SCOPES
         )
@@ -213,19 +202,14 @@ class OAuthService(ServiceProviderInterface):
 
         Raises `AuthorizeMfaRequired` with `detail=None` the first time an
         enrolled account's password is accepted (render the code form), and
-        with a detail message plus a freshly minted token on a rejected code
-        (re-render it, so the next attempt gets a full window rather than
-        racing whatever was left of the old one).
+        with a detail plus a freshly minted token on a rejected code, so the
+        next attempt gets a full window rather than what was left of the old.
 
-        `register_mfa_failure` may itself raise `AuthErrors.account_locked`
-        (a 429 `HTTPException`), which then escapes this handler as a plain
-        error response rather than a rendered page — acceptable and honest,
-        not caught here.
+        `register_mfa_failure` may raise `AuthErrors.account_locked`, which
+        escapes as a plain 429 rather than a rendered page.
 
-        Every challenge here is bound to `client_id`, so one issued while
-        authorizing a client cannot be redeemed while authorizing a
-        different one — the consent shown on the first page is not consent
-        to whatever the second page asked for.
+        Every challenge is bound to `client_id`: consent shown on the first
+        page is not consent to whatever a second page asked for.
         """
         verifier = MfaVerifier(self.db, self.settings)
 
@@ -296,11 +280,8 @@ class OAuthService(ServiceProviderInterface):
             raise AuthorizeRedirectError(
                 "access_denied", "The resource owner denied the request.", state
             )
-        # prepare_authorize's _validate_protocol_params raises on a falsy
-        # code_challenge, so this always holds by the time execution reaches
-        # here — asserted rather than left implicit, for the type checker and
-        # for the reader.
-
+        # Unreachable — _validate_protocol_params already rejected a falsy
+        # code_challenge. Kept for the type checker.
         if not code_challenge:
             raise AuthorizeLoginFailed("incorrect_code_challenge")
 

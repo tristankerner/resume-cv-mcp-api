@@ -259,9 +259,8 @@ class TestCredentialRowState:
     async def test_a_successful_login_advances_last_used_step(
         self, client, enrolled, totp_code
     ):
-        # Enrolling already advances the step once, by design (activation is
-        # itself a verified code) — so this asserts the login advances it
-        # further, not that it starts unset.
+        # Enrolling already advances the step once (activation is itself a
+        # verified code), so this asserts the login advances it further.
         step_after_enrollment = (await self._credentials(enrolled.actor.user_id))[
             0
         ].last_used_step

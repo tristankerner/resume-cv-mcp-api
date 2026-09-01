@@ -95,9 +95,8 @@ class UnlockCommand:
             )
             await db.commit()
 
-        # Deleting the row rather than clearing the ban: a row with no ban
-        # and no tally is what `prune` removes anyway, so this leaves the
-        # same state.
+        # Deleting the row rather than clearing the ban leaves the same state
+        # `prune` would.
         if not cast(CursorResult, result).rowcount:
             print(f"No failures recorded for {address!r}; nothing to do.")
             return 0

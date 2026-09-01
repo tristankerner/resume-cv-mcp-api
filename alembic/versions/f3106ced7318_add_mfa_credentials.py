@@ -5,7 +5,7 @@ row per enrolled second factor — a TOTP secret or a backup-code set) and
 `mfa_backup_codes` (the single-use codes belonging to a backup-code
 credential). The MFA challenge between step one and step two of a login is a
 signed JWT, not a database row, so there is no `mfa_challenges` table — see
-plan.md §0.
+services/auth/signed_token.py.
 
 Purely additive, so a migration applied ahead of the deploy is readable by
 the code already running in front of it, the same property

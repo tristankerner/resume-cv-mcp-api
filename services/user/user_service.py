@@ -72,10 +72,9 @@ class UserService(ServiceProviderInterface):
             raise UserErrors.not_found()
 
         # A self-edit touching an account-recovery field needs a password
-        # login, not just any credential for the account — see §1.6 in
-        # plan.md. An admin acting with users:admin is unaffected: that scope
-        # is only ever granted by someone who already holds the role, and
-        # admin automation resetting someone else's password is a real use.
+        # login, not just any credential for the account. An admin acting with
+        # users:admin is unaffected: admin automation resetting someone else's
+        # password is a real use.
         if not is_admin:
             touches_recovery_fields = (
                 request.password is not None
@@ -88,11 +87,8 @@ class UserService(ServiceProviderInterface):
         # Deactivation needs users:admin, on anyone's account including the
         # caller's own. `active` is checked on every credential, so clearing it
         # kills the password login, every live token and every API key at once,
-        # and nothing short of another admin or the database can undo it — the
-        # account cannot authenticate to re-enable itself. Left ungated, a key
-        # narrowed to `resume:read` could brick its owner, which is exactly
-        # what narrowing a credential is supposed to prevent. `require_scope`
-        # passes an admin straight through, so this is one check, not two.
+        # and the account cannot authenticate to re-enable itself. Left
+        # ungated, a key narrowed to `resume:read` could brick its owner.
         if request.disabled is not None:
             self.principal.require_scope(Scopes.USERS_ADMIN)
 
@@ -142,11 +138,11 @@ class UserService(ServiceProviderInterface):
     ) -> None:
         """The logged-in user's own self-service password change.
 
-        Deliberately its own route rather than a `current_password` field on
+        Its own route rather than a `current_password` field on
         UpdateUserRequest: that DTO also serves the admin reset path, where
-        there is no current password to check. Requires an interactive login
-        for the same reason update_user now does — a key that can change the
-        password makes every other restriction on that key meaningless.
+        there is no current password to check. Interactive-only for the same
+        reason update_user is — a key that can change the password makes every
+        other restriction on that key meaningless.
         """
         self.principal.require_interactive()
 
@@ -163,14 +159,9 @@ class UserService(ServiceProviderInterface):
     async def unlock_user(self, user_id: int) -> bool:
         """Clear a login lockout, temporary or permanent.
 
-        Its own route rather than a field on the update request: lock state is
-        not user data being edited, and putting it in UpdateUserRequest would
-        make it settable — an admin should be able to end a lockout, not to
-        impose one by hand.
-
-        Deliberately not restricted to permanently locked accounts. An admin
-        who has just reset someone's password should not have to explain to
-        them that they still have eleven minutes to wait.
+        Its own route rather than a field on the update request, which would
+        make lock state settable — an admin should be able to end a lockout,
+        not impose one by hand. Not restricted to permanently locked accounts.
         """
         self.principal.require_scope(Scopes.USERS_ADMIN)
 
@@ -185,13 +176,11 @@ class UserService(ServiceProviderInterface):
     async def reset_mfa(self, user_id: int) -> None:
         """Remove every MFA method from an account. Requires users:admin.
 
-        Unlike `unlock_user`, this one also requires an interactive login.
-        A lock has to be clearable with an API key, because the whole point
-        of that design is that a locked-out admin can still act; MFA has no
-        such constraint, and an admin key that can strip second factors from
-        any account would make MFA optional service-wide for whoever steals
-        that key. `python -m reset_mfa` is the break-glass path when there
-        is no interactive login to be had.
+        Unlike `unlock_user`, this also requires an interactive login: a lock
+        must stay clearable with an API key so a locked-out admin can still
+        act, but an admin key that could strip second factors would make MFA
+        optional service-wide for whoever steals it. `python -m reset_mfa` is
+        the break-glass path when there is no interactive login to be had.
 
         Idempotent: an account with no MFA returns having done nothing.
         """

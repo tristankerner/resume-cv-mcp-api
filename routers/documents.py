@@ -54,18 +54,15 @@ class DocumentsRouter:
         self.router.post("/documents/metadata")(self.upsert_metadata_document)
         self.router.get("/documents/skill/{document_name}")(self.read_skill_document)
         self.router.post("/documents/skill")(self.upsert_skill_document)
-        # Registered after the typed routes above so the overlap with
-        # /documents/resume etc. in the path space is explicit rather than
-        # incidental — there is no DELETE handler on those, so FastAPI
-        # resolves this fine regardless of order, but the ordering documents
-        # the intent.
+        # Registered after the typed routes above to make the overlap with
+        # /documents/resume explicit. There is no DELETE handler on those, so
+        # FastAPI resolves this regardless of order.
         self.router.delete("/documents/{document_name}")(self.delete_document)
         self.router.patch("/documents/{document_name}")(self.rename_document)
 
-    # One route per disclosure tier. The response models are parameterized, so
-    # FastAPI enforces the shape and OpenAPI documents the two payloads
-    # separately — the public route cannot return private fields even if the
-    # service hands it the wrong object.
+    # One route per disclosure tier, with parameterized response models: the
+    # public route cannot return private fields even if the service hands it
+    # the wrong object.
     async def read_public_document_by_username(
         self,
         username: str,
@@ -116,11 +113,8 @@ class DocumentsRouter:
         return await document_service.upsert_resume_document(request)
 
     # The metadata and the skill are the resume's two companions over MCP.
-    # They get their own routes for the same reason the disclosure tiers do:
-    # a route per payload is what validates the shape on the way in. Without
-    # them the only way to store either was to post it through the resume
-    # route, which validates it as a resume and would reject anything
-    # actually shaped like one of these.
+    # A route per payload is what validates the shape on the way in; the resume
+    # route would reject either, since it validates its body as a resume.
     async def read_metadata_document(
         self,
         document_name: str,

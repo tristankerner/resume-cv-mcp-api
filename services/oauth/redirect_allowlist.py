@@ -6,9 +6,9 @@ can be checked. What is checked instead is *where the code goes*: the redirect
 URI is the only field in a registration request that must be real, because it
 is where the value that matters is sent.
 
-Matched structurally, never as a string — see the hostile-input table in the
-plan. `urlsplit` is what makes `user@host` and `host.evil.com` fail the way
-they should, rather than the way a regex would.
+Matched structurally, never as a string: `urlsplit` is what makes `user@host`
+and `host.evil.com` fail the way they should, rather than the way a regex
+would.
 """
 
 from __future__ import annotations
@@ -82,11 +82,11 @@ class RedirectAllowlist:
     def parse(cls, raw: str | None) -> RedirectAllowlist:
         """`OAUTH_ALLOWED_REDIRECT_HOSTS` -> the allowlist DCR may register against.
 
-        An empty or unset value is a configuration error, not an empty allowlist:
-        the latter would silently block every registration and read like a server
-        fault weeks later. Whitespace around an entry and a trailing comma are
-        tolerated; everything else invalid fails loudly — see
-        `_validate_and_normalize_entry` for exactly what is refused and why.
+        An empty or unset value is a configuration error, not an empty
+        allowlist: the latter would silently block every registration.
+        Whitespace around an entry and a trailing comma are tolerated;
+        everything else invalid fails loudly — see
+        `_validate_and_normalize_entry`.
         """
         entries = [part.strip() for part in (raw or "").split(",")]
         entries = [entry for entry in entries if entry]
@@ -113,14 +113,9 @@ class RedirectAllowlist:
             if not entry.startswith("*."):
                 continue
             suffix = entry[1:]  # ".example.com" — keeps the leading dot
-            # `endswith` is what keeps a wildcard from matching its own apex:
-            # "example.com" is shorter than ".example.com" and so cannot end
-            # with it. The length comparison covers the one case `endswith`
-            # lets through — a host equal to the suffix itself, ".example.com",
-            # since every string ends with itself. `_normalize_host` already
-            # rejects that above (a leading empty label is not encodable), so
-            # this is defence in depth rather than the only thing standing in
-            # the way.
+            # `endswith` keeps a wildcard from matching its own apex. The
+            # length comparison covers the one case it lets through: a host
+            # equal to the suffix itself, since every string ends with itself.
             if normalized.endswith(suffix) and len(normalized) > len(suffix):
                 return True
         return False
@@ -138,12 +133,9 @@ class RedirectAllowlist:
             return False
 
         # RFC 6749 §3.1.2: a redirection endpoint URI MUST NOT include a
-        # fragment component. Tested on the raw string rather than
-        # `parsed.fragment`, which reports "" for both ".../cb" and ".../cb#"
-        # and so cannot tell an empty fragment from none at all. An unencoded
-        # "#" is always the fragment delimiter — one meant literally would be
-        # percent-encoded — so this rejects exactly the URIs that carry a
-        # fragment.
+        # fragment. Tested on the raw string rather than `parsed.fragment`,
+        # which reports "" for both ".../cb" and ".../cb#" and so cannot tell
+        # an empty fragment from none at all.
         if "#" in uri:
             return False
 

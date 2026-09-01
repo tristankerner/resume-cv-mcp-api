@@ -26,13 +26,12 @@ Sequenced carefully:
 7. Recreate only the no-update trigger. The no-delete trigger does not come
    back — deletion is a supported operation from here on.
 
-**Deploy-window note.** `deploy/03-migrate.sh` runs this against the live
-database before the new image deploys. In the minute or two between those two
-steps, the old code serves reads fine but cannot write: the old
+**Deploy-window note.** Unlike the other revisions here, this one is not
+readable by the code in front of it: a deployment that migrates before rolling
+the image serves reads fine but cannot write, because the old
 `upsert_document` inserts no `created_by`/`type` and hits the NOT NULL added
-here. Writes are admin-only on a personal service, so this is accepted rather
-than done as two revisions (ship nullable, backfill, tighten later) — that
-two-deploy pattern is the right call once this serves more than one operator.
+here. Writes are admin-only, so the window is accepted rather than split into
+two revisions (ship nullable, backfill, tighten later).
 
 Revision ID: 35808d4a4c1d
 Revises: 0d7b385e6a45

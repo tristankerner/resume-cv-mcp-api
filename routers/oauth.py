@@ -45,9 +45,8 @@ class OAuthRouter:
     def _register(self) -> None:
         self.router.get(
             "/.well-known/oauth-authorization-server",
-            # `registration_endpoint` is None when registration is closed,
-            # and RFC 8414 wants it absent rather than null — a null there
-            # is a malformed metadata document, not a signal.
+            # RFC 8414 wants `registration_endpoint` absent rather than null
+            # when registration is closed.
             response_model_exclude_none=True,
         )(self.authorization_server_metadata)
         self.router.post("/oauth/register", response_model=None)(self.register_client)
@@ -99,12 +98,10 @@ class OAuthRouter:
         """Anonymous Dynamic Client Registration, off unless
         `OAUTH_REGISTRATION_ENABLED` is set.
 
-        404 rather than 403 when closed, deliberately: the metadata document
-        does not advertise a `registration_endpoint` in that state, so as far
-        as any conforming client is concerned this route does not exist, and
-        saying "forbidden" would instead confirm it does and invite retries.
-        Nothing here touches the database before the check, so a closed
-        deployment has no anonymous write path at all.
+        404 rather than 403 when closed: the metadata document advertises no
+        `registration_endpoint` in that state, so as far as a conforming client
+        is concerned this route does not exist. Nothing touches the database
+        before the check, so a closed deployment has no anonymous write path.
         """
         if not config_service.settings.oauth_registration_enabled:
             log.warning(
@@ -170,12 +167,10 @@ class OAuthRouter:
         config_service: Settings,
         request: Request,
         # Every field defaults to "" rather than being required: Starlette's
-        # form parser treats a submitted-but-empty value as absent, which
-        # would otherwise make FastAPI reject it with its own generic 422
-        # before this handler ever runs — where it needs to become a proper
-        # `invalid_request` redirect instead (a missing code_challenge,
-        # chiefly). OAuthService validates emptiness itself; nothing here is
-        # truly optional.
+        # form parser treats a submitted-but-empty value as absent, so FastAPI
+        # would reject it with a generic 422 before this handler runs, where a
+        # missing code_challenge needs to become an `invalid_request` redirect.
+        # OAuthService validates emptiness itself; nothing here is optional.
         client_id: Annotated[str, Form()] = "",
         redirect_uri: Annotated[str, Form()] = "",
         response_type: Annotated[str, Form()] = "",
@@ -216,9 +211,8 @@ class OAuthRouter:
         except AuthorizeRedirectError as exc:
             return self._redirect_error(redirect_uri, exc)
         except AuthorizeMfaRequired as exc:
-            # client_id/redirect_uri were just re-validated inside
-            # complete_authorize, so re-running the same check to rebuild the
-            # form cannot itself raise AuthorizeFatalError/RedirectError here.
+            # complete_authorize just re-validated client_id/redirect_uri, so
+            # rebuilding the form cannot raise from here.
             client, requested = await oauth.prepare_authorize(
                 client_id=client_id,
                 redirect_uri=redirect_uri,
@@ -242,14 +236,12 @@ class OAuthRouter:
                 mfa_token=exc.mfa_token,
                 error=exc.detail,
             )
-            # No detail means the first challenge, freshly issued off a
-            # correct password — 200, the same as the initial consent form.
-            # A detail means a rejected code — 401, like a wrong password.
+            # No detail means the first challenge off a correct password — 200,
+            # like the consent form. A detail means a rejected code — 401.
             return HTMLResponse(html, status_code=401 if exc.detail else 200)
         except AuthorizeLoginFailed as exc:
-            # client_id/redirect_uri were just re-validated inside
-            # complete_authorize, so re-running the same check to rebuild the
-            # form cannot itself raise AuthorizeFatalError/RedirectError here.
+            # complete_authorize just re-validated client_id/redirect_uri, so
+            # rebuilding the form cannot raise from here.
             client, requested = await oauth.prepare_authorize(
                 client_id=client_id,
                 redirect_uri=redirect_uri,
@@ -316,9 +308,8 @@ class OAuthRouter:
             )
         except OAuthError as exc:
             return self._error_response(exc)
-        # RFC 7009 §2.2: 200 regardless of whether the token existed, was
-        # already revoked, or belonged to someone else — that distinction is
-        # not the caller's to learn.
+        # RFC 7009 §2.2: 200 whether or not the token existed, was already
+        # revoked, or belonged to someone else.
         return Response(status_code=200)
 
 

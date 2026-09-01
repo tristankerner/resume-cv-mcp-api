@@ -6,6 +6,13 @@ restructured for lookup.
 
 Configuration is read once per process — changing a value needs a restart.
 
+**"Default" means the code's fallback**, applied when the setting is absent
+entirely. Settings marked required have none: the service refuses to start
+without them. `.env.example` ships a working value for every one of those, so a
+copied `.env` starts as-is — but deleting one of those lines is not the same as
+accepting a default, and the value in `.env.example` is noted where it differs
+from nothing at all.
+
 ## Environment
 
 | Setting | Default | |
@@ -16,7 +23,7 @@ Configuration is read once per process — changing a value needs a restart.
 
 | Setting | Default | |
 | --- | --- | --- |
-| `DATABASE_URL` | `sqlite+aiosqlite:///data/app.db` | SQLite needs nothing else. For Postgres: `postgresql+asyncpg://USER:PASSWORD@HOST/resume_api?ssl=require` — `alembic/env.py` rewrites this to `postgresql+psycopg` for migrations, translating `ssl` to libpq's `sslmode` on the way, so one setting drives both engines. |
+| `DATABASE_URL` | — (required; `.env.example` sets `sqlite+aiosqlite:///data/app.db`) | SQLite needs nothing else. For Postgres: `postgresql+asyncpg://USER:PASSWORD@HOST/resume_api?ssl=require` — `alembic/env.py` rewrites this to `postgresql+psycopg` for migrations, translating `ssl` to libpq's `sslmode` on the way, so one setting drives both engines. |
 | `DATABASE_ECHO` | `false` | Logs every statement with bind parameters. Leave off outside local debugging — user writes carry password hashes. |
 | `RUN_MIGRATIONS_ON_STARTUP` | `true` | Runs `alembic upgrade head` before the first request. On by default so a local run needs nothing extra. Turn off where a separate pipeline step migrates instead — on a scale-to-zero host this would otherwise run on every cold start, and parallel starts would race for the same lock. With it off, startup fails rather than serving against a schema it does not expect. |
 
@@ -25,8 +32,8 @@ Configuration is read once per process — changing a value needs a restart.
 | Setting | Default | |
 | --- | --- | --- |
 | `AUTH_SECRET_KEY` | — (required) | Signs access tokens, MFA challenges and the docs-session cookie — all three are JWTs distinguished by a `token_use` claim. Generate a fresh one per deployment: `python -c "import secrets; print(secrets.token_urlsafe(64))"` |
-| `AUTH_ALGORITHM` | `HS256` | |
-| `AUTH_ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | |
+| `AUTH_ALGORITHM` | — (required; `.env.example` sets `HS256`) | |
+| `AUTH_ACCESS_TOKEN_EXPIRE_MINUTES` | — (required; `.env.example` sets `30`) | How long a `/token` access token lasts. |
 | `DOCS_SESSION_MINUTES` | `60` | How long a documentation login lasts. The docs are read, not acted on, so this is a browsing session rather than a credential lifetime — see "Auth — multi-factor" below and the README's "The docs are not public in production". |
 
 ## Auth — login throttling
@@ -63,7 +70,36 @@ picture; this table is the settings alone.
 | `MFA_TOTP_DRIFT_STEPS` | `1` | Thirty-second steps either side of now that a TOTP code is accepted for. `1` tolerates roughly ninety seconds of clock skew between a phone and this server; `0` demands perfectly synchronised clocks and will generate support requests. |
 | `MFA_BACKUP_CODE_COUNT` | `10` | How many single-use recovery codes a set contains. Regenerating replaces the set outright — there is only ever one live. |
 | `MFA_ISSUER` | `resume-api` | The issuer name shown beside the account in an authenticator app. Purely cosmetic; worth setting when one person runs more than one deployment of this service. |
-| `MFA_ENCRYPTION_KEYS` | — (required in production) | Fernet keys that seal TOTP secrets at rest, newest first: every key listed can decrypt, the first one encrypts. Generate one with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Comma-separated for more than one. Unset locally — a development run stores TOTP secrets in the clear, which is fine for a database nobody is defending — but startup refuses to begin in production without at least one, because a plaintext seed is symmetric: whoever reads the row can mint valid codes for that account forever. Rotation is prepend-and-wait: add a new key ahead of the old one, and `TotpMethod.verify` re-seals each credential under the new key the next time its owner logs in, so the old key can be dropped once enough time has passed. **Losing every configured key locks every enrolled account out of password login** — startup's `verify_mfa_key` check catches a key that does not match what is already stored and refuses to start rather than let that surface as everyone's login breaking at once. Deliver this through `SECRETS_DIR` in production, not a bare environment variable — `docker inspect` reads env vars, and this key is the whole of what stands between a database dump and every account's second factor. **Back it up somewhere other than beside the database dump** — a backup holding both is a backup with no encryption. Recovery when the key is genuinely gone: `python -m reset_mfa` deletes MFA rows without ever decrypting them, so it works even when this setting is the thing that's wrong. |
+| `MFA_ENCRYPTION_KEYS` | — (required in production) | Fernet keys sealing TOTP secrets at rest, comma-separated, newest first. See below. |
+
+### `MFA_ENCRYPTION_KEYS`
+
+Every key listed can decrypt; the first one encrypts. Generate one with:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Unset locally, where a development run stores TOTP secrets in the clear.
+Startup refuses to begin in production without at least one, because a
+plaintext seed is symmetric — whoever reads the row can mint valid codes for
+that account forever.
+
+**Rotation is prepend-and-wait.** Add a new key ahead of the old one;
+`TotpMethod.verify` re-seals each credential under it the next time that owner
+logs in, so the old key can be dropped once enough time has passed.
+
+**Losing every configured key locks every enrolled account out of password
+login.** Startup's `verify_mfa_key` catches a key that does not match what is
+stored and refuses to start, rather than letting that surface as everyone's
+login breaking at once. When a key is genuinely gone, `python -m reset_mfa`
+deletes MFA rows without decrypting them, so it works even when this setting is
+the thing that is wrong.
+
+Deliver it through `SECRETS_DIR`, not a bare environment variable — `docker
+inspect` reads env vars, and this key is the whole of what stands between a
+database dump and every account's second factor. **Back it up somewhere other
+than beside that dump**; a backup holding both is a backup with no encryption.
 
 ## Bootstrap admin (first start only)
 
@@ -85,19 +121,22 @@ See [oauth-setup.md](oauth-setup.md) for the full walkthrough.
 | Setting | Default | |
 | --- | --- | --- |
 | `PUBLIC_BASE_URL` | `http://localhost:8000` outside production | The service's own issuer/resource URL. Every OAuth token is checked against it, so a wrong value in production rejects them all with no useful error — set it explicitly there. |
-| `OAUTH_ALLOWED_REDIRECT_HOSTS` | `claude.ai` | Hosts a Dynamic-Client-Registration request's `redirect_uri` may target. Comma-separated, any number of entries, one leading `*.` wildcard per entry. `claude.ai` covers Claude web, Desktop, mobile and Cowork; Claude Code's loopback redirect is allowed by a built-in rule and must not be listed here. |
+| `OAUTH_ALLOWED_REDIRECT_HOSTS` | — (required; `.env.example` sets `claude.ai`) | Hosts a Dynamic-Client-Registration request's `redirect_uri` may target. An empty value is rejected at startup rather than treated as an empty allowlist, since that would silently block every registration. Comma-separated, any number of entries, one leading `*.` wildcard per entry. `claude.ai` covers Claude web, Desktop, mobile and Cowork; Claude Code's loopback redirect is allowed by a built-in rule and must not be listed here. |
 | `OAUTH_REGISTRATION_ENABLED` | `false` | Whether `POST /oauth/register` accepts anonymous Dynamic Client Registration. Off by default: the endpoint cannot require a credential, so leaving it on is an unauthenticated database write anyone who finds it can repeat. Closed, it 404s and the metadata document omits `registration_endpoint` entirely. Register clients with `python -m register_oauth_client` instead — both Claude Code (`--client-id`) and claude.ai (Advanced settings) accept one. |
 
-## Browser client (`clients/web/`)
+## Browser client
+
+The client is a separate repository and optional; this API has no build-time
+dependency on one. See the README's "Browser client".
 
 | Setting | Default | |
 | --- | --- | --- |
-| `CLIENT_ALLOWED_ORIGINS` | empty | Origins allowed to call the authenticated routes (`/token`, `/documents`, `/api-keys`, `/users/*`) from a browser. Comma-separated, empty by default — no browser can read these responses until set. Serving `clients/web/index.html` over a local static server needs exactly one entry here. |
-| `CLIENT_HTML_PATH` | unset | Serve the client same-origin instead: set this and `GET /client` returns that file. Same-origin means `CLIENT_ALLOWED_ORIGINS` does not even need to name it. Unset by default, so the API depends on no build artifact and nothing changes for a deployment that does not want this. In the deploy image the path is `/app/clients/web/index.html`, where `COPY . /app` puts it. |
+| `CLIENT_ALLOWED_ORIGINS` | empty | Origins allowed to call the authenticated routes (`/token`, `/documents`, `/api-keys`, `/users/*`) from a browser. Comma-separated, empty by default — no browser can read these responses until set. Serving the client over a separate static server needs exactly one entry here. |
+| `CLIENT_HTML_PATH` | unset | Serve a client same-origin instead: set this and `GET /client` returns that file. Same-origin means `CLIENT_ALLOWED_ORIGINS` does not even need to name it. Unset by default, so the API depends on no build artifact. In an image, this is wherever the build context put the file before `COPY . /app`. |
 
-**On adding `null` to `CLIENT_ALLOWED_ORIGINS`.** Add it only to open
-`clients/web/index.html` straight off disk, and prefer a `http://localhost:PORT`
-origin if you have the choice. `null` is not just "the `file://` origin" — it
+**On adding `null` to `CLIENT_ALLOWED_ORIGINS`.** Add it only to open a client
+straight off disk, and prefer a `http://localhost:PORT` origin if you have the
+choice. `null` is not just "the `file://` origin" — it
 is what *any* website gets by putting a request inside a sandboxed iframe, so
 unlike every other entry here it names no one: allowlisting it lets an
 arbitrary page read responses from this API using the browser of whoever

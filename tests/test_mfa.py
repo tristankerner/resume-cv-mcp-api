@@ -433,8 +433,7 @@ class TestMfaVerifier:
 
 
 class TestMfaChallengeToken:
-    """`mint`/`verify` directly — the documented public surface (§4.6),
-    independent of any particular caller."""
+    """`mint`/`verify` directly, independent of any particular caller."""
 
     async def test_verify_returns_the_user_id_for_a_fresh_token(self):
         user = await make_user("challenge-fresh")

@@ -109,8 +109,7 @@ class TestTokenSubject:
 class TestAccessTokens:
     def test_default_expiry_is_applied_when_none_given(self, settings):
         # create_access_token reads configuration only, so the session the
-        # constructor asks for is never touched. Cast rather than build one:
-        # the production annotation is right, the exception belongs here.
+        # constructor asks for is never touched.
         service = AuthService(
             cast(AsyncSession, None), None, ConfigService.get_without_deps()
         )
