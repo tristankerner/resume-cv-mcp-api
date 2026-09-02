@@ -103,8 +103,11 @@ class ResumeTools:
         `existing.data == document.data`, so slimming what gets written
         instead of what gets read would change revision identity.
         """
-        model = DocumentTypeRegistry.MODELS_BY_TYPE.get(DocumentType(document.type))
-        if model is None:
+        try:
+            model = DocumentTypeRegistry.MODELS_BY_TYPE[DocumentType(document.type)]
+        except KeyError, ValueError:
+            # A type this build does not know — retired, or written by a newer
+            # build. Same reasoning as `DocumentTypeRegistry.scopes_for_stored`.
             return document.data
         try:
             return model.model_validate(document.data).model_dump(exclude_defaults=True)
