@@ -11,7 +11,7 @@ be deleted. A single deployment can host more than one person's résumé.
 
 | Type | Model | Holds |
 | --- | --- | --- |
-| `resume` | `ResumePrivate` | What happened: jobs, bullets, per-bullet tech and figures, skill ratings, contact details, narrative material |
+| `resume` | `ResumePrivate` | What happened: jobs, bullets, per-bullet tech and figures, skill ratings, contact details, narrative material. Individual entries can be withheld from the public feed with `publish: false` — see "The website" below |
 | `metadata` | `ResumeMetadata` | What each field means, which parts are resume-ready, how the highlight ids join, what must never be published |
 | `skill` | `ResumeSkill` | What to do with the other two: the persona, the procedure, the selection and wording rules, the cover-letter guidance, the guardrails, one output spec per artifact |
 
@@ -475,7 +475,8 @@ instead of serving it.
 
 Note that `ResumePrivate` subclasses `Resume`, which means a `-> Resume`
 annotation will happily accept and return a private instance; Pydantic only
-redacts at serialization. Use `to_public()` rather than trusting the type.
+redacts at serialization. Use `PublicProjection.of()` rather than trusting the
+type.
 
 Those routes answer with `Access-Control-Allow-Origin: *`, so any site can
 `fetch()` them directly — no proxy and no per-site configuration. A minimal
@@ -489,6 +490,41 @@ const resume = await res.json();
 Nothing else in the service carries the header by default;
 `middleware/public_cors.py` explains why it is a wildcard rather than an
 allowlist, and why it is stamped whether or not the caller sent an `Origin`.
+
+### Withholding a single entry
+
+`Document.public` publishes or unpublishes an entire document. A job,
+highlight, skill, skill group, certification, education entry, personal
+project, contact link or location also carries its own `publish: bool`
+(default `true`), which withholds just that one entry from the public feed
+while leaving it in the private payload the MCP client reads.
+
+This is curation, not a security control — the fields that are actually
+sensitive (`contact.email_address`, `highlight.tech`, `highlight.metrics`,
+`fine_tuning_data`, …) are redacted structurally by the public/private model
+split above, regardless of `publish`. `publish: false` only decides which
+*entries* show up, never which *attributes* of a shown entry are visible.
+
+Withholding a job or skill group drops it entirely; withholding every
+highlight under a still-published job keeps the job with an empty highlights
+list, since the employment record itself is load-bearing. Withholding every
+skill under a still-published skill group drops the group, since a heading
+with nothing under it is a rendering artifact. See
+`PublicProjection` in `services/document/dtos/resume_object.py` for the exact
+rules.
+
+The flag is also, deliberately, silent to a tailoring run: it says nothing
+about whether an entry belongs in a document written for one specific
+application. An entry kept off the public site for stealth or curation
+reasons is often exactly the one worth leading with in an application — see
+the `publish` field's description in `GET /documents/schemas`, and
+`disclosure.rules` in the metadata document.
+
+**Withholding is not immediate.** `/public/*` sits behind a Cloudflare cache
+rule, and the site additionally caches the feed client-side in `localStorage`
+for 30 minutes (`CACHE_TTL_MS` in the frontend's `remote.ts`). An entry
+withheld for a reason that feels urgent needs a cache purge, not just a
+document write.
 
 ## Browser client
 

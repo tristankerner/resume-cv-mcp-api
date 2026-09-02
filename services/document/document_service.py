@@ -31,10 +31,10 @@ from services.document.dtos.rename_document import (
     RenameDocumentResponse,
 )
 from services.document.dtos.resume_object import (
+    PublicProjection,
     Resume,
     ResumeMetadata,
     ResumePrivate,
-    to_public,
 )
 from services.document.dtos.resume_skill import ResumeSkill
 from services.document.exceptions import DocumentErrors
@@ -94,7 +94,8 @@ class DocumentService(ServiceProviderInterface):
         ):
             raise DocumentErrors.not_found()
         return self._envelope(
-            document, lambda data: to_public(ResumePrivate.model_validate(data))
+            document,
+            lambda data: PublicProjection.of(ResumePrivate.model_validate(data)),
         )
 
     async def read_public_resume_document_by_username(

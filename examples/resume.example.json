@@ -187,7 +187,8 @@
       {
         "name": "example-webhook-relay",
         "link": "https://github.com/example-alex/example-webhook-relay",
-        "description": "A small open-source relay for replaying webhooks during local development."
+        "description": "A small open-source relay for replaying webhooks during local development.",
+        "publish": false
       }
     ],
     "fine_tuning_data": {

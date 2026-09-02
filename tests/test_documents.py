@@ -9,7 +9,7 @@ from persistence.document import Document
 from persistence.user import User
 from services.auth.scopes import Scopes
 from services.database.database_service import DatabaseService
-from services.document.dtos.resume_object import ResumePrivate, to_public
+from services.document.dtos.resume_object import PublicProjection, ResumePrivate
 
 
 def latest(response) -> dict:
@@ -730,6 +730,49 @@ class TestPublicFlag:
         assert response.status_code == 404
 
 
+class TestEntryWithholding:
+    """`publish: false` on one entry, exercised through the real routes rather
+    than PublicProjection directly — the record-level counterpart to
+    TestPublicFlag's whole-document flag."""
+
+    async def test_a_withheld_job_is_absent_from_the_public_feed(
+        self, client, admin, withheld_resume_payload
+    ):
+        await client.post(
+            "/documents/resume",
+            headers=admin.headers,
+            json={
+                "name": "resume.json",
+                "revision_note": "initial",
+                "public": True,
+                "data": withheld_resume_payload,
+            },
+        )
+        response = await client.get("/public/admin-user/resume/resume.json")
+        assert response.status_code == 200
+        companies = [job["company"] for job in response.json()["data"]["jobs"]]
+        assert "Hidden Co" not in companies
+
+    async def test_a_withheld_job_is_present_in_the_private_read(
+        self, client, admin, withheld_resume_payload
+    ):
+        await client.post(
+            "/documents/resume",
+            headers=admin.headers,
+            json={
+                "name": "resume.json",
+                "revision_note": "initial",
+                "public": True,
+                "data": withheld_resume_payload,
+            },
+        )
+        response = await client.get(
+            "/documents/resume/resume.json", headers=admin.headers
+        )
+        companies = [job["company"] for job in latest(response)["data"]["jobs"]]
+        assert "Hidden Co" in companies
+
+
 class TestDocumentNames:
     """A name is a URL path segment and a document's only handle. One that
     cannot be spelled as a path segment stored a document that could then be
@@ -963,6 +1006,19 @@ class TestDocumentSchemas:
         response = await client.get("/documents/schemas", headers=admin.headers)
         schema = response.json()["schemas"]["resume"]
         jsonschema.validate(resume_payload, schema)
+
+    async def test_publish_field_carries_its_agent_facing_description(
+        self, client, admin
+    ):
+        """This pins the one place the withholding-vs-tailoring distinction
+        is guaranteed to reach a client: the schema itself, which survives a
+        fork that never edits its metadata document."""
+        response = await client.get("/documents/schemas", headers=admin.headers)
+        schema = response.json()["schemas"]["resume"]
+        job = schema["$defs"]["JobPrivate"]["properties"]["publish"]
+        assert job["default"] is True
+        assert "public feed only" in job["description"]
+        assert "tailored resume" in job["description"]
 
 
 class TestDeletion:
@@ -1223,23 +1279,70 @@ class TestRename:
 
 
 class TestPublicProjection:
-    """to_public is the redaction primitive; the routes depend on it holding."""
+    """PublicProjection is the redaction primitive; the routes depend on it
+    holding."""
+
+    def test_unflagged_input_projects_exactly_as_before(self, resume_payload):
+        """The regression guard: `resume_payload` sets no `publish` anywhere,
+        so withholding must be a no-op and the change purely additive."""
+        public = PublicProjection.of(ResumePrivate.model_validate(resume_payload))
+        job = resume_payload["jobs"][0]
+        highlight = job["highlights"][0]
+        skill_group = resume_payload["skill_groups"][0]
+        skill = skill_group["skills"][0]
+        assert public.model_dump() == {
+            "profile": resume_payload["profile"],
+            "contact": {
+                "locations": resume_payload["contact"]["locations"],
+                "links": resume_payload["contact"]["links"],
+            },
+            "summary": resume_payload["summary"],
+            "skill_groups": [
+                {
+                    "name": skill_group["name"],
+                    "skills": [{"name": skill["name"], "url": None}],
+                }
+            ],
+            "certifications": [],
+            "jobs": [
+                {
+                    "company": job["company"],
+                    "company_url": None,
+                    "company_location": job["company_location"],
+                    "start": job["start"],
+                    "end": job["end"],
+                    "via_employer": None,
+                    "description": job["description"],
+                    "role_location": job["role_location"],
+                    "roles": job["roles"],
+                    "highlights": [
+                        {
+                            "id": highlight["id"],
+                            "summary": highlight["summary"],
+                            "specifics": highlight["specifics"],
+                        }
+                    ],
+                }
+            ],
+            "education": [],
+            "personal_projects": [],
+        }
 
     def test_drops_private_fields_at_every_depth(self, resume_payload, private_markers):
-        public = to_public(ResumePrivate.model_validate(resume_payload))
+        public = PublicProjection.of(ResumePrivate.model_validate(resume_payload))
         body = json.dumps(public.model_dump())
         for marker in private_markers:
             assert marker not in body
 
     def test_keeps_public_fields(self, resume_payload):
-        public = to_public(ResumePrivate.model_validate(resume_payload))
+        public = PublicProjection.of(ResumePrivate.model_validate(resume_payload))
         assert public.jobs[0].highlights[0].summary == "did a thing"
         assert public.profile.name == "Test"
 
     def test_drops_skill_ratings_but_keeps_the_skill(self, resume_payload):
         """`level` is a fixed vocabulary, so it cannot carry a unique marker
         into private_markers the way `last_used` does. Assert on the key."""
-        public = to_public(ResumePrivate.model_validate(resume_payload))
+        public = PublicProjection.of(ResumePrivate.model_validate(resume_payload))
         skill = public.skill_groups[0].skills[0].model_dump()
         assert skill["name"] == "Python"
         assert "level" not in skill
@@ -1253,6 +1356,148 @@ class TestPublicProjection:
 
         private = ResumePrivate.model_validate(resume_payload)
         assert isinstance(Resume.model_validate(private), ResumePrivate)
+
+    def test_publish_flag_never_reaches_the_public_payload(self, resume_payload):
+        """The flag is declared on the private classes only, so the envelope
+        trick that drops `story` and `last_used` drops this too, at every
+        depth, with no explicit exclusion anywhere."""
+        public = PublicProjection.of(ResumePrivate.model_validate(resume_payload))
+        assert "publish" not in json.dumps(public.model_dump())
+
+    def test_a_withheld_job_is_dropped(self, resume_payload):
+        withheld = {
+            **resume_payload,
+            "jobs": [{**resume_payload["jobs"][0], "publish": False}],
+        }
+        public = PublicProjection.of(ResumePrivate.model_validate(withheld))
+        assert public.jobs == []
+
+    def test_a_withheld_highlight_inside_a_published_job_is_dropped(
+        self, resume_payload
+    ):
+        job = resume_payload["jobs"][0]
+        withheld = {
+            **resume_payload,
+            "jobs": [
+                {
+                    **job,
+                    "highlights": [{**job["highlights"][0], "publish": False}],
+                }
+            ],
+        }
+        public = PublicProjection.of(ResumePrivate.model_validate(withheld))
+        assert len(public.jobs) == 1
+        assert public.jobs[0].highlights == []
+
+    def test_a_published_job_survives_every_highlight_withheld(self, resume_payload):
+        """The job itself is load-bearing: dropping it would leave a silent
+        gap in the employment timeline, so only the highlights empty out."""
+        job = resume_payload["jobs"][0]
+        withheld = {
+            **resume_payload,
+            "jobs": [
+                {
+                    **job,
+                    "highlights": [{**job["highlights"][0], "publish": False}],
+                }
+            ],
+        }
+        public = PublicProjection.of(ResumePrivate.model_validate(withheld))
+        assert public.jobs[0].company == job["company"]
+
+    def test_a_withheld_skill_group_is_dropped(self, resume_payload):
+        withheld = {
+            **resume_payload,
+            "skill_groups": [{**resume_payload["skill_groups"][0], "publish": False}],
+        }
+        public = PublicProjection.of(ResumePrivate.model_validate(withheld))
+        assert public.skill_groups == []
+
+    def test_a_withheld_skill_is_dropped_but_the_group_survives(self, resume_payload):
+        group = resume_payload["skill_groups"][0]
+        skills = group["skills"] + [{**group["skills"][0], "name": "Rust"}]
+        withheld = {
+            **resume_payload,
+            "skill_groups": [
+                {**group, "skills": [{**skills[0], "publish": False}, skills[1]]}
+            ],
+        }
+        public = PublicProjection.of(ResumePrivate.model_validate(withheld))
+        assert len(public.skill_groups) == 1
+        assert [s.name for s in public.skill_groups[0].skills] == ["Rust"]
+
+    def test_a_published_group_with_every_skill_withheld_is_dropped_too(
+        self, resume_payload
+    ):
+        """Unlike a job's highlights, a skill group with nothing left under
+        it is dropped entirely — a heading with no skills is a rendering
+        artifact, not information."""
+        group = resume_payload["skill_groups"][0]
+        withheld = {
+            **resume_payload,
+            "skill_groups": [
+                {**group, "skills": [{**group["skills"][0], "publish": False}]}
+            ],
+        }
+        public = PublicProjection.of(ResumePrivate.model_validate(withheld))
+        assert public.skill_groups == []
+
+    def test_a_withheld_certification_is_dropped(self, resume_payload):
+        withheld = {
+            **resume_payload,
+            "certifications": [{"name": "Withheld Cert", "publish": False}],
+        }
+        public = PublicProjection.of(ResumePrivate.model_validate(withheld))
+        assert public.certifications == []
+
+    def test_a_withheld_education_entry_is_dropped(self, resume_payload):
+        withheld = {
+            **resume_payload,
+            "education": [{"credential": "Withheld Degree", "publish": False}],
+        }
+        public = PublicProjection.of(ResumePrivate.model_validate(withheld))
+        assert public.education == []
+
+    def test_a_withheld_personal_project_is_dropped(self, resume_payload):
+        withheld = {
+            **resume_payload,
+            "personal_projects": [
+                {"description": "Withheld Project", "publish": False}
+            ],
+        }
+        public = PublicProjection.of(ResumePrivate.model_validate(withheld))
+        assert public.personal_projects == []
+
+    def test_every_location_withheld_keeps_contact_with_an_empty_list(
+        self, resume_payload
+    ):
+        """Nothing on the page requires locations to be non-empty, so this is
+        a plain filter with no special-casing — unlike a skill group, contact
+        itself is never dropped."""
+        contact = resume_payload["contact"]
+        withheld = {
+            **resume_payload,
+            "contact": {
+                **contact,
+                "locations": [{**contact["locations"][0], "publish": False}],
+            },
+        }
+        public = PublicProjection.of(ResumePrivate.model_validate(withheld))
+        assert public.contact.locations == []
+        assert public.contact.links != []
+
+    def test_every_link_withheld_keeps_contact_with_an_empty_list(self, resume_payload):
+        contact = resume_payload["contact"]
+        withheld = {
+            **resume_payload,
+            "contact": {
+                **contact,
+                "links": [{**contact["links"][0], "publish": False}],
+            },
+        }
+        public = PublicProjection.of(ResumePrivate.model_validate(withheld))
+        assert public.contact.links == []
+        assert public.contact.locations != []
 
 
 class TestAppendOnlyDocuments:

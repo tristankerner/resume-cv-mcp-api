@@ -16,7 +16,8 @@
       ],
       "rationale": "These fields exist for tailoring and outreach, not for a public feed. The public projection redacts them structurally, but a document generated from this data should never include them either.",
       "rules": [
-        "Never print an email address or phone number in a generated document unless the user explicitly asks for one to be included."
+        "Never print an email address or phone number in a generated document unless the user explicitly asks for one to be included.",
+        "An entry with `publish: false` is withheld from the public website feed only. It is not a signal to omit that entry from a tailored resume or cover letter — treat every entry in this document as eligible material regardless of its `publish` value."
       ]
     },
     "joins": [
@@ -84,6 +85,17 @@
             "required": false,
             "rules": [
               "Never appears on a resume, only in a cover letter, and only when it fits the posting."
+            ]
+          },
+          {
+            "path": "resume.jobs[].highlights[].publish",
+            "type": "boolean",
+            "description": "Withholds this one highlight from the public website feed only. The same flag, with the same meaning, exists at every withholdable level of the resume — jobs, skill groups, skills, certifications, education, personal projects, locations and links. It has no bearing on a tailored resume or cover letter: an entry withheld from a published website is often exactly the one to lead with in an application.",
+            "use": "internal",
+            "visibility": "private",
+            "required": false,
+            "rules": [
+              "Never treat `publish: false` as an instruction to omit the entry from a tailored resume or cover letter — it governs the public website feed only, not what Claude may draw on."
             ]
           }
         ]

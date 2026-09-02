@@ -173,6 +173,13 @@
         "rule": "Never print salary expectation, availability, or relocation terms unless the user asks for them to be included.",
         "instead": "Ask the user whether to include logistics before adding them.",
         "rationale": "Logistics answer a question nobody asked unless the posting or the user raised it."
+      },
+      {
+        "id": "publish-flag-is-not-a-tailoring-filter",
+        "severity": "never",
+        "rule": "Never drop an entry from a tailored resume or cover letter because its `publish` field is false.",
+        "instead": "Treat every entry in the resume document as eligible material, regardless of `publish`. That flag only withholds an entry from the public website feed — it says nothing about whether the entry belongs in a document written for one specific application.",
+        "rationale": "An entry withheld from a published website for stealth or curation reasons is frequently the one to lead with in an application; silently dropping it would remove the strongest evidence for exactly the postings it matters most for."
       }
     ],
     "escalations": [

@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Base(BaseModel):
@@ -15,6 +15,18 @@ class Base(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class Withholdable(Base):
+    publish: bool = Field(
+        default=True,
+        description=(
+            "False withholds this entry from the public feed only. It has no "
+            "bearing on a tailored resume or cover letter: an entry withheld "
+            "from a published website is often exactly the one to lead with in "
+            "an application. Absent means published."
+        ),
+    )
+
+
 class Profile(Base):
     name: str
     title: str
@@ -26,6 +38,10 @@ class ContactLink(Base):
     url: str
 
 
+class ContactLinkPrivate(ContactLink, Withholdable):
+    pass
+
+
 class Location(Base):
     """A candidate header location; exactly one belongs on a given resume."""
 
@@ -34,12 +50,18 @@ class Location(Base):
     note: str
 
 
+class LocationPrivate(Location, Withholdable):
+    pass
+
+
 class ContactPublic(Base):
     locations: list[Location]  # ordered most-generally-applicable first
     links: list[ContactLink]
 
 
 class ContactPrivate(ContactPublic):
+    locations: list[LocationPrivate]
+    links: list[ContactLinkPrivate]
     email_address: str
     mobile_number: str
 
@@ -49,7 +71,7 @@ class Skill(Base):
     url: str | None = None
 
 
-class SkillPrivate(Skill):
+class SkillPrivate(Skill, Withholdable):
     """A skill with the two ratings that decide whether it makes the cut.
 
     Private, and not because they are sensitive on their own: they are a candid
@@ -68,7 +90,7 @@ class SkillGroup(Base):
     skills: list[Skill]
 
 
-class SkillGroupPrivate(SkillGroup):
+class SkillGroupPrivate(SkillGroup, Withholdable):
     skills: list[SkillPrivate]
 
 
@@ -76,6 +98,10 @@ class Certification(Base):
     name: str
     id: str | None = None  # absent for credentials the issuer does not number
     url: str | None = None
+
+
+class CertificationPrivate(Certification, Withholdable):
+    pass
 
 
 class Role(Base):
@@ -108,7 +134,7 @@ class Highlight(Base):
     specifics: list[str]
 
 
-class HighlightPrivate(Highlight):
+class HighlightPrivate(Highlight, Withholdable):
     tech: list[str]
     metrics: list[Metrics]
     story: str | None = None
@@ -135,7 +161,7 @@ class Job(Base):
     highlights: list[Highlight]
 
 
-class JobPrivate(Job):
+class JobPrivate(Job, Withholdable):
     highlights: list[HighlightPrivate]
 
 
@@ -148,10 +174,18 @@ class Education(Base):
     url: str | None = None
 
 
+class EducationPrivate(Education, Withholdable):
+    pass
+
+
 class PersonalProject(Base):
     name: str | None = None
     link: str | None = None
     description: str
+
+
+class PersonalProjectPrivate(PersonalProject, Withholdable):
+    pass
 
 
 class Resume(Base):
@@ -168,7 +202,10 @@ class Resume(Base):
 class ResumePrivate(Resume):
     contact: ContactPrivate
     skill_groups: list[SkillGroupPrivate]
+    certifications: list[CertificationPrivate]
     jobs: list[JobPrivate]
+    education: list[EducationPrivate]
+    personal_projects: list[PersonalProjectPrivate]
     fine_tuning_data: FineTuningData | None = None
 
 
@@ -343,12 +380,70 @@ class ResumeMetadata(Base):
     cautions: list[str] = []  # the mistakes worth naming up front
 
 
-class _PublicProjection(Base):
-    """Single-field envelope whose declared type drives the redaction below."""
+class PublicProjection:
+    """Withholding pass, then the type-driven redaction.
 
-    resume: Resume
+    Order matters. Filtering runs on the private tree, where the flags live;
+    the projection then dumps it through a `Resume`-typed envelope, which is
+    what drops both the private fields and the flags themselves.
+    """
 
+    class _Envelope(Base):
+        resume: Resume
 
-def to_public(private: ResumePrivate) -> Resume:
-    redacted = _PublicProjection(resume=private).model_dump()["resume"]
-    return Resume.model_validate(redacted)
+    def __init__(self, private: ResumePrivate) -> None:
+        self.private = private
+
+    @classmethod
+    def of(cls, private: ResumePrivate) -> Resume:
+        return cls(private).build()
+
+    def build(self) -> Resume:
+        withheld = self._filter(self.private)
+        redacted = self._Envelope(resume=withheld).model_dump()["resume"]
+        return Resume.model_validate(redacted)
+
+    def _filter(self, private: ResumePrivate) -> ResumePrivate:
+        return private.model_copy(
+            update={
+                "contact": self._filter_contact(private.contact),
+                "skill_groups": self._filter_skill_groups(private.skill_groups),
+                "certifications": self._published(private.certifications),
+                "jobs": self._filter_jobs(private.jobs),
+                "education": self._published(private.education),
+                "personal_projects": self._published(private.personal_projects),
+            }
+        )
+
+    def _published[T: Withholdable](self, entries: list[T]) -> list[T]:
+        return [entry for entry in entries if entry.publish]
+
+    def _filter_contact(self, contact: ContactPrivate) -> ContactPrivate:
+        return contact.model_copy(
+            update={
+                "locations": self._published(contact.locations),
+                "links": self._published(contact.links),
+            }
+        )
+
+    def _filter_skill_groups(
+        self, groups: list[SkillGroupPrivate]
+    ) -> list[SkillGroupPrivate]:
+        """A published group with every skill withheld is dropped too — a
+        heading with nothing under it is a rendering artifact, not
+        information."""
+        kept = []
+        for group in self._published(groups):
+            skills = self._published(group.skills)
+            if skills:
+                kept.append(group.model_copy(update={"skills": skills}))
+        return kept
+
+    def _filter_jobs(self, jobs: list[JobPrivate]) -> list[JobPrivate]:
+        """Unlike a skill group, a job with every highlight withheld is kept
+        with an empty list — the employment record is load-bearing, and
+        dropping the job would create a silent gap in the timeline."""
+        return [
+            job.model_copy(update={"highlights": self._published(job.highlights)})
+            for job in self._published(jobs)
+        ]

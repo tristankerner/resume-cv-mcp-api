@@ -356,6 +356,28 @@ def private_markers(resume_payload) -> list[str]:
 
 
 @pytest.fixture
+def withheld_resume_payload(resume_payload) -> dict:
+    """`resume_payload` plus a second job marked `publish: false`.
+
+    A separate fixture rather than editing `resume_payload` itself, so every
+    existing assertion elsewhere — the CORS tests, the unflagged-projection
+    guard — keeps exercising the ordinary, unwithheld path.
+    """
+    hidden_job = {
+        **resume_payload["jobs"][0],
+        "company": "Hidden Co",
+        "publish": False,
+        "highlights": [
+            {**resume_payload["jobs"][0]["highlights"][0], "id": "hidden-highlight"}
+        ],
+    }
+    return {
+        **resume_payload,
+        "jobs": [resume_payload["jobs"][0], hidden_job],
+    }
+
+
+@pytest.fixture
 def metadata_payload() -> dict:
     """A minimal but complete ResumeMetadata."""
     return {
