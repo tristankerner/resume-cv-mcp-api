@@ -5,7 +5,7 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from persistence.api_key import ApiKey
-from persistence.base import utcnow
+from persistence.base import Clock
 from persistence.user import User
 from services.auth.api_keys import ApiKeyToken
 from services.auth.auth_service import AuthService
@@ -45,7 +45,7 @@ class ApiKeyService(ServiceProviderInterface):
 
         full_key, prefix, key_hash = ApiKeyToken.generate()
         expires_at = (
-            utcnow() + timedelta(days=request.expires_in_days)
+            Clock.utcnow() + timedelta(days=request.expires_in_days)
             if request.expires_in_days
             else None
         )
@@ -56,7 +56,7 @@ class ApiKeyService(ServiceProviderInterface):
             prefix=prefix,
             key_hash=key_hash,
             scopes=[str(scope) for scope in request.scopes],
-            created_at=utcnow(),
+            created_at=Clock.utcnow(),
             expires_at=expires_at,
         )
         self.db.add(api_key)
@@ -84,7 +84,7 @@ class ApiKeyService(ServiceProviderInterface):
             raise AuthErrors.api_key_not_found()
 
         if api_key.revoked_at is None:
-            api_key.revoked_at = utcnow()
+            api_key.revoked_at = Clock.utcnow()
             await self.db.commit()
 
         return ApiKeyDto.model_validate(api_key)

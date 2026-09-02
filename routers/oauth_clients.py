@@ -56,6 +56,3 @@ class OAuthClientsRouter:
         login."""
         await service.delete_client(client_id)
         return Response(status_code=204)
-
-
-router = OAuthClientsRouter().router

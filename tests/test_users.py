@@ -4,7 +4,7 @@ from datetime import timedelta
 
 import pytest
 
-from persistence.base import utcnow
+from persistence.base import Clock
 from persistence.user import User
 from services.auth.roles import Roles
 from services.auth.scopes import Scopes
@@ -876,7 +876,7 @@ class TestListUsers:
         async with DatabaseService.session() as db:
             user = await User.get_user_by_id(db, victim.user_id)
             assert user is not None
-            user.locked_until = utcnow() + timedelta(hours=1)
+            user.locked_until = Clock.utcnow() + timedelta(hours=1)
             await db.commit()
 
         response = await client.get("/users", headers=admin.headers)
@@ -892,7 +892,7 @@ class TestListUsers:
         async with DatabaseService.session() as db:
             user = await User.get_user_by_id(db, victim.user_id)
             assert user is not None
-            user.locked_until = utcnow() - timedelta(hours=1)
+            user.locked_until = Clock.utcnow() - timedelta(hours=1)
             await db.commit()
 
         response = await client.get("/users", headers=admin.headers)
@@ -906,7 +906,7 @@ class TestListUsers:
         async with DatabaseService.session() as db:
             user = await User.get_user_by_id(db, victim.user_id)
             assert user is not None
-            user.locked_permanently_at = utcnow()
+            user.locked_permanently_at = Clock.utcnow()
             await db.commit()
 
         response = await client.get("/users", headers=admin.headers)

@@ -1,15 +1,12 @@
 from datetime import datetime, timedelta
-from typing import cast
+from typing import ClassVar, cast
 
 from sqlalchemy import JSON, CursorResult, ForeignKey, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.mutable import MutableList
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .base import SQAlchemyBase, utcnow
-
-# 30 days.
-TTL = timedelta(days=30)
+from .base import Clock, SQAlchemyBase
 
 
 class OAuthRefreshToken(SQAlchemyBase):
@@ -23,6 +20,9 @@ class OAuthRefreshToken(SQAlchemyBase):
     """
 
     __tablename__ = "oauth_refresh_tokens"
+
+    # 30 days.
+    TTL: ClassVar[timedelta] = timedelta(days=30)
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     token_hash: Mapped[str] = mapped_column(unique=True, index=True, nullable=False)
@@ -42,13 +42,13 @@ class OAuthRefreshToken(SQAlchemyBase):
     rotated_to_id: Mapped[int | None] = mapped_column(
         ForeignKey("oauth_refresh_tokens.id")
     )
-    created_at: Mapped[datetime] = mapped_column(default=utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(default=Clock.utcnow, nullable=False)
 
     def __repr__(self) -> str:
         return f"OAuthRefreshToken(id={self.id!r}, grant_id={self.grant_id!r})"
 
     def is_usable(self, now: datetime | None = None) -> bool:
-        now = now or utcnow()
+        now = now or Clock.utcnow()
         return self.revoked_at is None and self.expires_at > now
 
     @staticmethod
@@ -92,7 +92,7 @@ class OAuthRefreshToken(SQAlchemyBase):
         of them. Selected and updated in Python rather than a bulk UPDATE, so
         the ORM's identity map stays consistent with any row from this chain
         already loaded in the session."""
-        now = utcnow()
+        now = Clock.utcnow()
         rows = (
             (
                 await db.execute(
@@ -118,7 +118,9 @@ class OAuthRefreshToken(SQAlchemyBase):
         same startup sweep as `AuthFailure.prune` — see main.py.
         """
         result = await db.execute(
-            delete(OAuthRefreshToken).where(OAuthRefreshToken.expires_at < utcnow())
+            delete(OAuthRefreshToken).where(
+                OAuthRefreshToken.expires_at < Clock.utcnow()
+            )
         )
         await db.commit()
         return cast(CursorResult, result).rowcount or 0

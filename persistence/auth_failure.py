@@ -1,11 +1,11 @@
 from datetime import datetime, timedelta
-from typing import cast
+from typing import Any, cast
 
 from sqlalchemy import CursorResult, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .base import SQAlchemyBase, utcnow
+from .base import Clock, SQAlchemyBase
 
 
 class AuthFailure(SQAlchemyBase):
@@ -29,13 +29,15 @@ class AuthFailure(SQAlchemyBase):
     address: Mapped[str] = mapped_column(unique=True, index=True, nullable=False)
     failure_count: Mapped[int] = mapped_column(default=0, nullable=False)
     first_failure_at: Mapped[datetime | None]
-    last_failure_at: Mapped[datetime] = mapped_column(default=utcnow, nullable=False)
+    last_failure_at: Mapped[datetime] = mapped_column(
+        default=Clock.utcnow, nullable=False
+    )
     banned_until: Mapped[datetime | None]
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any):
         """Counter defaults at construction. Same reasoning as User.__init__."""
         kwargs.setdefault("failure_count", 0)
-        kwargs.setdefault("last_failure_at", utcnow())
+        kwargs.setdefault("last_failure_at", Clock.utcnow())
         super().__init__(**kwargs)
 
     def __repr__(self) -> str:
@@ -79,13 +81,13 @@ class AuthFailure(SQAlchemyBase):
         here, and a scale-to-zero deployment starts often enough that the
         table cannot grow far between sweeps. Returns the number removed.
         """
-        cutoff = utcnow() - window
+        cutoff = Clock.utcnow() - window
         result = await db.execute(
             delete(AuthFailure).where(
                 AuthFailure.last_failure_at < cutoff,
                 or_(
                     AuthFailure.banned_until.is_(None),
-                    AuthFailure.banned_until < utcnow(),
+                    AuthFailure.banned_until < Clock.utcnow(),
                 ),
             )
         )

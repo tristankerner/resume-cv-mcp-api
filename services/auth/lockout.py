@@ -32,10 +32,6 @@ if TYPE_CHECKING:
     from persistence.user import User
     from services.config.config_service import ConfigServiceModel
 
-# Guards the doubling against a nonsensically high `permanent_after_locks`. At
-# sixteen the duration is already measured in years.
-MAX_ESCALATION = 16
-
 
 class LockKind(StrEnum):
     OPEN = auto()
@@ -78,6 +74,10 @@ LockStatus.PERMANENT = LockStatus(LockKind.PERMANENT)
 
 @dataclass(frozen=True)
 class AccountPolicy:
+    # Guards the doubling against a nonsensically high `permanent_after_locks`.
+    # At sixteen the duration is already measured in years.
+    MAX_ESCALATION: ClassVar[int] = 16
+
     enabled: bool
     max_attempts: int
     window: timedelta
@@ -96,7 +96,7 @@ class AccountPolicy:
 
     def lock_duration(self, lock_count: int) -> timedelta:
         """How long the `lock_count`-th consecutive lock lasts."""
-        return self.base_lock * 2 ** min(max(lock_count - 1, 0), MAX_ESCALATION)
+        return self.base_lock * 2 ** min(max(lock_count - 1, 0), self.MAX_ESCALATION)
 
     def status(self, user: User, now: datetime) -> LockStatus:
         """Whether this account may attempt a password login at all.

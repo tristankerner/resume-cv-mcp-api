@@ -5,7 +5,7 @@ import secrets
 from datetime import datetime
 from typing import ClassVar
 
-from persistence.base import utcnow
+from persistence.base import Clock
 from persistence.mfa_backup_code import MfaBackupCode
 from persistence.mfa_credential import MfaCredential
 from persistence.user import User
@@ -42,8 +42,8 @@ class BackupCodesMethod(MfaMethod):
             user_id=user.id,
             kind=str(self.KIND),
             label=label,
-            created_at=utcnow(),
-            activated_at=utcnow(),  # nothing to prove
+            created_at=Clock.utcnow(),
+            activated_at=Clock.utcnow(),  # nothing to prove
         )
         self.db.add(credential)
         await self.db.flush()

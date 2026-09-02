@@ -32,6 +32,3 @@ class AuthRouter:
         code: Annotated[str, Form()],
     ) -> Token:
         return await login_service.complete_mfa(mfa_token, code)
-
-
-router = AuthRouter().router

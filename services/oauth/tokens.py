@@ -10,18 +10,16 @@ from typing import ClassVar
 import jwt
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from persistence.base import utcnow
-from persistence.oauth_refresh_token import TTL as REFRESH_TTL
+from persistence.base import Clock
 from persistence.oauth_refresh_token import OAuthRefreshToken
 from services.auth.api_keys import ApiKeyToken
 from services.auth.scopes import Scopes
 from services.config.config_service import ConfigServiceModel
 from services.oauth.exceptions import OAuthErrors
 
-log = logging.getLogger("uvicorn")
-
 
 class TokenIssuer:
+    LOG: ClassVar[logging.Logger] = logging.getLogger("uvicorn")
     REFRESH_TOKEN_BYTES: ClassVar[int] = 32
 
     def __init__(self, db: AsyncSession, settings: ConfigServiceModel):
@@ -94,7 +92,7 @@ class TokenIssuer:
             scopes=sorted(str(scope) for scope in scopes),
             resource=resource,
             grant_id=secrets.token_hex(16),
-            expires_at=utcnow() + REFRESH_TTL,
+            expires_at=Clock.utcnow() + OAuthRefreshToken.TTL,
         )
         self.db.add(record)
         await self.db.commit()
@@ -124,13 +122,13 @@ class TokenIssuer:
             self.db, ApiKeyToken.hash_secret(presented_token)
         )
         if record is None:
-            log.warning(
+            self.LOG.warning(
                 "OAuth refresh grant rejected: unknown token (client_id=%s).",
                 client_id,
             )
             raise OAuthErrors.invalid_grant("Refresh token is invalid.")
         if record.client_id != client_id:
-            log.warning(
+            self.LOG.warning(
                 "OAuth refresh grant rejected: token belongs to client_id=%s, not "
                 "the presenting client_id=%s.",
                 record.client_id,
@@ -141,7 +139,7 @@ class TokenIssuer:
             )
 
         if record.revoked_at is not None:
-            log.warning(
+            self.LOG.warning(
                 "OAuth refresh token reuse detected: client_id=%s grant_id=%s — "
                 "revoking the whole grant chain.",
                 record.client_id,
@@ -149,8 +147,8 @@ class TokenIssuer:
             )
             await OAuthRefreshToken.revoke_chain(self.db, record.grant_id)
             raise OAuthErrors.invalid_grant("Refresh token has already been used.")
-        if record.expires_at <= utcnow():
-            log.info(
+        if record.expires_at <= Clock.utcnow():
+            self.LOG.info(
                 "OAuth refresh grant rejected: token expired (client_id=%s "
                 "grant_id=%s).",
                 record.client_id,
@@ -166,14 +164,14 @@ class TokenIssuer:
             scopes=list(record.scopes),
             resource=record.resource,
             grant_id=record.grant_id,
-            expires_at=utcnow() + REFRESH_TTL,
+            expires_at=Clock.utcnow() + OAuthRefreshToken.TTL,
         )
         self.db.add(new_record)
         await self.db.flush()
-        record.revoked_at = utcnow()
+        record.revoked_at = Clock.utcnow()
         record.rotated_to_id = new_record.id
         await self.db.commit()
-        log.info(
+        self.LOG.info(
             "OAuth refresh token rotated: client_id=%s grant_id=%s.",
             record.client_id,
             record.grant_id,
@@ -191,5 +189,5 @@ class TokenIssuer:
         if record is None or record.client_id != client_id:
             return
         if record.revoked_at is None:
-            record.revoked_at = utcnow()
+            record.revoked_at = Clock.utcnow()
             await self.db.commit()

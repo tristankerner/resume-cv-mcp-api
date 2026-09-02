@@ -6,7 +6,7 @@ from datetime import timedelta
 import pytest
 
 from persistence.api_key import ApiKey
-from persistence.base import utcnow
+from persistence.base import Clock
 from persistence.user import User
 from services.auth.api_keys import ApiKeyToken
 from services.auth.principal import CredentialKind
@@ -257,7 +257,7 @@ class TestRejectedKeys:
         async with DatabaseService.session() as db:
             row = await ApiKey.get_by_id(db, created["api_key"]["id"])
             assert row is not None
-            row.expires_at = utcnow() - timedelta(seconds=1)
+            row.expires_at = Clock.utcnow() - timedelta(seconds=1)
             await db.commit()
 
         response = await client.get(

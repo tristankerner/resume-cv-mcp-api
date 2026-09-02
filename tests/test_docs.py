@@ -3,7 +3,7 @@
 import jwt
 import pytest
 
-from persistence.base import utcnow
+from persistence.base import Clock
 from persistence.user import User
 from services.auth.docs_session import DocsSessionToken
 from services.config.config_service import ConfigServiceModel, Environment
@@ -375,7 +375,7 @@ class TestProductionMfaLockRecheck:
         async with DatabaseService.session() as db:
             user = await User.get_user_by_id(db, enrolled.actor.user_id)
             assert user is not None
-            user.locked_permanently_at = utcnow()
+            user.locked_permanently_at = Clock.utcnow()
             await db.commit()
 
         response = await client.post(

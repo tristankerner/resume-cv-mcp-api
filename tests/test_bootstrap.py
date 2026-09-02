@@ -31,14 +31,14 @@ def startup_logs():
             messages.append(record.getMessage())
 
     handler = Sink()
-    previous_level = main.log.level
-    main.log.addHandler(handler)
-    main.log.setLevel(logging.DEBUG)
+    previous_level = main.StartupTasks.LOG.level
+    main.StartupTasks.LOG.addHandler(handler)
+    main.StartupTasks.LOG.setLevel(logging.DEBUG)
     try:
         yield messages
     finally:
-        main.log.removeHandler(handler)
-        main.log.setLevel(previous_level)
+        main.StartupTasks.LOG.removeHandler(handler)
+        main.StartupTasks.LOG.setLevel(previous_level)
 
 
 @pytest.fixture

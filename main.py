@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from pathlib import Path
@@ -24,15 +25,20 @@ from persistence.auth_failure import AuthFailure
 from persistence.mfa_credential import MfaCredential
 from persistence.oauth_authorization_code import OAuthAuthorizationCode
 from persistence.oauth_refresh_token import OAuthRefreshToken
-from routers import api_keys, auth, docs, documents, mfa, oauth, oauth_clients, users
+from routers.api_keys import ApiKeysRouter
+from routers.auth import AuthRouter
+from routers.docs import DocsRouter
+from routers.documents import DocumentsRouter
+from routers.mfa import MfaRouter
+from routers.oauth import OAuthRouter
+from routers.oauth_clients import OAuthClientsRouter
+from routers.users import UsersRouter
 from services.auth.mcp_verifier import McpTokenVerifier
 from services.auth.mfa.secret_box import MfaSecretBox
 from services.config.config_service import ConfigService
 from services.database.database_service import DatabaseService
-from services.oauth.scopes import OAUTH_ISSUABLE_SCOPES
+from services.oauth.scopes import OAuthScopes
 from services.user.bootstrap import AdminBootstrapper, BootstrapOutcome
-
-log = logging.getLogger("uvicorn")
 
 
 class StartupTasks:
@@ -43,6 +49,8 @@ class StartupTasks:
     controls which settings snapshot it acts on — that is what lets a test
     change the environment and immediately observe it here.
     """
+
+    LOG: ClassVar[logging.Logger] = logging.getLogger("uvicorn")
 
     def __init__(self, config_service: ConfigService):
         self.config_service = config_service
@@ -69,9 +77,9 @@ class StartupTasks:
             )
 
         if outcome is BootstrapOutcome.CREATED:
-            log.info("Created bootstrap admin %r.", username)
+            self.LOG.info("Created bootstrap admin %r.", username)
         elif outcome is BootstrapOutcome.NOT_CONFIGURED:
-            log.warning(
+            self.LOG.warning(
                 "No admin user exists. Public documents will be served, but nothing "
                 "can be written until one is created: set BOOTSTRAP_ADMIN_USERNAME "
                 "and BOOTSTRAP_ADMIN_PASSWORD and restart, or run "
@@ -122,9 +130,11 @@ class StartupTasks:
             codes_removed = await OAuthAuthorizationCode.prune(db)
             tokens_removed = await OAuthRefreshToken.prune(db)
         if codes_removed:
-            log.info("Pruned %d expired OAuth authorization code(s).", codes_removed)
+            self.LOG.info(
+                "Pruned %d expired OAuth authorization code(s).", codes_removed
+            )
         if tokens_removed:
-            log.info("Pruned %d expired OAuth refresh token(s).", tokens_removed)
+            self.LOG.info("Pruned %d expired OAuth refresh token(s).", tokens_removed)
 
     async def prune_auth_failures(self) -> None:
         """Drop login-failure rows that no longer decide anything.
@@ -140,11 +150,24 @@ class StartupTasks:
         async with DatabaseService.session() as db:
             removed = await AuthFailure.prune(db, window)
         if removed:
-            log.info("Pruned %d expired login-failure record(s).", removed)
+            self.LOG.info("Pruned %d expired login-failure record(s).", removed)
 
 
-class Application:
-    """Assembles the ASGI app: MCP mount, middleware, routers, client route."""
+class ClientRoute:
+    """Serves the browser client at GET /client, if one is configured.
+
+    Served same-origin, so CLIENT_ALLOWED_ORIGINS does not need to name it.
+    Which file is the deployment's business: clients live in their own
+    repositories and one is copied into the build context before
+    `COPY . /app`. .dockerignore keeps a locally built
+    clients/web/dist/index.html out of any image on purpose — it is
+    gitignored, so nothing reviews what would be served.
+
+    Its own class rather than a method on `Application` so the resolved path
+    has somewhere to live that is not a closure over `register`.
+    """
+
+    LOG: ClassVar[logging.Logger] = logging.getLogger("uvicorn")
 
     # No `script-src`, deliberately: the client is one self-contained file
     # whose script is inlined by its build, so locking scripts down would need
@@ -152,13 +175,48 @@ class Application:
     # every client build. Nothing is fetched from anywhere else, which is the
     # property that made a CDN allowlist unnecessary in the first place.
     # `frame-ancestors` matters because the page carries a login form.
-    CLIENT_HEADERS: ClassVar[dict[str, str]] = {
+    HEADERS: ClassVar[dict[str, str]] = {
         "Content-Security-Policy": (
             "frame-ancestors 'none'; base-uri 'self'; object-src 'none'"
         ),
         "X-Content-Type-Options": "nosniff",
         "Referrer-Policy": "no-referrer",
     }
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    @classmethod
+    def register(cls, app_: FastAPI, configured_path: str | None) -> bool:
+        """The path is resolved once here rather than per request: declining to
+        register the route is more honest than a 404 that never changes.
+
+        An instance is built only once there is a real file, which is what
+        keeps `path` non-optional for `serve`. Returns whether it registered.
+        """
+        if not configured_path:
+            return False
+
+        path = Path(configured_path)
+        if not path.is_file():
+            cls.LOG.warning(
+                "CLIENT_HTML_PATH is set to %r but that file does not exist; "
+                "GET /client will not be registered.",
+                configured_path,
+            )
+            return False
+
+        app_.get("/client", include_in_schema=False)(cls(path).serve)
+        return True
+
+    async def serve(self) -> FileResponse:
+        return FileResponse(self.path, media_type="text/html", headers=self.HEADERS)
+
+
+class Application:
+    """Assembles the ASGI app: MCP mount, middleware, routers, client route."""
+
+    LOG: ClassVar[logging.Logger] = logging.getLogger("uvicorn")
 
     def __init__(self, config_service: ConfigService | None = None):
         self.config_service = config_service or ConfigService.get_without_deps()
@@ -202,20 +260,26 @@ class Application:
         for route in auth_provider.get_well_known_routes(mcp_path="/mcp"):
             self._app.router.routes.append(route)
 
-        self._app.include_router(docs.router)
-        self._app.include_router(users.router)
-        self._app.include_router(auth.router)
-        self._app.include_router(documents.router)
-        self._app.include_router(api_keys.router)
-        self._app.include_router(oauth.router)
-        self._app.include_router(oauth_clients.router)
-        self._app.include_router(mfa.router)
+        # Each router class owns its own APIRouter; instantiating here rather
+        # than at module import is what keeps `routers/` free of globals.
+        for router in (
+            DocsRouter(),
+            UsersRouter(),
+            AuthRouter(),
+            DocumentsRouter(),
+            ApiKeysRouter(),
+            OAuthRouter(),
+            OAuthClientsRouter(),
+            MfaRouter(),
+        ):
+            self._app.include_router(router.router)
 
-        self._register_client_route(self._app, self.settings.client_html_path)
+        ClientRoute.register(self._app, self.settings.client_html_path)
 
-        @self._app.get("/")
-        async def root():
-            return {"I'm": "alive"}
+        self._app.get("/")(self.root)
+
+    async def root(self) -> dict[str, str]:
+        return {"I'm": "alive"}
 
     @property
     def app(self) -> FastAPI:
@@ -244,7 +308,7 @@ class Application:
             # request straight from this list, and an OAuth token authenticates
             # on the REST surface too, so advertising the whole enum would let
             # a connector ask for — and get — users:admin.
-            scopes_supported=sorted(str(scope) for scope in OAUTH_ISSUABLE_SCOPES),
+            scopes_supported=sorted(str(scope) for scope in OAuthScopes.ISSUABLE),
             resource_name="resume-api MCP",
         )
 
@@ -271,53 +335,18 @@ class Application:
             content={"detail": jsonable_encoder(errors)},
         )
 
-    @staticmethod
-    def _register_client_route(app_: FastAPI, configured_path: str | None) -> bool:
-        """Serve the browser client at GET /client, if one is configured.
-
-        Served same-origin, so CLIENT_ALLOWED_ORIGINS does not need to name it.
-        Which file is the deployment's business: clients live in their own
-        repositories and one is copied into the build context before
-        `COPY . /app`. .dockerignore keeps a locally built
-        clients/web/dist/index.html out of any image on purpose — it is
-        gitignored, so nothing reviews what would be served.
-
-        The path is resolved once here rather than per request: declining to
-        register the route is more honest than a 404 that never changes.
-        Returns whether it was registered.
-        """
-        if not configured_path:
-            return False
-
-        path = Path(configured_path)
-        if not path.is_file():
-            log.warning(
-                "CLIENT_HTML_PATH is set to %r but that file does not exist; "
-                "GET /client will not be registered.",
-                configured_path,
-            )
-            return False
-
-        @app_.get("/client", include_in_schema=False)
-        async def serve_client() -> FileResponse:
-            return FileResponse(
-                path, media_type="text/html", headers=Application.CLIENT_HEADERS
-            )
-
-        return True
-
     @asynccontextmanager
-    async def _lifespan(self, app_):
-        log.info("Starting up...")
+    async def _lifespan(self, app_: FastAPI) -> AsyncIterator[None]:
+        self.LOG.info("Starting up...")
         # A fresh ConfigService, not self.config_service: tests reuse the same
         # Application across many runs after monkeypatching the environment,
         # and only a fresh read observes that.
         tasks = StartupTasks(ConfigService.get_without_deps())
         if tasks.config_service.settings.run_migrations_on_startup:
-            log.info("run alembic upgrade head...")
+            self.LOG.info("run alembic upgrade head...")
             await tasks.run_migrations()
         else:
-            log.info(
+            self.LOG.info(
                 "Skipping migrations: RUN_MIGRATIONS_ON_STARTUP is off, so the "
                 "deployment pipeline owns the schema."
             )
@@ -326,7 +355,7 @@ class Application:
         await tasks.prune_auth_failures()
         await tasks.prune_oauth_grants()
         yield
-        log.info("Shutting down...")
+        self.LOG.info("Shutting down...")
 
 
 application = Application()

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.orm.attributes import set_committed_value
 
-from .base import SQAlchemyBase, utcnow
+from .base import Clock, SQAlchemyBase
 from .mfa_backup_code import MfaBackupCode
 
 
@@ -44,7 +44,7 @@ class MfaCredential(SQAlchemyBase):
     # refused if its step is not strictly greater, which is what stops the
     # same six digits being replayed inside their thirty-second window.
     last_used_step: Mapped[int | None]
-    created_at: Mapped[datetime] = mapped_column(default=utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(default=Clock.utcnow, nullable=False)
     activated_at: Mapped[datetime | None]
     last_used_at: Mapped[datetime | None]
 

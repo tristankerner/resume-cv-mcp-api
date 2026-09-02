@@ -7,7 +7,7 @@ turns whatever it raises into the right response shape.
 """
 
 import logging
-from typing import Annotated
+from typing import Annotated, ClassVar
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -31,10 +31,10 @@ from services.oauth.exceptions import (
 )
 from services.oauth.oauth_service import OAuthService
 
-log = logging.getLogger("uvicorn")
-
 
 class OAuthRouter:
+    LOG: ClassVar[logging.Logger] = logging.getLogger("uvicorn")
+
     DbSession = Annotated[AsyncSession, Depends(DatabaseService.get_async_db_session)]
     Settings = Annotated[ConfigService, Depends(ConfigService.get_with_deps)]
 
@@ -104,7 +104,7 @@ class OAuthRouter:
         before the check, so a closed deployment has no anonymous write path.
         """
         if not config_service.settings.oauth_registration_enabled:
-            log.warning(
+            self.LOG.warning(
                 "Refused client registration: OAUTH_REGISTRATION_ENABLED is off. "
                 "Pre-register with `POST /oauth-clients` (requires users:admin and "
                 "an interactive login), or through the browser client's admin screen."
@@ -113,7 +113,7 @@ class OAuthRouter:
         try:
             return await OAuthService(db, config_service).register_client(request)
         except OAuthError as exc:
-            log.warning("Rejected client registration: %s", exc)
+            self.LOG.warning("Rejected client registration: %s", exc)
             return self._error_response(exc)
 
     async def authorize_page(
@@ -141,7 +141,7 @@ class OAuthRouter:
                 state=state,
             )
         except AuthorizeFatalError as exc:
-            log.warning("Rejected /oauth/authorize: %s", exc.detail)
+            self.LOG.warning("Rejected /oauth/authorize: %s", exc.detail)
             return HTMLResponse(
                 AuthorizePageRenderer.render_error_page(exc.detail), status_code=400
             )
@@ -205,7 +205,7 @@ class OAuthRouter:
                 code=code or None,
             )
         except AuthorizeFatalError as exc:
-            log.warning("Rejected /oauth/authorize: %s", exc.detail)
+            self.LOG.warning("Rejected /oauth/authorize: %s", exc.detail)
             return HTMLResponse(
                 AuthorizePageRenderer.render_error_page(exc.detail), status_code=400
             )
@@ -312,6 +312,3 @@ class OAuthRouter:
         # RFC 7009 §2.2: 200 whether or not the token existed, was already
         # revoked, or belonged to someone else.
         return Response(status_code=200)
-
-
-router = OAuthRouter().router

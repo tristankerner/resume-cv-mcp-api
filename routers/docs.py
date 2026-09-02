@@ -26,6 +26,7 @@ from fastapi.openapi.docs import (
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from persistence.user import User
 from services.auth.auth_service import AuthService
 from services.auth.docs_login_page import DocsLoginPageRenderer
 from services.auth.docs_session import DocsAccessGuard, DocsSessionToken
@@ -189,7 +190,7 @@ class DocsRouter:
 
     @staticmethod
     def _issue_cookie(
-        user, next_path: str, settings: ConfigServiceModel
+        user: User, next_path: str, settings: ConfigServiceModel
     ) -> RedirectResponse:
         token, expires_in = DocsSessionToken.mint(settings, user)
         response = RedirectResponse(next_path, status_code=303)
@@ -206,6 +207,3 @@ class DocsRouter:
             secure=settings.is_production,
         )
         return response
-
-
-router = DocsRouter().router

@@ -28,7 +28,7 @@ from pydantic import SecretStr
 from sqlalchemy import CursorResult, delete, select
 
 from persistence.auth_failure import AuthFailure
-from persistence.base import utcnow
+from persistence.base import Clock
 from persistence.mfa_credential import MfaCredential
 from persistence.user import User
 from services.auth.auth_service import AuthService
@@ -94,7 +94,7 @@ class AdminCli:
 
     @staticmethod
     async def _unlock_list() -> int:
-        now = utcnow()
+        now = Clock.utcnow()
         async with DatabaseService.session() as db:
             users = (
                 (

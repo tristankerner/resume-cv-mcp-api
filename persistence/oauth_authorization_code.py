@@ -1,16 +1,12 @@
 from datetime import datetime, timedelta
-from typing import cast
+from typing import ClassVar, cast
 
 from sqlalchemy import JSON, CursorResult, ForeignKey, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.mutable import MutableList
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .base import SQAlchemyBase, utcnow
-
-# 60 seconds: long enough for the redirect round trip, short enough that a
-# code leaked in a referrer or a log is worthless by the time it is found.
-TTL = timedelta(seconds=60)
+from .base import Clock, SQAlchemyBase
 
 
 class OAuthAuthorizationCode(SQAlchemyBase):
@@ -23,6 +19,10 @@ class OAuthAuthorizationCode(SQAlchemyBase):
     """
 
     __tablename__ = "oauth_authorization_codes"
+
+    # 60 seconds: long enough for the redirect round trip, short enough that a
+    # code leaked in a referrer or a log is worthless by the time it is found.
+    TTL: ClassVar[timedelta] = timedelta(seconds=60)
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     code_hash: Mapped[str] = mapped_column(unique=True, index=True, nullable=False)
@@ -41,13 +41,13 @@ class OAuthAuthorizationCode(SQAlchemyBase):
     resource: Mapped[str | None]
     expires_at: Mapped[datetime] = mapped_column(nullable=False)
     consumed_at: Mapped[datetime | None]
-    created_at: Mapped[datetime] = mapped_column(default=utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(default=Clock.utcnow, nullable=False)
 
     def __repr__(self) -> str:
         return f"OAuthAuthorizationCode(id={self.id!r}, client_id={self.client_id!r})"
 
     def is_usable(self, now: datetime | None = None) -> bool:
-        now = now or utcnow()
+        now = now or Clock.utcnow()
         return self.consumed_at is None and self.expires_at > now
 
     @staticmethod
@@ -95,7 +95,7 @@ class OAuthAuthorizationCode(SQAlchemyBase):
         """
         result = await db.execute(
             delete(OAuthAuthorizationCode).where(
-                OAuthAuthorizationCode.expires_at < utcnow()
+                OAuthAuthorizationCode.expires_at < Clock.utcnow()
             )
         )
         await db.commit()

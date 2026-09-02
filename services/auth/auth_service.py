@@ -1,5 +1,5 @@
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, ClassVar
+from typing import Annotated, Any, ClassVar, Literal
 
 import jwt
 from fastapi import Depends, Request
@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from persistence.api_key import ApiKey
 from persistence.auth_failure import AuthFailure
-from persistence.base import utcnow
+from persistence.base import Clock
 from persistence.oauth_client import OAuthClient
 from persistence.user import User
 from services.auth.api_keys import ApiKeyToken
@@ -57,14 +57,16 @@ class AuthService(ServiceProviderInterface):
         self.request = request
 
     @staticmethod
-    def verify_password(plain_password, hashed_password):
+    def verify_password(plain_password: str, hashed_password: str) -> bool:
         return AuthService._password_hash.verify(plain_password, hashed_password)
 
     @staticmethod
-    def get_password_hash(password):
+    def get_password_hash(password: str) -> str:
         return AuthService._password_hash.hash(password)
 
-    async def authenticate_user(self, username: str, password: str):
+    async def authenticate_user(
+        self, username: str, password: str
+    ) -> User | Literal[False]:
         """Verify a username and password, throttling repeated failures.
 
         The single place a password is checked — `/token` and the docs Basic
@@ -76,7 +78,7 @@ class AuthService(ServiceProviderInterface):
         account_policy = AccountPolicy.from_settings(self.config_services.settings)
         address_policy = AddressPolicy.from_settings(self.config_services.settings)
         address = address_policy.client_address(self.request)
-        now = utcnow()
+        now = Clock.utcnow()
 
         # The address gate comes first: one indexed read, and it fences off
         # both the user lookup and the deliberately slow hash below.
@@ -217,7 +219,7 @@ class AuthService(ServiceProviderInterface):
         account_policy = AccountPolicy.from_settings(self.config_services.settings)
         address_policy = AddressPolicy.from_settings(self.config_services.settings)
         address = address_policy.client_address(self.request)
-        now = utcnow()
+        now = Clock.utcnow()
 
         state = account_policy.status(user, now)
         if state.kind is LockKind.PERMANENT:
@@ -225,7 +227,10 @@ class AuthService(ServiceProviderInterface):
         if state.kind is LockKind.TEMPORARY:
             raise AuthErrors.account_locked(state.retry_after_seconds)
 
-        if not self.verify_password(password, user.password):
+        # A user provisioned without a password has nothing to check against,
+        # and pwdlib raises rather than returning False if handed None. Counted
+        # as an ordinary wrong answer, matching `authenticate_user`.
+        if not user.password or not self.verify_password(password, user.password):
             await self._register_login_failure(
                 user, address, account_policy, address_policy, now
             )
@@ -250,7 +255,7 @@ class AuthService(ServiceProviderInterface):
         All three password surfaces redeem a challenge, so all three call this.
         """
         state = AccountPolicy.from_settings(self.config_services.settings).status(
-            user, utcnow()
+            user, Clock.utcnow()
         )
         if state.kind is LockKind.PERMANENT:
             raise AuthErrors.account_locked_permanently()
@@ -270,7 +275,7 @@ class AuthService(ServiceProviderInterface):
         address_policy = AddressPolicy.from_settings(self.config_services.settings)
         address = address_policy.client_address(self.request)
         await self._register_login_failure(
-            user, address, account_policy, address_policy, utcnow()
+            user, address, account_policy, address_policy, Clock.utcnow()
         )
 
     async def clear_login_failures(self, user: User) -> None:
@@ -278,7 +283,9 @@ class AuthService(ServiceProviderInterface):
         on a correct code."""
         await self._clear_login_failures(user)
 
-    def create_access_token(self, data: dict, expires_delta: timedelta | None = None):
+    def create_access_token(
+        self, data: dict[str, Any], expires_delta: timedelta | None = None
+    ) -> str:
         to_encode = data.copy()
         now = datetime.now(UTC)
         if expires_delta:
@@ -341,7 +348,7 @@ class AuthService(ServiceProviderInterface):
         if not ApiKeyToken.matches(secret, key.key_hash):
             return None
 
-        now = utcnow()
+        now = Clock.utcnow()
         if not key.is_usable(now):
             return None
 

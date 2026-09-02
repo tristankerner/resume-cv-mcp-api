@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.mutable import MutableList
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .base import SQAlchemyBase, utcnow
+from .base import Clock, SQAlchemyBase
 
 
 class ApiKey(SQAlchemyBase):
@@ -28,7 +28,7 @@ class ApiKey(SQAlchemyBase):
     scopes: Mapped[list[str]] = mapped_column(
         MutableList.as_mutable(JSON), nullable=False
     )
-    created_at: Mapped[datetime] = mapped_column(default=utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(default=Clock.utcnow, nullable=False)
     last_used_at: Mapped[datetime | None]
     expires_at: Mapped[datetime | None]
     revoked_at: Mapped[datetime | None]
@@ -37,7 +37,7 @@ class ApiKey(SQAlchemyBase):
         return f"ApiKey(id={self.id!r}, name={self.name!r}, prefix={self.prefix!r})"
 
     def is_usable(self, now: datetime | None = None) -> bool:
-        now = now or utcnow()
+        now = now or Clock.utcnow()
         if self.revoked_at is not None:
             return False
         return not (self.expires_at is not None and self.expires_at <= now)

@@ -5,7 +5,7 @@ from sqlalchemy import JSON, ForeignKey, Index, event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
-from .base import SQAlchemyBase, utcnow
+from .base import Clock, SQAlchemyBase
 
 
 class DocumentTypeConflict(Exception):
@@ -49,7 +49,7 @@ class Document(SQAlchemyBase):
     revision_id: Mapped[int] = mapped_column(primary_key=True, nullable=False)
     type: Mapped[str] = mapped_column(nullable=False)
     public: Mapped[bool] = mapped_column(default=False, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(default=utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(default=Clock.utcnow, nullable=False)
     revision_note: Mapped[str | None]
     data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
@@ -58,6 +58,19 @@ class Document(SQAlchemyBase):
             f"Document(created_by={self.created_by!r}, name={self.name!r}, "
             f"revision_id={self.revision_id!r}, type={self.type!r})"
         )
+
+    @staticmethod
+    def block_mutations(session: Session, flush_context: Any, instances: Any) -> None:
+        """Immutability of a *revision* is what this table guarantees, not
+        permanence — deletion is a supported operation.
+
+        Registered with `event.listen` at the foot of this module rather than
+        with the `@event.listens_for` decorator, which would require a
+        module-level function.
+        """
+        for obj in session.dirty:
+            if isinstance(obj, Document) and session.is_modified(obj):
+                raise PermissionError("Cannot update records in an append-only table.")
 
     @staticmethod
     async def get_latest(db: AsyncSession, owner_id: int, name: str) -> Document | None:
@@ -222,10 +235,4 @@ class UpsertResult(NamedTuple):
     created: bool
 
 
-@event.listens_for(Session, "before_flush")
-def block_mutations(session, flush_context, instances):
-    """Immutability of a *revision* is what this table guarantees, not
-    permanence — deletion is a supported operation."""
-    for obj in session.dirty:
-        if isinstance(obj, Document) and session.is_modified(obj):
-            raise PermissionError("Cannot update records in an append-only table.")
+event.listen(Session, "before_flush", Document.block_mutations)

@@ -106,6 +106,3 @@ class UsersRouter:
         """
         await user_service.reset_mfa(user_id)
         return Response(status_code=204)
-
-
-router = UsersRouter().router

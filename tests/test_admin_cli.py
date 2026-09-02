@@ -15,7 +15,7 @@ import pytest
 import admin_cli
 from admin_cli import AdminCli
 from persistence.auth_failure import AuthFailure
-from persistence.base import utcnow
+from persistence.base import Clock
 from persistence.mfa_credential import MfaCredential
 from persistence.user import User
 from services.auth.auth_service import AuthService
@@ -56,7 +56,7 @@ class TestUnlockCommand:
         async with DatabaseService.session() as db:
             user = await User.get_user_by_id(db, admin.user_id)
             assert user is not None
-            user.locked_permanently_at = utcnow()
+            user.locked_permanently_at = Clock.utcnow()
             await db.commit()
 
         assert await AdminCli().run(["unlock", admin.username]) == 0
@@ -74,8 +74,8 @@ class TestUnlockCommand:
             db.add(
                 AuthFailure(
                     address="203.0.113.7",
-                    last_failure_at=utcnow(),
-                    banned_until=utcnow() + timedelta(hours=1),
+                    last_failure_at=Clock.utcnow(),
+                    banned_until=Clock.utcnow() + timedelta(hours=1),
                 )
             )
             await db.commit()
@@ -92,7 +92,7 @@ class TestUnlockCommand:
         async with DatabaseService.session() as db:
             user = await User.get_user_by_id(db, admin.user_id)
             assert user is not None
-            user.locked_until = utcnow() + timedelta(hours=1)
+            user.locked_until = Clock.utcnow() + timedelta(hours=1)
             await db.commit()
 
         assert await AdminCli().run(["unlock", "--list"]) == 0
@@ -109,7 +109,7 @@ class TestUnlockCommand:
         async with DatabaseService.session() as db:
             user = await User.get_user_by_id(db, admin.user_id)
             assert user is not None
-            user.locked_permanently_at = utcnow()
+            user.locked_permanently_at = Clock.utcnow()
             await db.commit()
 
         assert await AdminCli().run(["unlock", "--list"]) == 0
@@ -133,6 +133,7 @@ class TestResetPasswordCommand:
         assert "Password reset" in capsys.readouterr().out
 
         user = await read_user(admin.user_id)
+        assert user.password is not None
         assert AuthService.verify_password("NewPassw0rd!", user.password)
 
     async def test_it_reports_an_unknown_user(self, capsys):
@@ -147,6 +148,7 @@ class TestResetPasswordCommand:
         assert "did not match" in capsys.readouterr().err
 
         user = await read_user(admin.user_id)
+        assert user.password is not None
         assert AuthService.verify_password("NewPassw0rd!", user.password)
 
     async def test_it_reprompts_on_a_weak_password(self, admin, monkeypatch, capsys):
@@ -156,6 +158,7 @@ class TestResetPasswordCommand:
         assert await AdminCli().run(["reset-password", admin.username]) == 0
 
         user = await read_user(admin.user_id)
+        assert user.password is not None
         assert AuthService.verify_password("NewPassw0rd!", user.password)
 
     async def test_it_needs_a_username(self):

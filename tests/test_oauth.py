@@ -26,7 +26,7 @@ from services.config.config_service import ConfigService
 from services.database.database_service import DatabaseService
 from services.oauth.clients import OAuthClientRegistry
 from services.oauth.redirect_allowlist import RedirectAllowlist
-from services.oauth.scopes import OAUTH_ISSUABLE_SCOPES
+from services.oauth.scopes import OAuthScopes
 from services.oauth.tokens import TokenIssuer
 from tests.helpers import OAuthTokens
 
@@ -1119,7 +1119,7 @@ class TestIssuableScopes:
     a downgrade some clients treat as a failed authorization."""
 
     async def test_both_documents_advertise_only_the_issuable_set(self, client):
-        expected = sorted(str(s) for s in OAUTH_ISSUABLE_SCOPES)
+        expected = sorted(str(s) for s in OAuthScopes.ISSUABLE)
         asm = (await client.get("/.well-known/oauth-authorization-server")).json()
         prm = (
             await client.get("/.well-known/oauth-protected-resource/resume/mcp")
@@ -1157,7 +1157,7 @@ class TestIssuableScopes:
         )
         assert response.status_code == 200, response.text
         granted = set(response.json()["scope"].split())
-        assert granted == {str(s) for s in OAUTH_ISSUABLE_SCOPES}
+        assert granted == {str(s) for s in OAuthScopes.ISSUABLE}
         assert "users:admin" not in granted
 
     async def test_a_client_asking_for_exactly_what_is_advertised_is_not_downgraded(

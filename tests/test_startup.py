@@ -78,8 +78,8 @@ class TestLifespan:
         warning that there is no admin."""
         async with main.application._lifespan(main.app):
             pass
-        assert main.log.disabled is False
-        assert main.log.isEnabledFor(logging.WARNING)
+        assert main.Application.LOG.disabled is False
+        assert main.Application.LOG.isEnabledFor(logging.WARNING)
 
 
 class TestServiceProviders:

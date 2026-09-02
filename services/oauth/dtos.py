@@ -3,6 +3,7 @@ one, since that is the vocabulary a client implementation was written
 against."""
 
 from datetime import datetime
+from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -26,16 +27,17 @@ class AuthorizationServerMetadata(BaseModel):
     token_endpoint_auth_methods_supported: list[str] = ["client_secret_post", "none"]
 
 
-# "none" is the expected shape for an MCP client: it cannot keep a secret, so
-# PKCE binds the exchange instead. The other methods RFC 7591 defines are
-# refused as unsupported rather than silently downgraded.
-SUPPORTED_AUTH_METHODS = frozenset({"none", "client_secret_post"})
-
-
 class ClientRegistrationRequest(BaseModel):
     """RFC 7591. Every field but `redirect_uris` is free text the registrant
     asserts about itself, which is why only `redirect_uris` is validated
     against anything — see services/oauth/redirect_allowlist.py."""
+
+    # "none" is the expected shape for an MCP client: it cannot keep a secret,
+    # so PKCE binds the exchange instead. The other methods RFC 7591 defines
+    # are refused as unsupported rather than silently downgraded.
+    SUPPORTED_AUTH_METHODS: ClassVar[frozenset[str]] = frozenset(
+        {"none", "client_secret_post"}
+    )
 
     redirect_uris: list[str] = Field(min_length=1)
     client_name: str | None = None
@@ -52,10 +54,10 @@ class ClientRegistrationRequest(BaseModel):
     @field_validator("token_endpoint_auth_method")
     @classmethod
     def known_auth_method(cls, value: str) -> str:
-        if value not in SUPPORTED_AUTH_METHODS:
+        if value not in cls.SUPPORTED_AUTH_METHODS:
             raise ValueError(
                 f"Unsupported token_endpoint_auth_method: {value!r}. "
-                f"Use one of {sorted(SUPPORTED_AUTH_METHODS)}."
+                f"Use one of {sorted(cls.SUPPORTED_AUTH_METHODS)}."
             )
         return value
 

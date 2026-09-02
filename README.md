@@ -586,7 +586,7 @@ deployed API. `CLIENT_ALLOWED_ORIGINS` does not need to name it, no static
 host is involved, and the client pre-fills its API base URL from its own
 origin — a page served at `/client` knows where the API is, so nobody has to
 type it. The response also carries `frame-ancestors 'none'`, `nosniff`, and
-`Referrer-Policy: no-referrer`; `main.py`'s `CLIENT_HEADERS` says what is
+`Referrer-Policy: no-referrer`; `main.py`'s `ClientRoute.HEADERS` says what is
 deliberately absent from that list and why.
 
 ## Databases

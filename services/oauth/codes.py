@@ -12,8 +12,8 @@ from typing import ClassVar
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from persistence.base import utcnow
-from persistence.oauth_authorization_code import TTL, OAuthAuthorizationCode
+from persistence.base import Clock
+from persistence.oauth_authorization_code import OAuthAuthorizationCode
 from services.auth.api_keys import ApiKeyToken
 from services.auth.scopes import Scopes
 from services.oauth.exceptions import OAuthErrors
@@ -63,7 +63,7 @@ class AuthorizationCodeStore:
             code_challenge=code_challenge,
             code_challenge_method="S256",
             resource=resource,
-            expires_at=utcnow() + TTL,
+            expires_at=Clock.utcnow() + OAuthAuthorizationCode.TTL,
         )
         self.db.add(record)
         await self.db.commit()
@@ -107,5 +107,5 @@ class AuthorizationCodeStore:
                 "code_verifier does not match the original code_challenge."
             )
 
-        record.consumed_at = utcnow()
+        record.consumed_at = Clock.utcnow()
         return record

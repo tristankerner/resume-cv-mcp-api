@@ -61,6 +61,3 @@ class MfaRouter:
     ) -> Response:
         await mfa_service.remove(credential_id, request)
         return Response(status_code=204)
-
-
-router = MfaRouter().router

@@ -13,11 +13,8 @@ from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import Scope
 
 from middleware.cors_base import CorsMiddleware
-from middleware.public_cors import PUBLIC_PATH_PREFIX
+from middleware.public_cors import PublicCorsMiddleware
 from services.config.config_service import ConfigService
-
-ALLOW_ORIGIN = "access-control-allow-origin"
-VARY = "vary"
 
 
 class ClientCorsMiddleware(CorsMiddleware):
@@ -38,7 +35,7 @@ class ClientCorsMiddleware(CorsMiddleware):
     PREFLIGHT_MAX_AGE: ClassVar[str] = "600"
 
     def _applies_to(self, scope: Scope) -> bool:
-        return not scope["path"].startswith(PUBLIC_PATH_PREFIX)
+        return not scope["path"].startswith(PublicCorsMiddleware.PATH_PREFIX)
 
     def _allow_origin(self, origin: str | None) -> str | None:
         # Read fresh on every request rather than captured at app construction,
@@ -55,18 +52,18 @@ class ClientCorsMiddleware(CorsMiddleware):
         self, allowed_origin: str, request_headers: Headers
     ) -> dict[str, str]:
         return {
-            ALLOW_ORIGIN: allowed_origin,
-            VARY: "Origin",
+            self.ALLOW_ORIGIN: allowed_origin,
+            self.VARY: "Origin",
             "access-control-allow-methods": self.ALLOWED_METHODS,
             "access-control-allow-headers": self.ALLOWED_HEADERS,
             "access-control-max-age": self.PREFLIGHT_MAX_AGE,
         }
 
     def _stamp_headers(self, headers: MutableHeaders, allowed_origin: str) -> None:
-        headers[ALLOW_ORIGIN] = allowed_origin
+        headers[self.ALLOW_ORIGIN] = allowed_origin
         # `append`, not assignment: MutableHeaders.__setitem__ replaces every
         # existing value for the key, so assigning would drop a `Vary` the
         # response already carries. Nothing sets one today, but a compression
         # middleware would set `Vary: Accept-Encoding`, and dropping that in
         # front of a cache serves somebody the wrong encoding.
-        headers.append(VARY, "Origin")
+        headers.append(self.VARY, "Origin")

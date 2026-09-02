@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.mutable import MutableList
 from sqlalchemy.orm import Mapped, mapped_column
 
-from .base import SQAlchemyBase, utcnow
+from .base import Clock, SQAlchemyBase
 
 
 class OAuthClient(SQAlchemyBase):
@@ -37,7 +37,7 @@ class OAuthClient(SQAlchemyBase):
     )
     token_endpoint_auth_method: Mapped[str] = mapped_column(nullable=False)
     scope: Mapped[str | None]
-    created_at: Mapped[datetime] = mapped_column(default=utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(default=Clock.utcnow, nullable=False)
     client_secret_expires_at: Mapped[datetime | None]
 
     def __repr__(self) -> str:

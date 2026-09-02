@@ -13,10 +13,6 @@ from starlette.types import Scope
 
 from middleware.cors_base import CorsMiddleware
 
-PUBLIC_PATH_PREFIX = "/public/"
-
-ALLOW_ORIGIN = "access-control-allow-origin"
-
 
 class PublicCorsMiddleware(CorsMiddleware):
     """Mark `/public/*` responses readable by any browser origin.
@@ -39,13 +35,17 @@ class PublicCorsMiddleware(CorsMiddleware):
     is no reason to advertise those routes as browser-readable.
     """
 
+    # Owned here rather than in the base class: ClientCorsMiddleware defines
+    # itself as everything this does not cover, so it reads this off this class.
+    PATH_PREFIX: ClassVar[str] = "/public/"
+
     ALLOWED_METHODS: ClassVar[str] = "GET, HEAD, OPTIONS"
     # A day. Preflights are answered here rather than at the edge, so the
     # browser's own cache is the only thing keeping them off the origin.
     PREFLIGHT_MAX_AGE: ClassVar[str] = "86400"
 
     def _applies_to(self, scope: Scope) -> bool:
-        return scope["path"].startswith(PUBLIC_PATH_PREFIX)
+        return scope["path"].startswith(self.PATH_PREFIX)
 
     def _allow_origin(self, origin: str | None) -> str:
         return "*"
@@ -61,7 +61,7 @@ class PublicCorsMiddleware(CorsMiddleware):
         credentials to attach.
         """
         headers = {
-            ALLOW_ORIGIN: allowed_origin,
+            self.ALLOW_ORIGIN: allowed_origin,
             "access-control-allow-methods": self.ALLOWED_METHODS,
             "access-control-max-age": self.PREFLIGHT_MAX_AGE,
         }

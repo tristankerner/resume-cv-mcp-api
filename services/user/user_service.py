@@ -4,7 +4,7 @@ from fastapi import Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from persistence.base import utcnow
+from persistence.base import Clock
 from persistence.mfa_credential import MfaCredential
 from persistence.user import User
 from services.auth.auth_service import AuthService
@@ -53,7 +53,7 @@ class UserService(ServiceProviderInterface):
         """
         self.principal.require_scope(Scopes.USERS_ADMIN)
 
-        now = utcnow()
+        now = Clock.utcnow()
         users = (
             (await self.db.execute(select(User).order_by(User.username)))
             .scalars()

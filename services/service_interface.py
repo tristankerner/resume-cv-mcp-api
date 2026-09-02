@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import Any
 
 
 class ServiceProviderInterface(ABC):
@@ -6,5 +7,5 @@ class ServiceProviderInterface(ABC):
 
     @staticmethod
     @abstractmethod
-    def get_with_deps(*args, **kwargs) -> ServiceProviderInterface:
+    def get_with_deps(*args: Any, **kwargs: Any) -> ServiceProviderInterface:
         """All subclasses must implement this method"""

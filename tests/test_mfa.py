@@ -12,7 +12,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from persistence.base import utcnow
+from persistence.base import Clock
 from persistence.mfa_credential import MfaCredential
 from persistence.user import User
 from services.auth.mfa.challenge import MfaChallengeContext, MfaChallengeToken
@@ -71,7 +71,7 @@ class TestTotpMethod:
             assert result.secret is not None
             assert credential is not None
             code = pyotp.TOTP(result.secret).now()
-            assert await method.verify(credential, code, utcnow())
+            assert await method.verify(credential, code, Clock.utcnow())
 
     async def test_verify_tolerates_spaces_in_the_entered_code(self):
         user = await make_user("totp-spaces")
@@ -86,7 +86,7 @@ class TestTotpMethod:
             assert credential is not None
             raw = pyotp.TOTP(result.secret).now()
             spaced = f"{raw[:3]} {raw[3:]}"
-            assert await method.verify(credential, spaced, utcnow())
+            assert await method.verify(credential, spaced, Clock.utcnow())
 
     async def test_verify_accepts_one_step_of_drift_either_side(self):
         user = await make_user("totp-drift")
@@ -96,7 +96,7 @@ class TestTotpMethod:
             assert result.secret is not None
             await db.commit()
 
-            now = utcnow()
+            now = Clock.utcnow()
             for counter_offset in (-1, 1):
                 credential = await MfaCredential.get_for_user(
                     db, user.id, result.credential_id
@@ -115,7 +115,7 @@ class TestTotpMethod:
             assert result.secret is not None
             await db.commit()
 
-            now = utcnow()
+            now = Clock.utcnow()
             for counter_offset in (-2, 2):
                 credential = await MfaCredential.get_for_user(
                     db, user.id, result.credential_id
@@ -135,7 +135,7 @@ class TestTotpMethod:
             )
             assert result.secret is not None
             assert credential is not None
-            now = utcnow()
+            now = Clock.utcnow()
             code = pyotp.TOTP(result.secret).now()
             assert await method.verify(credential, code, now)
             await db.commit()
@@ -154,7 +154,7 @@ class TestTotpMethod:
             assert result.secret is not None
             await db.commit()
 
-            now = utcnow()
+            now = Clock.utcnow()
             credential = await MfaCredential.get_for_user(
                 db, user.id, result.credential_id
             )
@@ -171,7 +171,7 @@ class TestTotpMethod:
             assert not await method.verify(credential, earlier_code, now)
 
     async def test_correct_under_a_non_utc_process_timezone(self, monkeypatch):
-        """pyotp treats a naive datetime as local time; utcnow() is naive UTC
+        """pyotp treats a naive datetime as local time; Clock.utcnow() is naive UTC
         by project convention. CI runs in UTC, so this bug would not
         otherwise surface until deployment."""
         monkeypatch.setenv("TZ", "America/New_York")
@@ -188,7 +188,7 @@ class TestTotpMethod:
                 assert result.secret is not None
                 assert credential is not None
                 code = pyotp.TOTP(result.secret).now()
-                assert await method.verify(credential, code, utcnow())
+                assert await method.verify(credential, code, Clock.utcnow())
         finally:
             monkeypatch.delenv("TZ", raising=False)
             time.tzset()
@@ -257,14 +257,14 @@ class TestBackupCodesMethod:
             assert result.codes is not None
             assert credential is not None
             code = result.codes[0]
-            assert await method.verify(credential, code, utcnow())
+            assert await method.verify(credential, code, Clock.utcnow())
             await db.commit()
 
             credential = await MfaCredential.get_for_user(
                 db, user.id, result.credential_id
             )
             assert credential is not None
-            assert not await method.verify(credential, code, utcnow())
+            assert not await method.verify(credential, code, Clock.utcnow())
 
     async def test_formatting_separators_are_tolerated(self):
         user = await make_user("backup-format")
@@ -279,7 +279,7 @@ class TestBackupCodesMethod:
             assert credential is not None
             code = result.codes[0]
             mangled = code.upper().replace("-", " ")
-            assert await method.verify(credential, mangled, utcnow())
+            assert await method.verify(credential, mangled, Clock.utcnow())
 
     async def test_remaining_counts_down(self):
         user = await make_user("backup-remaining")
@@ -294,7 +294,7 @@ class TestBackupCodesMethod:
             assert credential is not None
             before = await method.remaining(credential)
             assert before is not None
-            await method.verify(credential, result.codes[0], utcnow())
+            await method.verify(credential, result.codes[0], Clock.utcnow())
             await db.commit()
             after = await method.remaining(credential)
             assert after == before - 1
@@ -320,8 +320,10 @@ class TestBackupCodesMethod:
                 db, user.id, second.credential_id
             )
             assert new_credential is not None
-            assert not await method.verify(new_credential, first.codes[0], utcnow())
-            assert await method.verify(new_credential, second.codes[0], utcnow())
+            assert not await method.verify(
+                new_credential, first.codes[0], Clock.utcnow()
+            )
+            assert await method.verify(new_credential, second.codes[0], Clock.utcnow())
 
     async def test_backup_credential_needs_no_activation(self):
         user = await make_user("backup-no-activation")
@@ -483,7 +485,7 @@ class TestConcurrentClaims:
             await setup.commit()
         assert result.secret is not None
 
-        now = utcnow()
+        now = Clock.utcnow()
         code = code_at(result.secret, now)
 
         async with (
@@ -521,7 +523,7 @@ class TestConcurrentClaims:
         assert result.codes is not None
         code = result.codes[0]
 
-        now = utcnow()
+        now = Clock.utcnow()
         async with (
             DatabaseService.session() as first,
             DatabaseService.session() as second,
@@ -564,7 +566,7 @@ class TestNonAsciiCodes:
                 db, user.id, result.credential_id
             )
             assert credential is not None
-            assert not await method.verify(credential, code, utcnow())
+            assert not await method.verify(credential, code, Clock.utcnow())
 
 
 class TestChallengeBinding:

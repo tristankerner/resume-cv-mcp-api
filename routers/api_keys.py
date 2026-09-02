@@ -38,6 +38,3 @@ class ApiKeysRouter:
         self, key_id: int, api_key_service: ApiKeyServiceDep
     ) -> ApiKeyDto:
         return await api_key_service.revoke(key_id)
-
-
-router = ApiKeysRouter().router

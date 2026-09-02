@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.orm.attributes import set_committed_value
 
-from .base import SQAlchemyBase, utcnow
+from .base import Clock, SQAlchemyBase
 
 
 class MfaBackupCode(SQAlchemyBase):
@@ -30,7 +30,7 @@ class MfaBackupCode(SQAlchemyBase):
         ForeignKey("mfa_credentials.id"), nullable=False, index=True
     )
     code_hash: Mapped[str] = mapped_column(nullable=False)
-    created_at: Mapped[datetime] = mapped_column(default=utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(default=Clock.utcnow, nullable=False)
     used_at: Mapped[datetime | None]
 
     def __repr__(self) -> str:

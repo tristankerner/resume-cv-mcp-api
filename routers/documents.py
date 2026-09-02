@@ -163,6 +163,3 @@ class DocumentsRouter:
         document_service: DocumentServiceDep,
     ) -> RenameDocumentResponse:
         return await document_service.rename_document(document_name, request)
-
-
-router = DocumentsRouter().router

@@ -11,6 +11,7 @@ plumbing twice.
 """
 
 from abc import ABC, abstractmethod
+from typing import ClassVar
 
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.responses import Response
@@ -18,6 +19,9 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 
 class CorsMiddleware(ABC):
+    ALLOW_ORIGIN: ClassVar[str] = "access-control-allow-origin"
+    VARY: ClassVar[str] = "vary"
+
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
@@ -39,7 +43,7 @@ class CorsMiddleware(ABC):
     def _stamp_headers(self, headers: MutableHeaders, allowed_origin: str) -> None:
         """Headers for the actual response. Overridden by the subclass that
         needs `Vary` alongside the allow-origin echo."""
-        headers["access-control-allow-origin"] = allowed_origin
+        headers[self.ALLOW_ORIGIN] = allowed_origin
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or not self._applies_to(scope):

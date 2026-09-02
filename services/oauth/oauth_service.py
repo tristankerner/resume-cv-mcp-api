@@ -33,7 +33,7 @@ from services.oauth.exceptions import (
     OAuthErrors,
 )
 from services.oauth.redirect_allowlist import RedirectAllowlist
-from services.oauth.scopes import OAUTH_ISSUABLE_SCOPES
+from services.oauth.scopes import OAuthScopes
 from services.oauth.tokens import TokenIssuer
 from services.service_interface import ServiceProviderInterface
 
@@ -80,7 +80,7 @@ class OAuthService(ServiceProviderInterface):
                 else None
             ),
             revocation_endpoint=f"{base}/oauth/revoke",
-            scopes_supported=sorted(str(scope) for scope in OAUTH_ISSUABLE_SCOPES),
+            scopes_supported=sorted(str(scope) for scope in OAuthScopes.ISSUABLE),
             # With registration closed, POST /oauth-clients issues a secret
             # unless asked not to (public=true), so "none" is a shape this
             # deployment does not normally hand out. It stays supported for
@@ -158,14 +158,12 @@ class OAuthService(ServiceProviderInterface):
         # user holds — see services/oauth/scopes.py. A client asking for more
         # is narrowed rather than refused; the extra scopes are ones no MCP
         # tool uses, so the request is still satisfiable without them.
-        requested = (
-            ScopeResolver.parse(str(scope or "").split()) & OAUTH_ISSUABLE_SCOPES
-        )
+        requested = ScopeResolver.parse(str(scope or "").split()) & OAuthScopes.ISSUABLE
         if not requested:
             raise AuthorizeRedirectError(
                 "invalid_scope",
                 "No requested scope is available over OAuth. This endpoint "
-                f"issues only: {' '.join(sorted(str(s) for s in OAUTH_ISSUABLE_SCOPES))}.",
+                f"issues only: {' '.join(sorted(str(s) for s in OAuthScopes.ISSUABLE))}.",
                 state,
             )
         return requested

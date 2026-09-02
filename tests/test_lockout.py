@@ -11,9 +11,8 @@ from datetime import timedelta
 import pytest
 
 from persistence.auth_failure import AuthFailure
-from persistence.base import utcnow
+from persistence.base import Clock
 from persistence.user import User
-from services.auth import lockout
 from services.auth.lockout import AccountLock, AccountPolicy, AddressPolicy, LockKind
 from services.config.config_service import ConfigService
 from services.database.database_service import DatabaseService
@@ -115,14 +114,14 @@ async def read_user(user_id: int) -> User:
 class TestAccountPolicy:
     def test_failures_below_the_limit_do_not_lock(self, policy):
         user = fresh_user()
-        now = utcnow()
+        now = Clock.utcnow()
         for _ in range(policy.max_attempts - 1):
             assert policy.register_failure(user, now).kind is LockKind.OPEN
         assert user.failed_login_count == policy.max_attempts - 1
 
     def test_the_limit_trips_a_temporary_lock(self, policy):
         user = fresh_user()
-        now = utcnow()
+        now = Clock.utcnow()
         for _ in range(policy.max_attempts - 1):
             policy.register_failure(user, now)
         status = policy.register_failure(user, now)
@@ -133,7 +132,7 @@ class TestAccountPolicy:
 
     def test_the_tally_resets_once_the_window_lapses(self, policy):
         user = fresh_user()
-        start = utcnow()
+        start = Clock.utcnow()
         for _ in range(policy.max_attempts - 1):
             policy.register_failure(user, start)
 
@@ -144,7 +143,7 @@ class TestAccountPolicy:
     def test_each_further_lock_doubles(self, policy):
         """One minute, then two, then permanent at the third."""
         user = fresh_user()
-        now = utcnow()
+        now = Clock.utcnow()
         durations = []
 
         for lock in range(policy.permanent_after_locks):
@@ -161,7 +160,7 @@ class TestAccountPolicy:
 
     def test_a_permanent_lock_clears_the_temporary_one(self, policy):
         user = fresh_user()
-        now = utcnow()
+        now = Clock.utcnow()
         # The jump has to sit between locks, not inside a run of failures:
         # moving time on every attempt lapses the window each time and the
         # tally never reaches the limit.
@@ -176,7 +175,7 @@ class TestAccountPolicy:
 
     def test_a_lapsed_lock_reopens_the_account(self, policy):
         user = fresh_user()
-        now = utcnow()
+        now = Clock.utcnow()
         for _ in range(policy.max_attempts):
             policy.register_failure(user, now)
 
@@ -188,7 +187,7 @@ class TestAccountPolicy:
         """The property that keeps a stranger from walking a live account up to
         a permanent lock: every real login resets the escalation."""
         user = fresh_user()
-        now = utcnow()
+        now = Clock.utcnow()
         for _ in range(policy.max_attempts):
             policy.register_failure(user, now)
         assert user.lock_count == 1
@@ -208,7 +207,7 @@ class TestAccountPolicy:
         """Otherwise an attacker who keeps hammering a locked account keeps
         pushing the owner's own way back in further out."""
         user = fresh_user()
-        now = utcnow()
+        now = Clock.utcnow()
         for _ in range(policy.max_attempts):
             policy.register_failure(user, now)
         locked_until = user.locked_until
@@ -226,17 +225,17 @@ class TestAccountPolicy:
         """There is nothing to put in Retry-After, and the header is omitted
         rather than sent as zero."""
         user = fresh_user()
-        user.locked_permanently_at = utcnow()
-        status = policy.status(user, utcnow())
+        user.locked_permanently_at = Clock.utcnow()
+        status = policy.status(user, Clock.utcnow())
         assert status.retry_after is None
         assert status.retry_after_seconds == 0
 
     def test_unlock_clears_a_permanent_lock(self, policy):
         user = fresh_user()
-        user.locked_permanently_at = utcnow()
+        user.locked_permanently_at = Clock.utcnow()
         AccountLock.unlock(user)
         assert user.locked_permanently_at is None
-        assert policy.status(user, utcnow()).kind is LockKind.OPEN
+        assert policy.status(user, Clock.utcnow()).kind is LockKind.OPEN
 
     def test_disabled_policy_never_locks(self, policy):
         disabled = AccountPolicy(
@@ -247,7 +246,7 @@ class TestAccountPolicy:
             permanent_after_locks=policy.permanent_after_locks,
         )
         user = fresh_user()
-        now = utcnow()
+        now = Clock.utcnow()
         for _ in range(50):
             assert disabled.register_failure(user, now).kind is LockKind.OPEN
         assert user.locked_until is None
@@ -263,14 +262,14 @@ class TestAccountPolicy:
             permanent_after_locks=10_000,
         )
         assert policy.lock_duration(10_000) == policy.lock_duration(
-            lockout.MAX_ESCALATION + 1
+            AccountPolicy.MAX_ESCALATION + 1
         )
 
 
 class TestAddressPolicy:
     def test_the_limit_trips_a_ban(self, address_policy):
-        failure = AuthFailure(address="203.0.113.7", last_failure_at=utcnow())
-        now = utcnow()
+        failure = AuthFailure(address="203.0.113.7", last_failure_at=Clock.utcnow())
+        now = Clock.utcnow()
         for _ in range(address_policy.max_failures - 1):
             assert address_policy.register_failure(failure, now).kind is LockKind.OPEN
         status = address_policy.register_failure(failure, now)
@@ -280,15 +279,15 @@ class TestAddressPolicy:
 
     def test_a_ban_is_never_permanent(self, address_policy):
         """An address is a lease, not an identity."""
-        failure = AuthFailure(address="203.0.113.7", last_failure_at=utcnow())
-        now = utcnow()
+        failure = AuthFailure(address="203.0.113.7", last_failure_at=Clock.utcnow())
+        now = Clock.utcnow()
         for _ in range(address_policy.max_failures * 5):
             status = address_policy.register_failure(failure, now)
             assert status.kind is not LockKind.PERMANENT
 
     def test_the_tally_resets_once_the_window_lapses(self, address_policy):
-        failure = AuthFailure(address="203.0.113.7", last_failure_at=utcnow())
-        start = utcnow()
+        failure = AuthFailure(address="203.0.113.7", last_failure_at=Clock.utcnow())
+        start = Clock.utcnow()
         for _ in range(address_policy.max_failures - 1):
             address_policy.register_failure(failure, start)
 
@@ -297,8 +296,8 @@ class TestAddressPolicy:
         assert failure.failure_count == 1
 
     def test_a_failure_during_a_ban_does_not_extend_it(self, address_policy):
-        failure = AuthFailure(address="203.0.113.7", last_failure_at=utcnow())
-        now = utcnow()
+        failure = AuthFailure(address="203.0.113.7", last_failure_at=Clock.utcnow())
+        now = Clock.utcnow()
         for _ in range(address_policy.max_failures):
             address_policy.register_failure(failure, now)
         banned_until = failure.banned_until
@@ -316,7 +315,7 @@ class TestAddressPolicy:
             trusted_proxy_hops=1,
         )
         failure = AuthFailure(address="203.0.113.7")
-        now = utcnow()
+        now = Clock.utcnow()
         for _ in range(50):
             assert disabled.register_failure(failure, now).kind is LockKind.OPEN
         assert failure.banned_until is None
@@ -447,7 +446,7 @@ class TestTokenEndpoint:
         async with DatabaseService.session() as db:
             user = await User.get_user_by_id(db, admin.user_id)
             assert user is not None
-            user.locked_until = utcnow() - timedelta(seconds=1)
+            user.locked_until = Clock.utcnow() - timedelta(seconds=1)
             await db.commit()
 
         response = await client.post(
@@ -463,7 +462,7 @@ class TestTokenEndpoint:
         async with DatabaseService.session() as db:
             user = await User.get_user_by_id(db, admin.user_id)
             assert user is not None
-            user.locked_permanently_at = utcnow()
+            user.locked_permanently_at = Clock.utcnow()
             await db.commit()
 
         response = await client.post(
@@ -489,7 +488,7 @@ class TestTokenEndpoint:
             assert user is not None
             # One lock short of permanent, with the lock itself already lapsed.
             user.lock_count = 2
-            user.locked_until = utcnow() - timedelta(seconds=1)
+            user.locked_until = Clock.utcnow() - timedelta(seconds=1)
             await db.commit()
 
         response = await fail_login(client, admin.username, 3)
@@ -597,17 +596,17 @@ class TestAddressThrottleEndpoint:
                 AuthFailure(
                     address="203.0.113.9",
                     failure_count=1,
-                    first_failure_at=utcnow() - timedelta(hours=2),
-                    last_failure_at=utcnow() - timedelta(hours=2),
+                    first_failure_at=Clock.utcnow() - timedelta(hours=2),
+                    last_failure_at=Clock.utcnow() - timedelta(hours=2),
                 )
             )
             db.add(
                 AuthFailure(
                     address="203.0.113.10",
                     failure_count=1,
-                    first_failure_at=utcnow() - timedelta(hours=2),
-                    last_failure_at=utcnow() - timedelta(hours=2),
-                    banned_until=utcnow() + timedelta(hours=1),
+                    first_failure_at=Clock.utcnow() - timedelta(hours=2),
+                    last_failure_at=Clock.utcnow() - timedelta(hours=2),
+                    banned_until=Clock.utcnow() + timedelta(hours=1),
                 )
             )
             await db.commit()
@@ -705,7 +704,7 @@ class TestBreakGlass:
         async with DatabaseService.session() as db:
             user = await User.get_user_by_id(db, victim.user_id)
             assert user is not None
-            user.locked_permanently_at = utcnow()
+            user.locked_permanently_at = Clock.utcnow()
             user.lock_count = 4
             await db.commit()
 

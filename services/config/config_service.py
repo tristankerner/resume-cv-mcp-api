@@ -1,6 +1,6 @@
 import os
 from enum import StrEnum, auto
-from typing import Annotated, ClassVar
+from typing import Annotated, Any, ClassVar
 
 from cryptography.fernet import Fernet
 from pydantic import (
@@ -195,12 +195,12 @@ class ConfigServiceModel(BaseSettings):
 
     @field_validator("oauth_allowed_redirect_hosts", mode="before")
     @classmethod
-    def _parse_oauth_allowed_redirect_hosts(cls, value):
+    def _parse_oauth_allowed_redirect_hosts(cls, value: Any) -> Any:
         return RedirectAllowlist.parse(value).hosts if isinstance(value, str) else value
 
     @field_validator("client_allowed_origins", mode="before")
     @classmethod
-    def _parse_client_allowed_origins(cls, value):
+    def _parse_client_allowed_origins(cls, value: Any) -> Any:
         if not isinstance(value, str):
             return value
         return frozenset(
@@ -209,14 +209,14 @@ class ConfigServiceModel(BaseSettings):
 
     @field_validator("mfa_encryption_keys", mode="before")
     @classmethod
-    def _parse_mfa_encryption_keys(cls, value):
+    def _parse_mfa_encryption_keys(cls, value: Any) -> Any:
         if not isinstance(value, str):
             return value
         return [key.strip() for key in value.split(",") if key.strip()]
 
     @field_validator("mfa_encryption_keys", mode="after")
     @classmethod
-    def _validate_mfa_encryption_keys(cls, value):
+    def _validate_mfa_encryption_keys(cls, value: list[SecretStr]) -> list[SecretStr]:
         """Reject key material Fernet cannot use, at settings load.
 
         A malformed key is otherwise a 500 on the first enrolment and a lockout
@@ -236,7 +236,7 @@ class ConfigServiceModel(BaseSettings):
 
     @field_validator("environment", mode="before")
     @classmethod
-    def _normalise_environment(cls, value):
+    def _normalise_environment(cls, value: Any) -> Any:
         """Accept PRODUCTION and Production as well as production.
 
         An unrecognised value is still rejected — silently falling back to

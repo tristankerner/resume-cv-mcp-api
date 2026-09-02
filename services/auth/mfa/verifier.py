@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from persistence.base import utcnow
+from persistence.base import Clock
 from persistence.mfa_credential import MfaCredential
 from persistence.user import User
 from services.auth.mfa.challenge import MfaChallengeContext, MfaChallengeToken
@@ -54,7 +54,7 @@ class MfaVerifier:
         backup code) and commits — this is the end of the login transaction
         and there is nothing else pending.
         """
-        now = utcnow()
+        now = Clock.utcnow()
         satisfied = False
         for credential in await MfaCredential.list_active_for_user(self.db, user.id):
             method = self.registry.for_credential(credential)

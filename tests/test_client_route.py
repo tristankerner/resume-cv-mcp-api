@@ -5,10 +5,10 @@ import logging
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from main import Application
+from main import ClientRoute
 
 
-def _app_serving(path) -> tuple[FastAPI, bool]:
+def _app_serving(path: str | None) -> tuple[FastAPI, bool]:
     """A bare app with the route registered, rather than a reload of `main`.
 
     Registration happens once at import against the process's settings, so the
@@ -16,7 +16,7 @@ def _app_serving(path) -> tuple[FastAPI, bool]:
     function directly is what makes the missing-file case testable at all.
     """
     app = FastAPI()
-    registered = Application._register_client_route(app, path)
+    registered = ClientRoute.register(app, path)
     return app, registered
 
 
@@ -40,7 +40,7 @@ class TestConfigured:
         page.write_text("<title>x</title>")
 
         response = TestClient(_app_serving(str(page))[0]).get("/client")
-        for header, value in Application.CLIENT_HEADERS.items():
+        for header, value in ClientRoute.HEADERS.items():
             assert response.headers[header] == value
         assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
 

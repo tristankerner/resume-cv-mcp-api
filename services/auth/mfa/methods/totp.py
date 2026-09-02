@@ -4,14 +4,16 @@ import hmac
 from datetime import UTC, datetime
 
 import pyotp
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from persistence.base import utcnow
+from persistence.base import Clock
 from persistence.mfa_credential import MfaCredential
 from persistence.user import User
 from services.auth.exceptions import MfaErrors
 from services.auth.mfa.kinds import MfaMethodKind
 from services.auth.mfa.methods.method import EnrollmentResult, MfaMethod
 from services.auth.mfa.secret_box import MfaSecretBox
+from services.config.config_service import ConfigServiceModel
 
 
 class TotpMethod(MfaMethod):
@@ -30,7 +32,7 @@ class TotpMethod(MfaMethod):
     ALLOWS_MULTIPLE = True
     REQUIRES_ACTIVATION = True
 
-    def __init__(self, db, settings):
+    def __init__(self, db: AsyncSession, settings: ConfigServiceModel):
         super().__init__(db, settings)
         self.secret_box = MfaSecretBox.from_settings(settings)
 
@@ -41,7 +43,7 @@ class TotpMethod(MfaMethod):
             kind=str(self.KIND),
             label=label,
             secret=self.secret_box.seal(secret),
-            created_at=utcnow(),
+            created_at=Clock.utcnow(),
         )
         self.db.add(credential)
         await self.db.flush()  # so credential.id exists; the caller commits
@@ -59,9 +61,9 @@ class TotpMethod(MfaMethod):
     async def complete_enrollment(self, credential: MfaCredential, code: str) -> None:
         if credential.is_active:
             raise MfaErrors.already_activated()
-        if not await self.verify(credential, code, utcnow()):
+        if not await self.verify(credential, code, Clock.utcnow()):
             raise MfaErrors.invalid_code()
-        credential.activated_at = utcnow()
+        credential.activated_at = Clock.utcnow()
 
     async def verify(self, credential: MfaCredential, code: str, now: datetime) -> bool:
         if not credential.secret:
@@ -82,7 +84,7 @@ class TotpMethod(MfaMethod):
             # is what catches this, at startup.
             return False
 
-        # utcnow() is naive UTC by project convention (persistence/base.py) and
+        # Clock.utcnow() is naive UTC by project convention (persistence/base.py) and
         # pyotp reads a naive datetime as local time. Converted once, so the
         # drift window and the recorded step cannot disagree by the local UTC
         # offset.

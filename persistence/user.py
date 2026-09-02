@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import JSON, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,7 +35,7 @@ class User(SQAlchemyBase):
     lock_count: Mapped[int] = mapped_column(default=0, nullable=False)
     locked_permanently_at: Mapped[datetime | None]
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: Any):
         """Apply the counter defaults at construction, not only at insert.
 
         A `mapped_column` default is evaluated during flush, so a User that
