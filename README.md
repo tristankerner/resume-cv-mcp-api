@@ -158,10 +158,12 @@ login, so a leaked key cannot issue its own replacement ahead of revocation.
 whoever controls them can lock out or take over the account — so a self-edit
 touching any of them requires an interactive login too, the same rule and the
 same reasoning as key management. Editing anything else (`first_name`,
-`last_name`, `disabled`) is unaffected, and an admin holding `users:admin`
-can still reset any of the three on someone else's account without an
-interactive login, since that scope is only ever granted by someone who
-already holds the role. Changing your own password has its own route,
+`last_name`, `disabled`) is unaffected. Holding `users:admin` is not an
+exemption: an admin key that could set another account's password could log
+in as that account, which would make every other interactive-login rule here
+decorative. `roles` is gated the same way, since promoting an account you can
+already authenticate as reaches the same place by a different door.
+Changing your own password has its own route,
 `POST /users/me/password`, which additionally requires the *current* password
 — `PATCH` never checks it.
 
@@ -177,8 +179,8 @@ the service, or into someone else's account, does not.
 | Route | API key | Why |
 | --- | --- | --- |
 | `GET /users` | yes | Read-only. |
-| `POST /users` | yes | Creates an account bounded by roles the caller already holds — no different from registration always being reachable with the right scope. |
-| `POST /users/{id}/password` | no | An admin key that could set any password would own every account outright. |
+| `POST /users` | no | Creating an account sets its password, so a key that could do it could mint an account — with `roles: ["admin"]`, a peer of the caller — and then log in as it. That is the row below, one step removed. |
+| `POST /users/{id}/password` | no | An admin key that could set any password would own every account outright. `PATCH /users/{id}` is held to the same rule for the same reason; there is no back door through it. |
 | `DELETE /users/{id}/mfa` | no | An admin key that could strip second factors would make MFA optional service-wide for whoever steals it. |
 | `DELETE /users/{id}/lock` | **yes** | The documented escape hatch — a lock only blocks the password path, so a locked-out admin's own key must still be able to clear it. |
 | `GET /oauth-clients` | no | Grouped with the other two below rather than treated as merely read-only: this is the same admin surface, and a key that can enumerate registered clients is most of the way to registering one. |
@@ -193,7 +195,11 @@ same operation Dynamic Client Registration performs, gated behind
 redirect-allowlist check either way, so a URI outside
 `OAUTH_ALLOWED_REDIRECT_HOSTS` is refused regardless of which path registered
 it. Deregistering a client invalidates every authorization code and refresh
-token it holds, in the same transaction as the client row going away.
+token it holds, in the same transaction as the client row going away — and
+takes effect on any access token already in flight too, since
+`AuthService._authenticate_oauth` looks the issuing client up on every
+request. Deregistering a compromised client cuts it off now, not in half an
+hour when its current access token would have expired.
 
 ### Second factors
 
@@ -487,16 +493,29 @@ allowlist, and why it is stamped whether or not the caller sent an `Origin`.
 ## Browser client
 
 [`resume-mcp-api-clients`](https://github.com/tristankerner/resume-mcp-api-clients)
-is a hand-authored single-page UI for managing documents and API keys — see its
-README for what's there and how to run it. It is a separate repository, not a
-submodule: this API has no build-time dependency on any client, and nothing
-here needs one to be present.
+is a single-page UI for managing documents, API keys, second factors and — for
+an admin — users and OAuth clients. See its README for what's there and how to
+run it. It is a separate repository, not a submodule: this API has no
+build-time dependency on any client, and nothing here needs one to be present.
 
-To develop against it, clone it wherever you like and point `CLIENT_HTML_PATH`
-at its `web/index.html`. `./clients` is the conventional name — `.dockerignore`
-expects it when keeping a local build out of an image — but nothing enforces
-it. If the path does not exist, `GET /client` declines to register and logs a
-warning naming the file it looked for; nothing else is affected.
+To develop against it, clone it wherever you like, build it once
+(`cd web && npm ci && npm run build`), and point `CLIENT_HTML_PATH` at the
+**build output**, `web/dist/index.html`:
+
+```bash
+git clone https://github.com/tristankerner/resume-mcp-api-clients clients
+```
+
+```bash
+CLIENT_HTML_PATH=./clients/web/dist/index.html
+```
+
+`web/index.html` is not that file — it is the Vite entry stub, and serving it
+here yields a blank page whose `/src/main.tsx` request 404s against this API.
+`./clients` is the conventional name — `.dockerignore` expects it when keeping
+a local build out of an image — but nothing enforces it. If the path does not
+exist, `GET /client` declines to register and logs a warning naming the file
+it looked for; nothing else is affected.
 
 Unlike the public projection above, the routes the client calls (`/token`,
 `/documents`, `/api-keys`, `/users/*`) are authenticated, so they cannot use a
@@ -512,11 +531,12 @@ request will reach the server and have its response discarded unread. See
 `CLIENT_HTML_PATH` sidesteps all of that by serving the client same-origin:
 set it and `GET /client` returns that file. Which file is the deployment's
 business — it copies a client into the build context before `COPY . /app`, and
-this repository never learns which one. A locally built
-`clients/web/dist/index.html` works too, but `.dockerignore` keeps `dist/` and
-`node_modules/` out of any image, since both are gitignored and a stale build
-would be served with nothing having reviewed it. Unset by default, so this
-depends on no build artifact.
+this repository never learns which one. The client's build produces a single
+self-contained HTML file, which is what belongs here. `.dockerignore` still
+keeps a local `clients/web/dist/` and `clients/web/node_modules/` out of any
+image: those are whatever the last local build left behind, gitignored and so
+unreviewed, and a deployment composes its own copy of the built file in
+instead. Unset by default, so the API itself depends on no build artifact.
 
 This is the path of least resistance for putting the client in front of a
 deployed API. `CLIENT_ALLOWED_ORIGINS` does not need to name it, no static

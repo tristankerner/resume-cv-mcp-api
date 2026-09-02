@@ -4,9 +4,8 @@ import pyotp
 
 from persistence.user import User
 from services.auth.scopes import Scopes
-from services.config.config_service import ConfigService
 from services.database.database_service import DatabaseService
-from services.oauth.tokens import TokenIssuer
+from tests.helpers import OAuthTokens
 
 
 async def narrowed_api_key(client, actor, *scopes: Scopes) -> dict[str, str]:
@@ -20,12 +19,7 @@ async def narrowed_api_key(client, actor, *scopes: Scopes) -> dict[str, str]:
 
 
 async def oauth_headers(actor, *scopes: Scopes) -> dict[str, str]:
-    settings = ConfigService.get_with_deps().settings
-    async with DatabaseService.session() as db:
-        access_token, _expires_in = TokenIssuer(db, settings).mint_access_token(
-            user_id=actor.user_id, scopes=frozenset(scopes), client_id="test-client"
-        )
-    return {"Authorization": f"Bearer {access_token}"}
+    return await OAuthTokens.headers(actor, *scopes)
 
 
 async def enroll_totp(client, actor, password: str, label: str = "Phone"):

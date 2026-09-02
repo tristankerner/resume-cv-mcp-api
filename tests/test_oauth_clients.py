@@ -279,3 +279,37 @@ class TestDelete:
         )
         assert exchange_response.status_code == 401
         assert exchange_response.json()["error"] == "invalid_client"
+
+    async def test_an_access_token_dies_with_its_client(self, client, admin, password):
+        """Codes and refresh tokens are rows and go with the client row. An
+        access token is a self-contained JWT and would otherwise keep working
+        for the rest of AUTH_ACCESS_TOKEN_EXPIRE_MINUTES — which is the whole
+        window an admin is deregistering a compromised client to close.
+        """
+        created = await create_client(client, admin, public=True)
+        client_id = created.json()["client"]["client_id"]
+
+        code, verifier = await get_code(
+            client, client_id=client_id, username=admin.username, password=password
+        )
+        token_response = await client.post(
+            "/oauth/token",
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": REDIRECT_URI,
+                "client_id": client_id,
+                "code_verifier": verifier,
+            },
+        )
+        assert token_response.status_code == 200, token_response.text
+        headers = {"Authorization": f"Bearer {token_response.json()['access_token']}"}
+
+        assert (await client.get("/users/me", headers=headers)).status_code == 200
+
+        response = await client.delete(
+            f"/oauth-clients/{client_id}", headers=admin.headers
+        )
+        assert response.status_code == 204
+
+        assert (await client.get("/users/me", headers=headers)).status_code == 401

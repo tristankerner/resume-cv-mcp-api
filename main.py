@@ -146,11 +146,12 @@ class StartupTasks:
 class Application:
     """Assembles the ASGI app: MCP mount, middleware, routers, client route."""
 
-    # No `script-src`, deliberately: the page is one inline module plus two CDN
-    # imports, so locking scripts down would need either `unsafe-inline` —
-    # which buys nothing — or a hash that changes on every edit to the file.
-    # Integrity for the CDN modules comes from the SRI hashes in the page
-    # itself. `frame-ancestors` matters because the page carries a login form.
+    # No `script-src`, deliberately: the client is one self-contained file
+    # whose script is inlined by its build, so locking scripts down would need
+    # either `unsafe-inline` — which buys nothing — or a hash that changes with
+    # every client build. Nothing is fetched from anywhere else, which is the
+    # property that made a CDN allowlist unnecessary in the first place.
+    # `frame-ancestors` matters because the page carries a login form.
     CLIENT_HEADERS: ClassVar[dict[str, str]] = {
         "Content-Security-Policy": (
             "frame-ancestors 'none'; base-uri 'self'; object-src 'none'"

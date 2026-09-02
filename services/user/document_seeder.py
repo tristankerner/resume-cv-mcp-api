@@ -70,13 +70,25 @@ class DocumentSeeder:
         `owner_id`. Does not commit — the caller owns the transaction, and
         `owner_id` must already be flushed: `Document.created_by` is a
         foreign key to `users.id` and part of its composite primary key.
+
+        Rows are added directly rather than through
+        `Document.upsert_document`, which commits per document: going through
+        it would commit the half-seeded account three times over and break
+        the one guarantee both call sites are written around — that a user
+        and their documents arrive together or not at all. Nothing here needs
+        what upsert offers anyway, since a brand-new owner has no revision to
+        compare against: every document is revision 1, private, by
+        construction.
         """
         for entry in self._ENTRIES:
-            document = Document(
-                created_by=owner_id,
-                name=entry.name,
-                type=entry.document_type.value,
-                revision_note=self.REVISION_NOTE,
-                data=entry.data.model_dump(),
+            db.add(
+                Document(
+                    created_by=owner_id,
+                    name=entry.name,
+                    revision_id=1,
+                    type=entry.document_type.value,
+                    public=False,
+                    revision_note=self.REVISION_NOTE,
+                    data=entry.data.model_dump(),
+                )
             )
-            await Document.upsert_document(db, document, public=False)

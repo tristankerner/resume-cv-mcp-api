@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from persistence.api_key import ApiKey
 from persistence.auth_failure import AuthFailure
 from persistence.base import utcnow
+from persistence.oauth_client import OAuthClient
 from persistence.user import User
 from services.auth.api_keys import ApiKeyToken
 from services.auth.exceptions import AuthErrors
@@ -439,6 +440,14 @@ class AuthService(ServiceProviderInterface):
         OAuth grant is narrowed at authorize time, so trusting the user's full
         role scopes here would let a client escalate past what the resource
         owner approved — see `ScopeResolver.narrow`.
+
+        The issuing client is looked up on every call, which is what makes
+        deregistration immediate. Without it an access token outlives the
+        client it was minted for by up to
+        AUTH_ACCESS_TOKEN_EXPIRE_MINUTES — and deregistering a *compromised*
+        client is exactly the case where that window matters, so the lookup
+        is worth the same cost `_active_user_from_subject` already pays to
+        make a revoked role take effect immediately.
         """
         try:
             payload = jwt.decode(
@@ -455,6 +464,14 @@ class AuthService(ServiceProviderInterface):
 
         user = await self._active_user_from_subject(payload)
         if user is None:
+            return None
+
+        # RFC 9068 makes `client_id` required, so a token minted by this
+        # service always carries one; a token without one is not one of ours.
+        client_id = payload.get("client_id")
+        if not isinstance(client_id, str):
+            return None
+        if await OAuthClient.get_by_client_id(self.db, client_id) is None:
             return None
 
         # See ScopeResolver.narrow.

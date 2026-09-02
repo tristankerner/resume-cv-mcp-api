@@ -1,12 +1,16 @@
 """Last-resort account recovery, direct against the database.
 
-Every one of the four subcommands below is also reachable over the API, and
-from the browser client if one is in front of this deployment:
-`DELETE /users/{id}/lock`, `POST /users/{id}/password`,
-`DELETE /users/{id}/mfa`, and application startup's own admin bootstrap.
-Reach for this script only when there is no working admin login to use one of
-those with — it talks to the database directly, with whatever DATABASE_URL
-the deployment uses, and needs no HTTP credential at all.
+Each subcommand below has an equivalent over the API, and in the browser
+client if one is in front of this deployment: `DELETE /users/{id}/lock`,
+`POST /users/{id}/password`, `DELETE /users/{id}/mfa`, and application
+startup's own admin bootstrap. Reach for this script only when there is no
+working admin login to use one of those with — it talks to the database
+directly, with whatever DATABASE_URL the deployment uses, and needs no HTTP
+credential at all.
+
+`unlock --address` is the one thing here with no API equivalent: a banned
+calling address is not tied to an account, and there is no route that clears
+one.
 
     python -m admin_cli unlock <username> [--address ADDR] [--list]
     python -m admin_cli reset-password <username>

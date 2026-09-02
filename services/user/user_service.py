@@ -83,7 +83,16 @@ class UserService(ServiceProviderInterface):
         return ListUsersResponse(data=data)
 
     async def register_user(self, request: CreateUserRequest) -> CreateUserResponse:
+        """Create an account. Requires users:admin and an interactive login.
+
+        Interactive for the same reason `reset_password` is, and it has to be
+        or that one is decorative: creating an account sets its password, so a
+        credential that cannot log in interactively could otherwise mint one
+        that can — with `roles: ["admin"]`, a peer of the caller — and walk
+        straight past every other `require_interactive` gate in this service.
+        """
         self.principal.require_scope(Scopes.USERS_ADMIN)
+        self.principal.require_interactive()
 
         existing_user = await User.get_user_by_username(self.db, request.username)
         if existing_user is not None:
@@ -119,18 +128,25 @@ class UserService(ServiceProviderInterface):
         if not is_admin and self.principal.user_id != request.user_id:
             raise UserErrors.not_found()
 
-        # A self-edit touching an account-recovery field needs a password
-        # login, not just any credential for the account. An admin acting with
-        # users:admin is unaffected: admin automation resetting someone else's
-        # password is a real use.
-        if not is_admin:
-            touches_recovery_fields = (
-                request.password is not None
-                or request.username is not None
-                or request.email is not None
-            )
-            if touches_recovery_fields:
-                self.principal.require_interactive()
+        # An edit touching an account-recovery field needs a password login,
+        # not just any credential carrying the scope for it — whether it is a
+        # self-edit or an admin acting on someone else.
+        #
+        # Admin used to be exempt here, on the grounds that admin automation
+        # resetting a password is a real use. It is, but the exemption made
+        # every other `require_interactive` in this service decorative: an
+        # admin API key could set any account's password through this route
+        # and then log in interactively as that account. `roles` is included
+        # for the same reason — promoting an account the caller can already
+        # authenticate as is the same escalation by a different door.
+        touches_recovery_fields = (
+            request.password is not None
+            or request.username is not None
+            or request.email is not None
+            or request.roles is not None
+        )
+        if touches_recovery_fields:
+            self.principal.require_interactive()
 
         # Deactivation needs users:admin, on anyone's account including the
         # caller's own. `active` is checked on every credential, so clearing it

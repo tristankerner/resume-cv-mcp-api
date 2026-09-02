@@ -28,6 +28,7 @@ from services.oauth.clients import OAuthClientRegistry
 from services.oauth.redirect_allowlist import RedirectAllowlist
 from services.oauth.scopes import OAUTH_ISSUABLE_SCOPES
 from services.oauth.tokens import TokenIssuer
+from tests.helpers import OAuthTokens
 
 REDIRECT_URI = "https://claude.ai/api/mcp/auth_callback"
 
@@ -727,16 +728,31 @@ class TestSecurityRequirements:
         )
         assert await McpTokenVerifier().verify_token(forged) is None
 
+    async def test_a_token_with_no_client_id_is_refused(self, admin):
+        """RFC 9068 makes `client_id` required and every token this service
+        mints carries one, so a token without it was not minted here — and it
+        is the field deregistration is checked against."""
+        settings = ConfigService.get_with_deps().settings
+        forged = pyjwt.encode(
+            {
+                "iss": str(settings.public_base_url),
+                "sub": str(admin.user_id),
+                "scope": "resume:read",
+                "aud": settings.oauth_resource_url,
+                "token_use": "oauth_access",
+            },
+            settings.auth_secret_key.get_secret_value(),
+            algorithm=settings.auth_algorithm,
+        )
+        assert await McpTokenVerifier().verify_token(forged) is None
+
     async def test_scope_is_never_trusted_past_current_role(self, member):
         """A token could in principle claim any scope; the server must still
         cap it at what the user's current role actually grants."""
-        settings = ConfigService.get_with_deps().settings
-        async with DatabaseService.session() as db:
-            access_token, _expires_in = TokenIssuer(db, settings).mint_access_token(
-                user_id=member.user_id,
-                scopes=frozenset(Scopes),  # every scope, including users:admin
-                client_id="x",
-            )
+        access_token = await OAuthTokens.mint(
+            member.user_id,
+            *Scopes,  # every scope, including users:admin
+        )
         result = await McpTokenVerifier().verify_token(access_token)
         assert result is not None
         assert Scopes.USERS_ADMIN.value not in result.scopes  # member lacks it

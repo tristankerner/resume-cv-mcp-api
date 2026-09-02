@@ -5,11 +5,14 @@ the bootstrap admin.
 
 import secrets
 
+import pytest
+
 from persistence.document import Document
 from persistence.user import User
 from services.auth.roles import Roles
 from services.database.database_service import DatabaseService
 from services.user.bootstrap import AdminBootstrapper, BootstrapOutcome
+from services.user.document_seeder import DocumentSeeder
 
 SEEDED_NAMES = {"resume", "metadata", "skill"}
 
@@ -143,3 +146,34 @@ class TestSeedingOnBootstrap:
         names = {doc.name for doc in docs}
         assert names == SEEDED_NAMES
         assert all(doc.public is False for doc in docs)
+
+
+class TestSeedingIsAtomic:
+    """A user and their documents arrive together or not at all.
+
+    Seeding writes the rows directly rather than through
+    `Document.upsert_document`, which commits per document — going through it
+    would commit the account partway through and leave a user holding one or
+    two of the three when anything went wrong.
+    """
+
+    async def test_a_failure_mid_seed_creates_no_user(
+        self, client, admin, password, monkeypatch
+    ):
+        original = DocumentSeeder.seed
+
+        async def fail_after_the_first(self, db, owner_id):
+            await original(self, db, owner_id)
+            raise RuntimeError("storage went away mid-seed")
+
+        monkeypatch.setattr(DocumentSeeder, "seed", fail_after_the_first)
+
+        with pytest.raises(RuntimeError):
+            await client.post(
+                "/users",
+                headers=admin.headers,
+                json={"username": "half-seeded", "password": password},
+            )
+
+        async with DatabaseService.session() as db:
+            assert await User.get_user_by_username(db, "half-seeded") is None

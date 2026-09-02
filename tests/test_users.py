@@ -8,9 +8,8 @@ from persistence.base import utcnow
 from persistence.user import User
 from services.auth.roles import Roles
 from services.auth.scopes import Scopes
-from services.config.config_service import ConfigService
 from services.database.database_service import DatabaseService
-from services.oauth.tokens import TokenIssuer
+from tests.helpers import OAuthTokens
 
 
 async def narrowed_api_key(client, actor, *scopes: Scopes) -> dict[str, str]:
@@ -27,14 +26,7 @@ async def narrowed_api_key(client, actor, *scopes: Scopes) -> dict[str, str]:
 async def oauth_headers(actor, *scopes: Scopes) -> dict[str, str]:
     """Auth headers for an OAuth-kind access token, minted directly rather
     than through the authorize flow — same shortcut test_oauth.py takes."""
-    settings = ConfigService.get_with_deps().settings
-    async with DatabaseService.session() as db:
-        access_token, _expires_in = TokenIssuer(db, settings).mint_access_token(
-            user_id=actor.user_id,
-            scopes=frozenset(scopes),
-            client_id="test-client",
-        )
-    return {"Authorization": f"Bearer {access_token}"}
+    return await OAuthTokens.headers(actor, *scopes)
 
 
 class TestCurrentUser:
@@ -578,9 +570,13 @@ class TestChangePassword:
 
 
 class TestInteractiveLoginRequiredForRecoveryFields:
-    """A self PATCH touching password, username or email needs a password
+    """A PATCH touching password, username, email or roles needs a password
     login, closing the hole where any credential for the account — an API key,
-    an OAuth token — could take it over."""
+    an OAuth token — could take it over.
+
+    Holding `users:admin` is not an exemption, and `TestAdminKeysCannotBecomeLogins`
+    below is why: it used to be, and that made every other interactive-login
+    rule in this service reachable around."""
 
     async def test_api_key_self_patch_of_password_is_refused(
         self, client, member, password
@@ -647,6 +643,8 @@ class TestInteractiveLoginRequiredForRecoveryFields:
     async def test_admin_reset_via_patch_still_works_without_current_password(
         self, client, admin, roleless, password
     ):
+        """Interactively, that is — the admin path still never asks for the
+        current password, which is the whole point of it."""
         new_password = password + "X9?"
         response = await client.patch(
             f"/users/{roleless.user_id}",
@@ -661,6 +659,86 @@ class TestInteractiveLoginRequiredForRecoveryFields:
                 data={"username": roleless.username, "password": new_password},
             )
         ).status_code == 200
+
+
+class TestAdminKeysCannotBecomeLogins:
+    """No credential that cannot log in interactively may produce one that can.
+
+    Every `require_interactive` gate in this service rests on that. Two routes
+    used to break it while holding users:admin — PATCH could set anyone's
+    password, and POST /users could mint a fresh admin with a known one — so a
+    stolen admin API key was one request away from a password login and
+    everything those gates deny.
+    """
+
+    async def test_an_admin_key_cannot_reset_another_users_password(
+        self, client, admin, roleless, password
+    ):
+        headers = await narrowed_api_key(client, admin, Scopes.USERS_ADMIN)
+        new_password = password + "Z9?"
+        response = await client.patch(
+            f"/users/{roleless.user_id}",
+            headers=headers,
+            json={"password": new_password, "password_retype": new_password},
+        )
+        assert response.status_code == 403
+
+        assert (
+            await client.post(
+                "/token",
+                data={"username": roleless.username, "password": new_password},
+            )
+        ).status_code == 401
+
+    async def test_an_admin_oauth_token_cannot_reset_another_users_password(
+        self, client, admin, roleless, password
+    ):
+        headers = await oauth_headers(admin, Scopes.USERS_ADMIN)
+        new_password = password + "Z9?"
+        response = await client.patch(
+            f"/users/{roleless.user_id}",
+            headers=headers,
+            json={"password": new_password, "password_retype": new_password},
+        )
+        assert response.status_code == 403
+
+    async def test_an_admin_key_cannot_create_a_user(self, client, admin, password):
+        headers = await narrowed_api_key(client, admin, Scopes.USERS_ADMIN)
+        response = await client.post(
+            "/users",
+            headers=headers,
+            json={
+                "username": "backdoor",
+                "password": password + "Q1?",
+                "roles": [Roles.ADMIN.value],
+            },
+        )
+        assert response.status_code == 403
+
+        assert (
+            await client.post(
+                "/token", data={"username": "backdoor", "password": password + "Q1?"}
+            )
+        ).status_code == 401
+
+    async def test_an_admin_key_cannot_promote_an_account(self, client, admin, member):
+        """The same escalation by a different door: grant admin to an account
+        whose password you already know, then log in as it."""
+        headers = await narrowed_api_key(client, admin, Scopes.USERS_ADMIN)
+        response = await client.patch(
+            f"/users/{member.user_id}",
+            headers=headers,
+            json={"roles": [Roles.ADMIN.value]},
+        )
+        assert response.status_code == 403
+
+    async def test_an_admin_key_may_still_clear_a_lock(self, client, admin, make_actor):
+        """The one route that must stay open to a key — a locked-out admin
+        holding nothing else has to be able to unlock themselves."""
+        locked = await make_actor("locked-user", [])
+        headers = await narrowed_api_key(client, admin, Scopes.USERS_ADMIN)
+        response = await client.delete(f"/users/{locked.user_id}/lock", headers=headers)
+        assert response.status_code == 204
 
 
 class TestDeactivationRequiresAdmin:
