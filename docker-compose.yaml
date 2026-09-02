@@ -1,22 +1,14 @@
 services:
   resume-api:
     build:
-      context: ./   # The directory containing the Dockerfile
-      dockerfile: Dockerfile # The name of the Dockerfile
+      context: ./
+      dockerfile: Dockerfile
     image: resume-api:0.1
     volumes:
-      # A named volume rather than a bind mount to ./data. The image runs as a
-      # non-root user (uid 10001) and a bind-mounted host directory keeps its
-      # host ownership, so SQLite could not create its journal there. A named
-      # volume inherits the mountpoint's ownership from the image instead.
-      # For a database you want to open from the host, run the app outside the
-      # container: `uv run fastapi dev`.
       - resume-data:/app/data
     env_file:
       - ./.env
     environment:
-      # Matches the Cloud Run contract, so the container is exercised the same
-      # way locally as in the deployment.
       PORT: "8080"
     ports:
       - "8000:8080"

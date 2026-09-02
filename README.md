@@ -1,11 +1,78 @@
 # resume-mcp-api
 
-Serves a résumé as structured data in two projections: a public one for a
-website, and a private one — contact details, per-bullet technologies,
-metrics, tailoring notes — for an AI assistant over MCP.
+Used to store and serve JSON résumés, résumé metadata (also JSON), and 
+fine-tuning skills as JSON. A user may have multiples of these documents. These
+document is server via a both public (optional) and private REST endpoints, as 
+well as via MCP tools.
 
-Documents belong to a user, are typed, are private unless published, and can
-be deleted. A single deployment can host more than one person's résumé.
+Documents may optionally be marked as public. Additionally, sections within a résumé
+may be hidden from the public feed.
+
+## Author's Note
+
+**Q:** What problem(s) does this solve?
+
+**A:** This micro-ish service enables me to:
+- Have a single source of truth for my résumé in a structure format.
+- Track changes/revisions to my résumé.
+- Feed into my personal website, which can also compile this structured 
+resume into a master resume docx file (minus personal contact info).
+- Have a centralized place to store and track resume metadata, and 
+fine-tuning-skill prompts.
+- Run `/fine-tune-resume` in Claude (or potentially others) from anywhere, on 
+any device that supports MCP, along with any job description, and receive a 
+pretty good fine-tuned-resume and cover letter to use for a recruiter or job 
+application.
+- Potentially let other friends use this for the same purpose.
+
+**Q:** Why does this exist?
+
+**A:** It's 2026, and I've been job hunting for a little while now. I've found myself 
+frustrated by multiple activities that I'm intended to repeat, day in, and day out.
+This includes:
+- An expectation to fine tune my résumé for every job, for every recruiter. Keywords 
+must match (even if it is the most mundane nonsensical thing you've ever heard of.)
+- Fine-tuning must be done quickly, or expect a call back asking for when it's done.
+And then another call. Whether you happen to be at your computer or not.
+- Regularly having to update my résumé with new history or skills, because I got a new 
+cert, or just never thought hat particularly thing was worth mentioning. Then losing 
+that update, because I made it in a fine-tuned resume, and not in a master.
+- Updating the public master resume, private master resume, and website, every time. 
+
+**Q:** Why this way?
+
+**A:** https://xkcd.com/1319/ 
+
+**Q:** Where's the gui?
+
+**A:** There is a separate repo, which should be available here (around the same time
+that this one is made public): [resume-mcp-api-clients](https://github.com/tristankerner/resume-mcp-api-clients)
+
+At the end of the day, I don't know that this project will be particularly useful for 
+anyone else. For the most part, it was something I wanted, for my workflow, and a way 
+to practice using Claude Code with a stack that I'm already familiar with. It was also 
+a chance to dive into MCP (using FastMCP), and work with skills.
+
+There is almost certainly a simpler way to do what I/"we" have done here. Also, an 
+easier way. Certainly better ways if your intent is to mass-apply to jobs, instead
+of being as selective as I'm being.
+
+I also can't really say how well this works... it certainly does what it's intended
+to do. I like the results of both the résumé and cover letter compared to some other
+manual approached. However, I also haven't gotten a job with it yet, which is the 
+real point.
+
+## Setup
+
+### No Client
+  TODO: Include instructions for configuring and running with Docker or Docker Compose, withoout the web client.
+### Hosted Client
+  TODO: Include instructions for configuring and running with Docker or Docker Compose, but by building and including the web client.
+
+
+Below are overly verbos Claude based docs. 
+
+---
 
 ## Documents
 
@@ -20,7 +87,7 @@ A document is `(owner, name)`; the name is the operator's choice, and its
 type is a 409, not a silent retype. The MCP `retrieve_resume_data` tool takes
 the three ids by name (discovered with `list_resume_documents`) and returns all
 three in one call, so a tailoring run cannot pair current instructions with a
-stale resume, or the reverse. Only the resume is required; a companion that is
+stale resume, or the reverse. Only the résumé is required; a companion that is
 not stored comes back as `null` rather than failing the retrieval, so the
 client can say what it is working without.
 
@@ -52,7 +119,7 @@ enough structure to see every field, none of it real.
 application startup's admin bootstrap both seed a private (`public: false`)
 `resume`, `metadata` and `skill` document from `examples/` on creation, so a
 fresh account is never empty — see `services/user/document_seeder.py`.
-`examples/seed-documents.sh` is still useful afterwards, for re-seeding or for
+`examples/seed-documents.sh` is still useful afterward, for re-seeding or for
 loading real content over the fictional starting point.
 
 ### Revisions
@@ -248,7 +315,7 @@ make guessing practical.
 **TOTP secrets are encrypted at rest**, with Fernet under `MFA_ENCRYPTION_KEYS`,
 so a database read alone does not mint a second factor for someone's
 account — the key lives in the application process, not the database, so
-this is not a defence against a compromised host, only against what a leaked
+this is not a defense against a compromised host, only against what a leaked
 backup, a SQL-injection read, or a database dump pasted into a support ticket
 can do on its own. Backup codes are hashed rather than encrypted, the same
 way API keys are, which is what lets them keep working if the encryption key
@@ -297,7 +364,7 @@ with `null`. `null` means "not stored", and a client told that would go on to
 work without a document that exists.
 
 The secret is shown once. Seed the instructions the client will follow, from
-one of the `examples/` fixtures — the resume and the metadata go in the same
+one of the `examples/` fixtures — the résumé and the metadata go in the same
 way, through their own routes:
 
 ```bash
@@ -321,7 +388,7 @@ to. Re-running the command above a second time with the same file returns
 
 Manage keys with `GET /api-keys` (metadata only — the secret is never
 retrievable) and `DELETE /api-keys/{id}`. Revocation is a soft delete, so
-`last_used_at` stays readable afterwards; that per-client audit trail is most
+`last_used_at` stays readable afterward; that per-client audit trail is most
 of the reason to prefer keys over a shared password.
 
 See [`docs/mcp-clients.md`](docs/mcp-clients.md) for wiring the key into a
@@ -369,7 +436,7 @@ every caller as the proxy.
 
 API keys are not throttled. They are 32 bytes of randomness looked up by an
 indexed prefix — there is no dictionary to attack and no slow hash to exhaust,
-so a lockout would add a denial-of-service surface and no defence.
+so a lockout would add a denial-of-service surface and no defense.
 
 Every threshold is configurable; see [`docs/configuration.md`](docs/configuration.md).
 
@@ -390,7 +457,7 @@ There is no separate docs password to rotate — the same accounts work, a
 passwordless service account still cannot log in, and deactivating a user or
 changing their password closes this door with the rest, the cookie included:
 it is bound to the password hash in force when it was issued. Any active
-account will do; this gates who reads the route list, not what they can call,
+account will do; this gates who read the route list, not what they can call,
 and every route behind it still enforces its own scopes.
 
 An HTML form rather than a bearer token because this is the one surface opened
@@ -496,7 +563,7 @@ const resume = await res.json();
 
 Nothing else in the service carries the header by default;
 `middleware/public_cors.py` explains why it is a wildcard rather than an
-allowlist, and why it is stamped whether or not the caller sent an `Origin`.
+allowlist, and why it is stamped whether the caller sent an `Origin`.
 
 ### Withholding a single entry
 
@@ -600,7 +667,7 @@ DATABASE_URL=postgresql+asyncpg://user:pass@host/resume_api?ssl=require
 ```
 
 `alembic/env.py` rewrites that to `postgresql+psycopg` for the migrations,
-translating `ssl` to libpq's `sslmode` on the way, so one setting drives both
+translating `ssl` to lib's `sslmode` on the way, so one setting drives both
 engines. `documents` carries a no-update trigger per dialect — a statement
 trigger on SQLite, a trigger function on Postgres — so a revision cannot be
 rewritten. Deletion is not blocked there; it is gated on the type's delete
