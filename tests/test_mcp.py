@@ -1,12 +1,22 @@
 """The MCP surface shares AuthService.authenticate, so both credential types
 work there without MCP-specific auth code. These tests hold that seam."""
 
+import json
+
 import pytest
 from fastmcp.exceptions import ToolError
+from fastmcp.tools import FunctionTool
+from mcp.types import TextContent
 
+from persistence.document import Document
 from routers.mcp import ResumeTools, list_resume_documents, retrieve_resume_data
 from services.auth.mcp_verifier import McpTokenVerifier
 from services.auth.scopes import Scopes
+from services.database.database_service import DatabaseService
+from services.document.document_reader import DocumentReader
+from services.document.document_types import DocumentType
+from services.document.dtos.resume_object import ResumeMetadata, ResumePrivate
+from services.document.dtos.resume_skill import ResumeSkill
 
 
 @pytest.fixture
@@ -118,11 +128,28 @@ def as_narrowed(monkeypatch, admin):
     return narrow
 
 
+def _text(result) -> str:
+    block = result.content[0]
+    assert isinstance(block, TextContent)
+    return block.text
+
+
+async def retrieved(**kwargs) -> dict:
+    """Unwraps the single text block `retrieve_resume_data` now returns, so
+    the assertions below can keep subscripting a dict."""
+    return json.loads(_text(await retrieve_resume_data(**kwargs)))
+
+
+async def listed() -> dict:
+    """Same unwrap as `retrieved`, for `list_resume_documents`."""
+    return json.loads(_text(await list_resume_documents()))
+
+
 class TestResumeTool:
     async def test_returns_resume_and_metadata(
         self, resume_payload, as_admin, stored_resume, stored_metadata
     ):
-        result = await retrieve_resume_data(
+        result = await retrieved(
             resume_id="resume.json", resume_metadata_id="resume.metadata.json"
         )
         assert result["resume"]["summary"] == resume_payload["summary"]
@@ -133,7 +160,7 @@ class TestResumeTool:
     ):
         """One call has to carry all three: the skill is what the client
         follows, and it is worthless against a resume it did not arrive with."""
-        result = await retrieve_resume_data(
+        result = await retrieved(
             resume_id="resume.json",
             resume_metadata_id="resume.metadata.json",
             resume_skill_id="resume.skill.json",
@@ -153,7 +180,7 @@ class TestResumeTool:
             headers=as_admin.headers,
             json={"name": "resume.skill.json", "revision_note": "v2", "data": revised},
         )
-        result = await retrieve_resume_data(
+        result = await retrieved(
             resume_id="resume.json", resume_skill_id="resume.skill.json"
         )
         assert result["resume_skill"]["objective"] == "a differently worded objective"
@@ -163,7 +190,7 @@ class TestResumeTool:
     ):
         """Metadata previously returned the Document object, which is not
         serializable; an unsupplied companion is reported as null."""
-        result = await retrieve_resume_data(resume_id="resume.json")
+        result = await retrieved(resume_id="resume.json")
         assert result["resume_metadata"] is None
         assert result["resume_skill"] is None
 
@@ -172,7 +199,7 @@ class TestResumeTool:
     ):
         """Only the resume is required — the client can say what it is working
         without, which beats returning nothing at all."""
-        result = await retrieve_resume_data(
+        result = await retrieved(
             resume_id="resume.json", resume_skill_id="never-stored.json"
         )
         assert result["resume"] is not None
@@ -181,11 +208,18 @@ class TestResumeTool:
     async def test_serves_private_fields(
         self, as_admin, stored_resume, private_markers
     ):
-        import json
-
-        body = json.dumps(await retrieve_resume_data(resume_id="resume.json"))
+        """Runs against the slimmed payload `ResumeTools.slim` now produces —
+        the change most likely to redact something by accident."""
+        body = _text(await retrieve_resume_data(resume_id="resume.json"))
         for marker in private_markers:
             assert marker in body
+
+    async def test_result_is_a_single_text_block(self, as_admin, stored_resume):
+        """The whole point of Change A — otherwise invisible, since the tool
+        still looks single-valued to a caller that only reads `.content`."""
+        result = await retrieve_resume_data(resume_id="resume.json")
+        assert result.structured_content is None
+        assert len(result.content) == 1
 
     async def test_raises_when_no_resume_stored(self, as_admin):
         with pytest.raises(ToolError):
@@ -226,12 +260,12 @@ class TestListResumeDocumentsTool:
     async def test_lists_the_callers_documents(
         self, as_admin, stored_resume, stored_metadata, stored_skill
     ):
-        result = await list_resume_documents()
+        result = await listed()
         ids = {doc["document_id"] for doc in result["documents"]}
         assert ids == {"resume.json", "resume.metadata.json", "resume.skill.json"}
 
     async def test_entries_carry_type_and_no_content(self, as_admin, stored_resume):
-        result = await list_resume_documents()
+        result = await listed()
         entry = result["documents"][0]
         assert entry["type"] == "resume"
         assert "data" not in entry
@@ -244,7 +278,7 @@ class TestListResumeDocumentsTool:
             headers=other_owner.headers,
             json={"name": "resume.json", "revision_note": "v", "data": resume_payload},
         )
-        result = await list_resume_documents()
+        result = await listed()
         assert result["documents"] == []
 
     async def test_lists_only_the_types_the_credential_may_read(
@@ -254,10 +288,15 @@ class TestListResumeDocumentsTool:
         the answer that credential should get, rather than a refusal for the
         two types it was deliberately not given."""
         as_narrowed(Scopes.SKILL_READ)
-        result = await list_resume_documents()
+        result = await listed()
         assert {doc["document_id"] for doc in result["documents"]} == {
             "resume.skill.json"
         }
+
+    async def test_result_is_a_single_text_block(self, as_admin, stored_resume):
+        result = await list_resume_documents()
+        assert result.structured_content is None
+        assert len(result.content) == 1
 
 
 class TestPerTypeScopesOverMcp:
@@ -276,7 +315,7 @@ class TestPerTypeScopesOverMcp:
         self, as_narrowed, stored_resume
     ):
         as_narrowed(Scopes.RESUME_READ)
-        result = await retrieve_resume_data(resume_id="resume.json")
+        result = await retrieved(resume_id="resume.json")
         assert result["resume"] is not None
         assert result["resume_metadata"] is None
 
@@ -288,3 +327,77 @@ class TestPerTypeScopesOverMcp:
             await retrieve_resume_data(
                 resume_id="resume.json", resume_skill_id="resume.skill.json"
             )
+
+
+class TestNoOutputSchema:
+    """Pins the half of Change A that is easy to lose in a later refactor:
+    the payload stays single-looking in a test that only checks
+    `structured_content`, so the schema itself needs its own assertion."""
+
+    def test_retrieve_resume_data_advertises_no_output_schema(self):
+        assert FunctionTool.from_function(retrieve_resume_data).output_schema is None
+
+    def test_list_resume_documents_advertises_no_output_schema(self):
+        assert FunctionTool.from_function(list_resume_documents).output_schema is None
+
+
+class TestSlimming:
+    """Change B: `retrieve_resume_data` drops defaults on read via
+    `ResumeTools.slim`."""
+
+    async def _load(self, admin, name: str) -> Document:
+        async with DatabaseService.session() as db:
+            document = await DocumentReader(db, admin.user_id).latest(name)
+        assert document is not None
+        return document
+
+    async def test_slimmed_resume_round_trips(self, admin, stored_resume):
+        document = await self._load(admin, "resume.json")
+        ResumePrivate.model_validate(ResumeTools.slim(document))
+
+    async def test_slimmed_metadata_round_trips(self, admin, stored_metadata):
+        document = await self._load(admin, "resume.metadata.json")
+        ResumeMetadata.model_validate(ResumeTools.slim(document))
+
+    async def test_slimmed_skill_round_trips(self, admin, stored_skill):
+        document = await self._load(admin, "resume.skill.json")
+        ResumeSkill.model_validate(ResumeTools.slim(document))
+
+    async def test_publish_false_survives_slimming_but_true_does_not(
+        self, client, admin, withheld_resume_payload
+    ):
+        """The withheld entry is the one case where the key carries
+        information — the default (published) case drops it entirely."""
+        response = await client.post(
+            "/documents/resume",
+            headers=admin.headers,
+            json={
+                "name": "resume.json",
+                "revision_note": "v",
+                "data": withheld_resume_payload,
+            },
+        )
+        assert response.status_code == 200, response.text
+        document = await self._load(admin, "resume.json")
+        published_job, withheld_job = ResumeTools.slim(document)["jobs"]
+        assert "publish" not in published_job
+        assert withheld_job["publish"] is False
+
+    async def test_a_document_that_no_longer_validates_still_retrieves(self, admin):
+        """A document written under a since-tightened schema — here, missing
+        every field `ResumePrivate` requires — must still come back as
+        stored, not 500 on read."""
+        raw = {"not": "a valid resume"}
+        async with DatabaseService.session() as db:
+            db.add(
+                Document(
+                    created_by=admin.user_id,
+                    name="resume.json",
+                    revision_id=1,
+                    type=DocumentType.RESUME.value,
+                    data=raw,
+                )
+            )
+            await db.commit()
+        document = await self._load(admin, "resume.json")
+        assert ResumeTools.slim(document) == raw

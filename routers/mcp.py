@@ -1,9 +1,14 @@
+import json
+
 from fastmcp.exceptions import ToolError
 from fastmcp.server.auth import AuthCheck, require_scopes
 from fastmcp.server.dependencies import get_access_token
-from fastmcp.tools import tool
+from fastmcp.tools import ToolResult, tool
 from fastmcp.utilities.authorization import AuthContext
+from mcp.types import TextContent
+from pydantic import ValidationError
 
+from persistence.document import Document
 from services.auth.scopes import ScopeResolver, Scopes
 from services.database.database_service import DatabaseService
 from services.document.document_reader import DocumentReader
@@ -18,6 +23,19 @@ class ResumeTools:
     would never be found. The two module-level functions below are the
     required exception to the "no free-standing functions" rule: one-line
     adapters that delegate straight to this class.
+
+    Both adapters declare `output_schema=None` and return `ToolResult`
+    directly. Left to itself, FastMCP derives an output schema from a `dict`
+    return annotation and then serializes the payload twice — once as a text
+    content block, once as `structuredContent` — which doubles every token
+    this tool costs a client. `output_schema=None` alone does not stop this;
+    a `dict` result still gets a structured mirror regardless of the schema.
+    Only a `ToolResult` carrying nothing but `content` is passed through
+    untouched. Dropping the structured mirror rather than the text block is
+    the safer direction: every client understands a text block, and
+    `structuredContent` is optional in the spec. If a client turns out to
+    need structured content, the revert is to drop `output_schema=None` and
+    return the bare dict again.
     """
 
     @staticmethod
@@ -62,6 +80,36 @@ class ResumeTools:
             )
 
         return check
+
+    @staticmethod
+    def as_result(payload: dict) -> ToolResult:
+        """One text block, no structured mirror — see the class docstring."""
+        return ToolResult(
+            content=[
+                TextContent(
+                    type="text", text=json.dumps(payload, separators=(",", ":"))
+                )
+            ]
+        )
+
+    @classmethod
+    def slim(cls, document: Document) -> dict:
+        """Defaults dropped, or the stored payload untouched if it no longer
+        validates — a document written under an older schema must still
+        retrieve. The only place in the codebase where a document is
+        deliberately served without validating.
+
+        Read time only: `Document.upsert_document` dedups a write on
+        `existing.data == document.data`, so slimming what gets written
+        instead of what gets read would change revision identity.
+        """
+        model = DocumentTypeRegistry.MODELS_BY_TYPE.get(DocumentType(document.type))
+        if model is None:
+            return document.data
+        try:
+            return model.model_validate(document.data).model_dump(exclude_defaults=True)
+        except ValidationError:
+            return document.data
 
     @classmethod
     async def list_resume_documents(cls) -> dict:
@@ -119,15 +167,18 @@ class ResumeTools:
         # A missing companion is reported as null so the client can say what
         # it is working without, rather than failing the whole retrieval.
         return {
-            "resume": resume.data,
-            "resume_metadata": metadata.data if metadata else None,
-            "resume_skill": skill.data if skill else None,
+            "resume": cls.slim(resume),
+            "resume_metadata": cls.slim(metadata) if metadata else None,
+            "resume_skill": cls.slim(skill) if skill else None,
         }
 
 
 # Free-standing by necessity, not by choice — see ResumeTools' docstring.
-@tool(auth=ResumeTools.require_any_scope(*DocumentTypeRegistry.READ_SCOPES))
-async def list_resume_documents() -> dict:
+@tool(
+    auth=ResumeTools.require_any_scope(*DocumentTypeRegistry.READ_SCOPES),
+    output_schema=None,
+)
+async def list_resume_documents() -> ToolResult:
     """Lists the caller's own documents: a directory, not a read.
 
     Each entry is the latest revision of one document — name, type, whether
@@ -141,15 +192,15 @@ async def list_resume_documents() -> dict:
     the identifier is (owner, name), and the owner is implied by the
     credential, so the name uniquely identifies a document to its owner.
     """
-    return await ResumeTools.list_resume_documents()
+    return ResumeTools.as_result(await ResumeTools.list_resume_documents())
 
 
-@tool(auth=require_scopes(Scopes.RESUME_READ))
+@tool(auth=require_scopes(Scopes.RESUME_READ), output_schema=None)
 async def retrieve_resume_data(
     resume_id: str,
     resume_metadata_id: str | None = None,
     resume_skill_id: str | None = None,
-) -> dict:
+) -> ToolResult:
     """Retrieves the resume, its field-level metadata, and the tailoring
     instructions, in json format. Call `list_resume_documents` first to find
     the ids to pass here.
@@ -164,6 +215,8 @@ async def retrieve_resume_data(
     read is refused rather than answered with null: null means "not stored",
     and a client told that would go on to work without a document that exists.
     """
-    return await ResumeTools.retrieve_resume_data(
-        resume_id, resume_metadata_id, resume_skill_id
+    return ResumeTools.as_result(
+        await ResumeTools.retrieve_resume_data(
+            resume_id, resume_metadata_id, resume_skill_id
+        )
     )

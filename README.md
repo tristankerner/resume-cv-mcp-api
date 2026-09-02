@@ -24,6 +24,13 @@ stale resume, or the reverse. Only the resume is required; a companion that is
 not stored comes back as `null` rather than failing the retrieval, so the
 client can say what it is working without.
 
+Both MCP tools return a single text content block by design, with no
+`structuredContent` mirror, to keep the token cost of a call to half of what a
+duplicated payload would otherwise cost. Each document also has its defaults
+dropped on the way out, so an absent field means "the schema's default", not
+"unset" — worth knowing if you write a client against the payload rather than
+against the schema served at `GET /documents/schemas`.
+
 Keeping the instructions in a document rather than in the client's skill file is
 the point of the third type: editing them is a document write, and the next run
 picks them up without a skill release. It also keeps them in one place when more

@@ -1,6 +1,8 @@
 from enum import StrEnum
 from typing import Any, ClassVar, NamedTuple
 
+from pydantic import BaseModel
+
 from services.auth.scopes import Scopes
 from services.document.dtos.resume_object import ResumeMetadata, ResumePrivate
 from services.document.dtos.resume_skill import ResumeSkill
@@ -47,14 +49,22 @@ class DocumentTypeRegistry:
         scopes.read for scopes in SCOPES_BY_TYPE.values()
     )
 
+    # The single place a document type is turned into the model its payload
+    # validates against — read-time slimming (ResumeTools.slim) and the
+    # schemas below both derive from this rather than repeating the mapping.
+    MODELS_BY_TYPE: ClassVar[dict[DocumentType, type[BaseModel]]] = {
+        DocumentType.RESUME: ResumePrivate,
+        DocumentType.METADATA: ResumeMetadata,
+        DocumentType.SKILL: ResumeSkill,
+    }
+
     # Computed once at import: model_json_schema() is not cheap and these never
     # change at runtime. extra="forbid" on each model is what gives every
     # schema here additionalProperties: false, so an editor validating against
     # one flags an unknown field the same way the server would.
     SCHEMAS_BY_TYPE: ClassVar[dict[DocumentType, dict[str, Any]]] = {
-        DocumentType.RESUME: ResumePrivate.model_json_schema(),
-        DocumentType.METADATA: ResumeMetadata.model_json_schema(),
-        DocumentType.SKILL: ResumeSkill.model_json_schema(),
+        doc_type: model.model_json_schema()
+        for doc_type, model in MODELS_BY_TYPE.items()
     }
 
     @classmethod
