@@ -12,6 +12,7 @@ from persistence import (  # noqa: F401
     api_key,
     auth_failure,
     document,
+    document_schema,
     mfa_backup_code,
     mfa_credential,
     oauth_authorization_code,

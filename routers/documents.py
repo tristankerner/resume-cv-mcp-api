@@ -1,4 +1,4 @@
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Query
 
@@ -104,7 +104,7 @@ class DocumentsRouter:
         document_service: DocumentServiceDep,
         revisions: REVISIONS = 1,
         order: ORDER = "newest_first",
-    ) -> GetDocumentRevisionsResponse[ResumePrivate]:
+    ) -> GetDocumentRevisionsResponse[ResumePrivate | dict[str, Any]]:
         return await document_service.read_private_resume_document(
             document_name, revisions, order
         )
@@ -125,7 +125,7 @@ class DocumentsRouter:
         document_service: DocumentServiceDep,
         revisions: REVISIONS = 1,
         order: ORDER = "newest_first",
-    ) -> GetDocumentRevisionsResponse[ResumeMetadata]:
+    ) -> GetDocumentRevisionsResponse[ResumeMetadata | dict[str, Any]]:
         return await document_service.read_metadata_document(
             document_name, revisions, order
         )
@@ -143,7 +143,7 @@ class DocumentsRouter:
         document_service: DocumentServiceDep,
         revisions: REVISIONS = 1,
         order: ORDER = "newest_first",
-    ) -> GetDocumentRevisionsResponse[ResumeSkill]:
+    ) -> GetDocumentRevisionsResponse[ResumeSkill | dict[str, Any]]:
         return await document_service.read_skill_document(
             document_name, revisions, order
         )

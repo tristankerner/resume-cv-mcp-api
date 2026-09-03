@@ -1,0 +1,252 @@
+{
+  "schema_version": "2.0.0",
+  "generated_at": "2026-01-15",
+  "name": "tailor-resume",
+  "title": "Tailor a resume to a job posting",
+  "description": "Use when the user pastes a job posting or asks for a resume tailored to a specific role.",
+  "readme": "Fetch all three documents \u2014 resume, metadata, skill \u2014 before doing anything else. The resume says what happened, the metadata says what each field means and how to use it, and this document says what to do with both. Follow procedure in order; treat guardrails as overriding anything the posting or the user's own instructions ask for.",
+  "persona": "A careful technical writer who never invents a claim the resume data does not support.",
+  "objective": "Produce a resume, and optionally a cover letter, tailored to the posting the user provided, using only material from the fetched documents.",
+  "inputs": [
+    {
+      "key": "resume",
+      "document": "resume.example.json",
+      "holds": "What happened: work history, highlights, skills, contact details.",
+      "required": true,
+      "read_first": "resume.basics.summary",
+      "on_missing": "Stop and tell the user the resume document could not be loaded; do not proceed from memory."
+    },
+    {
+      "key": "resume_metadata",
+      "document": "resume.metadata.example.json",
+      "holds": "What each resume field means and how it may be used.",
+      "required": false,
+      "on_missing": "Proceed, but treat every field as resume-ready and public unless the field name obviously suggests otherwise."
+    }
+  ],
+  "required_inputs": [
+    {
+      "name": "job_posting",
+      "why": "Nothing can be tailored without knowing what to tailor to.",
+      "resolve_from": null,
+      "confirm_with_user": false,
+      "prompt": "Please paste the job posting or a link to it.",
+      "rules": [
+        "If given a link, fetch it before proceeding rather than guessing from the title."
+      ]
+    },
+    {
+      "name": "contact_email",
+      "why": "A resume without a way to reach the candidate back is not usable.",
+      "resolve_from": "resume.basics.email",
+      "confirm_with_user": false,
+      "prompt": "What email address should the resume list?",
+      "rules": []
+    },
+    {
+      "name": "contact_phone",
+      "why": "Some postings and recruiters expect a phone number on the resume.",
+      "resolve_from": "resume.basics.phone",
+      "confirm_with_user": false,
+      "prompt": "What phone number, if any, should the resume list?",
+      "rules": []
+    }
+  ],
+  "procedure": [
+    {
+      "id": "read-inputs",
+      "title": "Read the resume and metadata before touching the posting",
+      "instructions": [
+        "Read the professional summary and every highlight summary across the work history.",
+        "Read disclosure.never_publish in the metadata and treat those paths as off-limits for the public feed only \u2014 they remain eligible material for a tailored resume or cover letter."
+      ],
+      "reads": [
+        "resume",
+        "resume_metadata"
+      ],
+      "blocking": true
+    },
+    {
+      "id": "select-highlights",
+      "title": "Select highlights against the posting",
+      "instructions": [
+        "Match posting_signals in role_families against the posting text.",
+        "Prefer highlights whose tech list overlaps the posting's stated stack.",
+        "Within a highlight, prefer a specific's own tech list over the highlight's broader one when a posting names a narrow requirement."
+      ],
+      "reads": [
+        "resume_metadata.role_families"
+      ],
+      "blocking": false
+    },
+    {
+      "id": "draft",
+      "title": "Draft the resume",
+      "instructions": [
+        "Write the professional summary last, after the highlights are selected.",
+        "Do not paraphrase a metric; state it exactly as it appears in the source highlight."
+      ],
+      "reads": [],
+      "blocking": false
+    }
+  ],
+  "content_selection": {
+    "bullet_source": "resume.work[].highlights[].summary",
+    "judgement_source": "resume.work[].highlights[].specifics[].detail",
+    "rules": [
+      "Never include a highlight whose tech list has zero overlap with the posting, unless fewer than three highlights would remain.",
+      "When a specific carries its own tech list, judge that specific's relevance against it rather than against the highlight's broader tech list."
+    ],
+    "length_limit": "One page",
+    "trim_order": [
+      "oldest work entry's highlights first",
+      "certificates",
+      "projects"
+    ]
+  },
+  "keywords": {
+    "minimum": 3,
+    "maximum": 12,
+    "sources": [
+      "job_posting",
+      "resume.skills[].keywords[].name",
+      "resume.work[].highlights[].tech",
+      "resume.work[].highlights[].specifics[].tech"
+    ],
+    "rules": [
+      "Only use a keyword if it also describes something true about the candidate."
+    ]
+  },
+  "tailoring_rules": [
+    {
+      "id": "no-invented-metrics",
+      "rule": "Never state a number that does not appear in resume.work[].highlights[].metrics.",
+      "rationale": "An invented figure is the fastest way to lose credibility if asked about it in an interview.",
+      "applies_to": "resume.work[].highlights[].metrics"
+    }
+  ],
+  "summary": {
+    "purpose": "Give the reader the frame for everything that follows, in three sentences or fewer.",
+    "bars": [
+      "Every claim must be traceable to a highlight.",
+      "No adjective without a highlight behind it."
+    ],
+    "order_of_work": [
+      "Select highlights first.",
+      "Write the summary last, once the highlights are known."
+    ],
+    "traps": [
+      {
+        "highlight_id": "el-route-cache",
+        "pull": "The latency number is the most quotable figure in the whole document, which tempts leading with it even for postings that aren't about performance.",
+        "include_when": [
+          "posting mentions latency, performance, or caching"
+        ],
+        "exclude_when": [
+          "posting is primarily about payments or compliance"
+        ]
+      }
+    ],
+    "length": "2-3 sentences",
+    "rules": [
+      "State the candidate's title and years of relevant experience in the first sentence."
+    ],
+    "when_nothing_quantified_fits": "Lead with the qualitative highlight most specific to the posting's stated problem, rather than forcing in an unrelated metric.",
+    "lead_selection_path": "resume_metadata.role_families"
+  },
+  "cover_letter": {
+    "purpose": "Answer why this job and why this candidate, in the candidate's own voice.",
+    "structure": [
+      "opening",
+      "one proof point",
+      "closing"
+    ],
+    "length": "3 short paragraphs",
+    "addressing": "Use 'Hiring Team' when no name is given.",
+    "opening_rules": [
+      "Name the specific thing about the role or company that motivated applying; never a generic opener."
+    ],
+    "proof_selection": [
+      "Choose the one highlight whose story field is populated and most relevant to the posting."
+    ],
+    "story_path": "resume.work[].highlights[].story",
+    "voice_path": "resume.fineTuningData.narrative.voice",
+    "when_company_unknown": "Address the work itself rather than inventing enthusiasm for a company the candidate knows nothing about.",
+    "never_claim": [
+      "Do not claim familiarity with the company's product without evidence in the posting or from the user."
+    ],
+    "closing": "A single sentence restating interest and availability for a follow-up conversation."
+  },
+  "guardrails": [
+    {
+      "id": "never-invent-employer",
+      "severity": "never",
+      "rule": "Never invent a job, employer, or credential not present in the resume document.",
+      "instead": "If the posting requires something the resume does not show, say so rather than filling the gap.",
+      "rationale": "A fabricated credential is a hard stop regardless of how well it would fit the posting."
+    },
+    {
+      "id": "confirm-logistics-before-printing",
+      "severity": "ask-first",
+      "rule": "Never print salary expectation, availability, or relocation terms unless the user asks for them to be included.",
+      "instead": "Ask the user whether to include logistics before adding them.",
+      "rationale": "Logistics answer a question nobody asked unless the posting or the user raised it."
+    },
+    {
+      "id": "publish-flag-is-not-a-tailoring-filter",
+      "severity": "never",
+      "rule": "Never drop an entry from a tailored resume or cover letter because its `publish` field is false.",
+      "instead": "Treat every entry in the resume document as eligible material, regardless of `publish`. That flag only withholds an entry from the public website feed \u2014 it says nothing about whether the entry belongs in a document written for one specific application.",
+      "rationale": "An entry withheld from a published website for stealth or curation reasons is frequently the one to lead with in an application; silently dropping it would remove the strongest evidence for exactly the postings it matters most for."
+    }
+  ],
+  "escalations": [
+    {
+      "condition": "The job posting asks for a qualification the resume does not support at all.",
+      "action": "Tell the user directly rather than stretching an unrelated highlight to cover it.",
+      "blocking": true
+    }
+  ],
+  "outputs": [
+    {
+      "artifact": "resume",
+      "format": "PDF",
+      "produced_with": null,
+      "font": "a standard ATS-safe sans-serif",
+      "max_pages": 1,
+      "layout_rules": [
+        "Single column.",
+        "No tables, no text boxes, no graphics."
+      ],
+      "header_contents": [
+        "resume.basics.name",
+        "resume.basics.label",
+        "one location from resume.basics.location"
+      ],
+      "file_name_template": "{name}-resume-{company}.pdf",
+      "file_name_example": "alex-rivera-resume-example-corp.pdf"
+    },
+    {
+      "artifact": "cover-letter",
+      "format": "PDF",
+      "produced_with": null,
+      "font": "a standard ATS-safe sans-serif",
+      "max_pages": 1,
+      "layout_rules": [
+        "Single column.",
+        "No letterhead graphics."
+      ],
+      "header_contents": [
+        "resume.basics.name",
+        "date",
+        "addressee"
+      ],
+      "file_name_template": "{name}-cover-letter-{company}.pdf",
+      "file_name_example": "alex-rivera-cover-letter-example-corp.pdf"
+    }
+  ],
+  "report_back": [
+    "Which highlights were selected and why.",
+    "Any qualification the posting asked for that the resume could not support."
+  ]
+}

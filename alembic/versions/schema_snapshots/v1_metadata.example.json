@@ -1,0 +1,149 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-01-15",
+  "describes": "ResumePrivate",
+  "readme": "This document explains what each field of the resume payload means, which parts are ready to paste into a finished resume as-is, and which are background material only. Read this before reading the resume itself. Nothing here restates resume content \u2014 where a rule needs to name a piece of the payload it carries a path instead, e.g. resume.jobs[].highlights[].summary.",
+  "public_feed_url": "https://example.com/public/alex/resume/resume.json",
+  "schema_url": null,
+  "disclosure": {
+    "never_publish": [
+      "resume.contact.email_address",
+      "resume.contact.mobile_number",
+      "resume.fine_tuning_data"
+    ],
+    "rationale": "These fields exist for tailoring and outreach, not for a public feed. The public projection redacts them structurally, but a document generated from this data should never include them either.",
+    "rules": [
+      "Never print an email address or phone number in a generated document unless the user explicitly asks for one to be included.",
+      "An entry with `publish: false` is withheld from the public website feed only. It is not a signal to omit that entry from a tailored resume or cover letter \u2014 treat every entry in this document as eligible material regardless of its `publish` value."
+    ]
+  },
+  "joins": [
+    {
+      "name": "highlight-to-lead-selection",
+      "key": "id",
+      "left": "resume.jobs[].highlights[]",
+      "right": "role_families[].lead_highlight_ids",
+      "description": "A role family names highlights to lead with by id; join on that id to find the actual highlight content.",
+      "on_unmatched_left": "A highlight with no role family referencing it is still eligible \u2014 role families are a starting point, not a filter.",
+      "on_unmatched_right": "An id in lead_highlight_ids with no matching highlight is a data error \u2014 stop and say so rather than guessing which highlight was meant.",
+      "failure_mode": "Matching on summary text instead of id silently pairs the wrong highlight after any wording edit."
+    }
+  ],
+  "sections": [
+    {
+      "path": "resume.summary",
+      "title": "Professional summary",
+      "description": "A short paragraph introducing the candidate.",
+      "purpose": "The one part of the document every reader finishes; sets the frame for everything after it.",
+      "ordering": null,
+      "selection": [],
+      "fields": [
+        {
+          "path": "resume.summary",
+          "type": "string",
+          "description": "Free-text summary, rewritten per posting.",
+          "use": "compress",
+          "visibility": "public",
+          "required": true,
+          "format": null,
+          "rules": [
+            "Keep to three sentences or fewer."
+          ],
+          "example": "Backend engineer with six years building API services."
+        }
+      ]
+    },
+    {
+      "path": "resume.jobs[].highlights[]",
+      "title": "Highlights",
+      "description": "Per-job accomplishment bullets.",
+      "purpose": "The evidence a tailored resume selects from.",
+      "ordering": "Most relevant to the target posting first, not chronological.",
+      "selection": [
+        "Prefer highlights whose tech list overlaps the posting's stack."
+      ],
+      "fields": [
+        {
+          "path": "resume.jobs[].highlights[].summary",
+          "type": "string",
+          "description": "The bullet's headline claim.",
+          "use": "resume-ready",
+          "visibility": "public",
+          "required": true,
+          "rules": [],
+          "example": "Cut route-recalculation latency by adding a bounded cache."
+        },
+        {
+          "path": "resume.jobs[].highlights[].story",
+          "type": "string | null",
+          "description": "First-person material for a cover letter only.",
+          "use": "internal",
+          "visibility": "private",
+          "required": false,
+          "rules": [
+            "Never appears on a resume, only in a cover letter, and only when it fits the posting."
+          ]
+        },
+        {
+          "path": "resume.jobs[].highlights[].publish",
+          "type": "boolean",
+          "description": "Withholds this one highlight from the public website feed only. The same flag, with the same meaning, exists at every withholdable level of the resume \u2014 jobs, skill groups, skills, certifications, education, personal projects, locations and links. It has no bearing on a tailored resume or cover letter: an entry withheld from a published website is often exactly the one to lead with in an application.",
+          "use": "internal",
+          "visibility": "private",
+          "required": false,
+          "rules": [
+            "Never treat `publish: false` as an instruction to omit the entry from a tailored resume or cover letter \u2014 it governs the public website feed only, not what Claude may draw on."
+          ]
+        }
+      ]
+    }
+  ],
+  "vocabularies": [
+    {
+      "path": "resume.jobs[].role_location",
+      "terms": [
+        {
+          "value": "On-site",
+          "meaning": "Physically present, no remote allowance."
+        },
+        {
+          "value": "Hybrid",
+          "meaning": "Mix of on-site and remote days."
+        },
+        {
+          "value": "Remote",
+          "meaning": "No regular on-site expectation."
+        }
+      ]
+    }
+  ],
+  "figures": {
+    "figure_path": "resume.jobs[].highlights[].metrics[].figure",
+    "amount_path": "resume.jobs[].highlights[].metrics[].amount",
+    "basis_path": "resume.jobs[].highlights[].metrics[].basis",
+    "already_in_prose": [],
+    "rules": [
+      "Never state a figure without its basis available to cite if asked.",
+      "Round to the precision the basis actually supports; do not add false precision."
+    ]
+  },
+  "role_families": [
+    {
+      "role_family": "backend-reliability",
+      "posting_signals": [
+        "on-call",
+        "reliability",
+        "payments",
+        "idempotency"
+      ],
+      "lead_highlight_ids": [
+        "fpc-idempotency-rework"
+      ],
+      "note": "Lead with the payments idempotency work for anything mentioning reliability or on-call ownership."
+    }
+  ],
+  "cautions": [
+    "The two employers in this example are fictional; do not treat their names as real companies when reasoning about the data.",
+    "fine_tuning_data.logistics is background for judgement only \u2014 never print a salary expectation unless the user asks for one to be included."
+  ]
+}

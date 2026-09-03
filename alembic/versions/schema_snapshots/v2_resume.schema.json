@@ -1,0 +1,1779 @@
+{
+  "$defs": {
+    "Award": {
+      "additionalProperties": false,
+      "properties": {
+        "publish": {
+          "default": true,
+          "description": "False withholds this entry from the public feed only. It has no bearing on a tailored resume or cover letter: an entry withheld from a published website is often exactly the one to lead with in an application. Absent means published.",
+          "title": "Publish",
+          "type": "boolean"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "date": {
+          "anyOf": [
+            {
+              "pattern": "^([1-2][0-9]{3}-[0-1][0-9]-[0-3][0-9]|[1-2][0-9]{3}-[0-1][0-9]|[1-2][0-9]{3})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Date"
+        },
+        "awarder": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Awarder"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "title": "Award",
+      "type": "object"
+    },
+    "Basics": {
+      "additionalProperties": false,
+      "description": "Identity, contact details, and the summary that opens the document.\n\n`email` and `phone` are official fields held back from the public feed, the\none place where this document diverges from the schema's intent rather than\nits shape. They are in the payload because a tailored resume is worthless\nwithout them and because the MCP client should not have to ask; they are out\nof the feed because a scraped address is a permanent cost. See\n`PublicProjection.NEVER_PUBLISHED`.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "image": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image"
+        },
+        "email": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Email"
+        },
+        "phone": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Phone"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary"
+        },
+        "location": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Location"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "profiles": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Profile"
+          },
+          "title": "Profiles",
+          "type": "array"
+        },
+        "tagline": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tagline"
+        },
+        "additionalLocations": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Location"
+          },
+          "title": "Additionallocations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Basics",
+      "type": "object"
+    },
+    "Certificate": {
+      "additionalProperties": false,
+      "description": "`identifier` is the issuer's credential number, absent where unnumbered.",
+      "properties": {
+        "publish": {
+          "default": true,
+          "description": "False withholds this entry from the public feed only. It has no bearing on a tailored resume or cover letter: an entry withheld from a published website is often exactly the one to lead with in an application. Absent means published.",
+          "title": "Publish",
+          "type": "boolean"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "date": {
+          "anyOf": [
+            {
+              "pattern": "^([1-2][0-9]{3}-[0-1][0-9]-[0-3][0-9]|[1-2][0-9]{3}-[0-1][0-9]|[1-2][0-9]{3})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Date"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        },
+        "issuer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Issuer"
+        },
+        "identifier": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Identifier"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Certificate",
+      "type": "object"
+    },
+    "Education": {
+      "additionalProperties": false,
+      "description": "`study_type` is the credential (\"B.S.\"), `area` the field it was in.",
+      "properties": {
+        "publish": {
+          "default": true,
+          "description": "False withholds this entry from the public feed only. It has no bearing on a tailored resume or cover letter: an entry withheld from a published website is often exactly the one to lead with in an application. Absent means published.",
+          "title": "Publish",
+          "type": "boolean"
+        },
+        "institution": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Institution"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        },
+        "area": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Area"
+        },
+        "studyType": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Studytype"
+        },
+        "startDate": {
+          "anyOf": [
+            {
+              "pattern": "^([1-2][0-9]{3}-[0-1][0-9]-[0-3][0-9]|[1-2][0-9]{3}-[0-1][0-9]|[1-2][0-9]{3})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Startdate"
+        },
+        "endDate": {
+          "anyOf": [
+            {
+              "pattern": "^([1-2][0-9]{3}-[0-1][0-9]-[0-3][0-9]|[1-2][0-9]{3}-[0-1][0-9]|[1-2][0-9]{3})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enddate"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        },
+        "courses": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Courses",
+          "type": "array"
+        },
+        "location": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Location"
+        }
+      },
+      "title": "Education",
+      "type": "object"
+    },
+    "FineTuningData": {
+      "additionalProperties": false,
+      "description": "Private material the resume carries for a tailoring run.\n\nA top-level section rather than a corner of `basics`, because none of it is\nresume content: it is what shapes the selection and the wording, and it is\nnever rendered. It holds no contact details \u2014 those are official fields of\n`basics` now, and the MCP client reads the whole private document, so\nrestating them here would only create a second copy to keep in step.\n\nThe rules for a tailoring run live in `ResumeSkill`, not here. What belongs\nhere is what is about *this person* rather than about the procedure.",
+      "properties": {
+        "narrative": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Narrative"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "logistics": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Logistics"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "FineTuningData",
+      "type": "object"
+    },
+    "Highlight": {
+      "additionalProperties": false,
+      "description": "One accomplishment. A string officially; an object here.\n\nThe schema's `highlights[]` is a list of finished bullets. This is the\nmaterial a bullet is written from: `summary` is the bullet itself, and the\nrest is what tailoring needs to decide whether the bullet belongs in *this*\ndocument and how to word it for *this* posting.",
+      "properties": {
+        "publish": {
+          "default": true,
+          "description": "False withholds this entry from the public feed only. It has no bearing on a tailored resume or cover letter: an entry withheld from a published website is often exactly the one to lead with in an application. Absent means published.",
+          "title": "Publish",
+          "type": "boolean"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        },
+        "specifics": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Specific"
+          },
+          "title": "Specifics",
+          "type": "array"
+        },
+        "tech": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Tech",
+          "type": "array"
+        },
+        "metrics": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Metric"
+          },
+          "title": "Metrics",
+          "type": "array"
+        },
+        "story": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Story"
+        }
+      },
+      "required": [
+        "id",
+        "summary"
+      ],
+      "title": "Highlight",
+      "type": "object"
+    },
+    "Interest": {
+      "additionalProperties": false,
+      "properties": {
+        "publish": {
+          "default": true,
+          "description": "False withholds this entry from the public feed only. It has no bearing on a tailored resume or cover letter: an entry withheld from a published website is often exactly the one to lead with in an application. Absent means published.",
+          "title": "Publish",
+          "type": "boolean"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "keywords": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Keywords",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Interest",
+      "type": "object"
+    },
+    "Keyword": {
+      "additionalProperties": false,
+      "description": "A single skill. A string officially; an object here.\n\n`level` and `last_used` are a candid self-assessment of an inventory the\nwebsite publishes in full, which is why they are withheld: a public\n`familiar` beside a stale `last_used` reads as a disclaimer attached to\none's own skill list. Tailoring needs both \u2014 they are what decides whether a\nskill is worth claiming against a given posting.",
+      "properties": {
+        "publish": {
+          "default": true,
+          "description": "False withholds this entry from the public feed only. It has no bearing on a tailored resume or cover letter: an entry withheld from a published website is often exactly the one to lead with in an application. Absent means published.",
+          "title": "Publish",
+          "type": "boolean"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        },
+        "level": {
+          "anyOf": [
+            {
+              "enum": [
+                "expert",
+                "working",
+                "familiar"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Level"
+        },
+        "lastUsed": {
+          "anyOf": [
+            {
+              "pattern": "^([1-2][0-9]{3}-[0-1][0-9]-[0-3][0-9]|[1-2][0-9]{3}-[0-1][0-9]|[1-2][0-9]{3})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lastused"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Keyword",
+      "type": "object"
+    },
+    "Language": {
+      "additionalProperties": false,
+      "properties": {
+        "publish": {
+          "default": true,
+          "description": "False withholds this entry from the public feed only. It has no bearing on a tailored resume or cover letter: an entry withheld from a published website is often exactly the one to lead with in an application. Absent means published.",
+          "title": "Publish",
+          "type": "boolean"
+        },
+        "language": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Language"
+        },
+        "fluency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fluency"
+        }
+      },
+      "title": "Language",
+      "type": "object"
+    },
+    "Location": {
+      "additionalProperties": false,
+      "description": "The official location object, plus the three fields a header needs.\n\nOfficially this is a postal address. Ours is closer to a line of type: a\nrendered `label` (\"Austin, TX\", \"Remote (US)\"), what `kind` of claim it\nmakes, and a `note` qualifying it. Both live here because they describe one\nplace; splitting them would put \"Austin\" in two fields that must agree.",
+      "properties": {
+        "publish": {
+          "default": true,
+          "description": "False withholds this entry from the public feed only. It has no bearing on a tailored resume or cover letter: an entry withheld from a published website is often exactly the one to lead with in an application. Absent means published.",
+          "title": "Publish",
+          "type": "boolean"
+        },
+        "address": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Address"
+        },
+        "postalCode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Postalcode"
+        },
+        "city": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "City"
+        },
+        "countryCode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Countrycode"
+        },
+        "region": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Region"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "enum": [
+                "residence",
+                "metro",
+                "remote"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kind"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        }
+      },
+      "title": "Location",
+      "type": "object"
+    },
+    "Logistics": {
+      "additionalProperties": false,
+      "description": "The terms of employment an application asks about.\n\nHeld here rather than left to be asked each run: they change rarely, they\nare needed for judgement on nearly every posting, and the alternative is\nClaude guessing or interrupting. None of it is printed without being asked\nfor \u2014 a resume that volunteers a salary expectation has answered a question\nnobody asked.",
+      "properties": {
+        "workAuthorization": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workauthorization"
+        },
+        "salaryExpectation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Salaryexpectation"
+        },
+        "availability": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Availability"
+        },
+        "relocation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Relocation"
+        },
+        "onSite": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Onsite"
+        }
+      },
+      "title": "Logistics",
+      "type": "object"
+    },
+    "Meta": {
+      "additionalProperties": false,
+      "properties": {
+        "canonical": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Canonical"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        },
+        "lastModified": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lastmodified"
+        },
+        "theme": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Theme"
+        }
+      },
+      "title": "Meta",
+      "type": "object"
+    },
+    "Metric": {
+      "additionalProperties": false,
+      "description": "A quantified outcome, kept in three parts so it cannot be misquoted.\n\n`figure` is what was measured, `amount` is the number, `basis` is where the\nnumber came from. A claim printed without its basis is one a reader can\nchallenge and the candidate cannot defend.",
+      "properties": {
+        "figure": {
+          "title": "Figure",
+          "type": "string"
+        },
+        "amount": {
+          "title": "Amount",
+          "type": "string"
+        },
+        "basis": {
+          "title": "Basis",
+          "type": "string"
+        }
+      },
+      "required": [
+        "figure",
+        "amount",
+        "basis"
+      ],
+      "title": "Metric",
+      "type": "object"
+    },
+    "Narrative": {
+      "additionalProperties": false,
+      "properties": {
+        "careerArc": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Careerarc"
+        },
+        "currentStatus": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Currentstatus"
+        },
+        "motivation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Motivation"
+        },
+        "lookingFor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lookingfor"
+        },
+        "avoiding": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Avoiding"
+        },
+        "workingStyle": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workingstyle"
+        },
+        "strengths": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Strengths"
+        },
+        "voice": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Voice"
+        }
+      },
+      "title": "Narrative",
+      "type": "object"
+    },
+    "Profile": {
+      "additionalProperties": false,
+      "description": "A profile on a social or professional network.\n\nThis is the official `basics.profiles[]` entry, not the old top-level\n`Profile` \u2014 that one dissolved into `Basics` (`name`, `label`, `tagline`).\nOur `contact.links[]` land here: `label` was the network name all along.",
+      "properties": {
+        "publish": {
+          "default": true,
+          "description": "False withholds this entry from the public feed only. It has no bearing on a tailored resume or cover letter: an entry withheld from a published website is often exactly the one to lead with in an application. Absent means published.",
+          "title": "Publish",
+          "type": "boolean"
+        },
+        "network": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Network"
+        },
+        "username": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Username"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        }
+      },
+      "title": "Profile",
+      "type": "object"
+    },
+    "Project": {
+      "additionalProperties": false,
+      "properties": {
+        "publish": {
+          "default": true,
+          "description": "False withholds this entry from the public feed only. It has no bearing on a tailored resume or cover letter: an entry withheld from a published website is often exactly the one to lead with in an application. Absent means published.",
+          "title": "Publish",
+          "type": "boolean"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "highlights": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Highlights",
+          "type": "array"
+        },
+        "keywords": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Keywords",
+          "type": "array"
+        },
+        "startDate": {
+          "anyOf": [
+            {
+              "pattern": "^([1-2][0-9]{3}-[0-1][0-9]-[0-3][0-9]|[1-2][0-9]{3}-[0-1][0-9]|[1-2][0-9]{3})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Startdate"
+        },
+        "endDate": {
+          "anyOf": [
+            {
+              "pattern": "^([1-2][0-9]{3}-[0-1][0-9]-[0-3][0-9]|[1-2][0-9]{3}-[0-1][0-9]|[1-2][0-9]{3})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enddate"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        },
+        "roles": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Roles",
+          "type": "array"
+        },
+        "entity": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Entity"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Type"
+        }
+      },
+      "title": "Project",
+      "type": "object"
+    },
+    "Publication": {
+      "additionalProperties": false,
+      "properties": {
+        "publish": {
+          "default": true,
+          "description": "False withholds this entry from the public feed only. It has no bearing on a tailored resume or cover letter: an entry withheld from a published website is often exactly the one to lead with in an application. Absent means published.",
+          "title": "Publish",
+          "type": "boolean"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "publisher": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Publisher"
+        },
+        "releaseDate": {
+          "anyOf": [
+            {
+              "pattern": "^([1-2][0-9]{3}-[0-1][0-9]-[0-3][0-9]|[1-2][0-9]{3}-[0-1][0-9]|[1-2][0-9]{3})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Releasedate"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Publication",
+      "type": "object"
+    },
+    "Reference": {
+      "additionalProperties": false,
+      "properties": {
+        "publish": {
+          "default": true,
+          "description": "False withholds this entry from the public feed only. It has no bearing on a tailored resume or cover letter: an entry withheld from a published website is often exactly the one to lead with in an application. Absent means published.",
+          "title": "Publish",
+          "type": "boolean"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reference"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Reference",
+      "type": "object"
+    },
+    "Role": {
+      "additionalProperties": false,
+      "description": "One title within a single engagement, most-recent first.\n\nA promotion is one employment record with two titles, and `work[].position`\nholds only the latest. Losing the earlier ones loses the progression, which\non a resume is the point.",
+      "properties": {
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "startDate": {
+          "anyOf": [
+            {
+              "pattern": "^([1-2][0-9]{3}-[0-1][0-9]-[0-3][0-9]|[1-2][0-9]{3}-[0-1][0-9]|[1-2][0-9]{3})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Startdate"
+        },
+        "endDate": {
+          "anyOf": [
+            {
+              "pattern": "^([1-2][0-9]{3}-[0-1][0-9]-[0-3][0-9]|[1-2][0-9]{3}-[0-1][0-9]|[1-2][0-9]{3})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enddate"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "title": "Role",
+      "type": "object"
+    },
+    "Skill": {
+      "additionalProperties": false,
+      "description": "A named group of skills \u2014 the old `SkillGroup`, in its official slot.\n\nThe official `skills[]` entry is already a name with keywords under it,\nwhich is what a skill group is. `level` here is the group's overall level\nand is published; the per-keyword level is not.",
+      "properties": {
+        "publish": {
+          "default": true,
+          "description": "False withholds this entry from the public feed only. It has no bearing on a tailored resume or cover letter: an entry withheld from a published website is often exactly the one to lead with in an application. Absent means published.",
+          "title": "Publish",
+          "type": "boolean"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "level": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Level"
+        },
+        "keywords": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Keyword"
+          },
+          "title": "Keywords",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Skill",
+      "type": "object"
+    },
+    "Specific": {
+      "additionalProperties": false,
+      "description": "One piece of evidence under a highlight, and the tech that piece used.\n\n`tech` narrows `Highlight.tech` rather than replacing it. A highlight\ncovering a broad redesign names everything the redesign touched, which is\nthe wrong list to draw on when only one of its specifics is relevant to a\nposting. Absent means the specific claims no tech of its own and the\nhighlight's list stands for it; it is not a claim that no tech was used.",
+      "properties": {
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "tech": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Tech",
+          "type": "array"
+        }
+      },
+      "required": [
+        "detail"
+      ],
+      "title": "Specific",
+      "type": "object"
+    },
+    "ViaEmployer": {
+      "additionalProperties": false,
+      "description": "Agency-staffed window at the start of an engagement.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "startDate": {
+          "anyOf": [
+            {
+              "pattern": "^([1-2][0-9]{3}-[0-1][0-9]-[0-3][0-9]|[1-2][0-9]{3}-[0-1][0-9]|[1-2][0-9]{3})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Startdate"
+        },
+        "endDate": {
+          "anyOf": [
+            {
+              "pattern": "^([1-2][0-9]{3}-[0-1][0-9]-[0-3][0-9]|[1-2][0-9]{3}-[0-1][0-9]|[1-2][0-9]{3})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enddate"
+        },
+        "engagement": {
+          "anyOf": [
+            {
+              "enum": [
+                "contract-to-hire",
+                "contract"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Engagement"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "ViaEmployer",
+      "type": "object"
+    },
+    "Volunteer": {
+      "additionalProperties": false,
+      "properties": {
+        "publish": {
+          "default": true,
+          "description": "False withholds this entry from the public feed only. It has no bearing on a tailored resume or cover letter: an entry withheld from a published website is often exactly the one to lead with in an application. Absent means published.",
+          "title": "Publish",
+          "type": "boolean"
+        },
+        "organization": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Organization"
+        },
+        "position": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Position"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        },
+        "startDate": {
+          "anyOf": [
+            {
+              "pattern": "^([1-2][0-9]{3}-[0-1][0-9]-[0-3][0-9]|[1-2][0-9]{3}-[0-1][0-9]|[1-2][0-9]{3})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Startdate"
+        },
+        "endDate": {
+          "anyOf": [
+            {
+              "pattern": "^([1-2][0-9]{3}-[0-1][0-9]-[0-3][0-9]|[1-2][0-9]{3}-[0-1][0-9]|[1-2][0-9]{3})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enddate"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary"
+        },
+        "highlights": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Highlight"
+          },
+          "title": "Highlights",
+          "type": "array"
+        }
+      },
+      "title": "Volunteer",
+      "type": "object"
+    },
+    "Work": {
+      "additionalProperties": false,
+      "description": "One employment record. `name` is the company; `position` is the title.\n\n`position` restates `roles[0].title`. That is the one duplication in this\nfile that earns its keep: every theme reads `position`, and nothing outside\nthis project reads `roles`.",
+      "properties": {
+        "publish": {
+          "default": true,
+          "description": "False withholds this entry from the public feed only. It has no bearing on a tailored resume or cover letter: an entry withheld from a published website is often exactly the one to lead with in an application. Absent means published.",
+          "title": "Publish",
+          "type": "boolean"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "location": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Location"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "position": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Position"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Url"
+        },
+        "startDate": {
+          "anyOf": [
+            {
+              "pattern": "^([1-2][0-9]{3}-[0-1][0-9]-[0-3][0-9]|[1-2][0-9]{3}-[0-1][0-9]|[1-2][0-9]{3})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Startdate"
+        },
+        "endDate": {
+          "anyOf": [
+            {
+              "pattern": "^([1-2][0-9]{3}-[0-1][0-9]-[0-3][0-9]|[1-2][0-9]{3}-[0-1][0-9]|[1-2][0-9]{3})$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Enddate"
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Summary"
+        },
+        "highlights": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Highlight"
+          },
+          "title": "Highlights",
+          "type": "array"
+        },
+        "roles": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Role"
+          },
+          "title": "Roles",
+          "type": "array"
+        },
+        "roleLocation": {
+          "anyOf": [
+            {
+              "enum": [
+                "On-site",
+                "Hybrid",
+                "Remote"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rolelocation"
+        },
+        "viaEmployer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ViaEmployer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Work",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "A JSON Resume 1.0 document, extended with the private tailoring payload.\n\nOnly `basics` is required. The rest is optional because the schema treats it\nthat way, and it is right to: not everyone has awards, publications, or a\nvolunteering history, and an empty `awards: []` in a stored document is a\nsection that renders as a heading with nothing under it.",
+  "properties": {
+    "$schema": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "$Schema"
+    },
+    "basics": {
+      "$ref": "#/$defs/Basics"
+    },
+    "work": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Work"
+      },
+      "title": "Work",
+      "type": "array"
+    },
+    "volunteer": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Volunteer"
+      },
+      "title": "Volunteer",
+      "type": "array"
+    },
+    "education": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Education"
+      },
+      "title": "Education",
+      "type": "array"
+    },
+    "awards": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Award"
+      },
+      "title": "Awards",
+      "type": "array"
+    },
+    "certificates": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Certificate"
+      },
+      "title": "Certificates",
+      "type": "array"
+    },
+    "publications": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Publication"
+      },
+      "title": "Publications",
+      "type": "array"
+    },
+    "skills": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Skill"
+      },
+      "title": "Skills",
+      "type": "array"
+    },
+    "languages": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Language"
+      },
+      "title": "Languages",
+      "type": "array"
+    },
+    "interests": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Interest"
+      },
+      "title": "Interests",
+      "type": "array"
+    },
+    "references": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Reference"
+      },
+      "title": "References",
+      "type": "array"
+    },
+    "projects": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Project"
+      },
+      "title": "Projects",
+      "type": "array"
+    },
+    "meta": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Meta"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "fineTuningData": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FineTuningData"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "basics"
+  ],
+  "title": "ResumePrivate",
+  "type": "object"
+}

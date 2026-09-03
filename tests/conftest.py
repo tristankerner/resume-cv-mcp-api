@@ -122,12 +122,13 @@ def fresh_role_scope_cache():
 
 @pytest.fixture(autouse=True)
 async def clean_database(migrated_database):
-    """Empty every table between tests, except `role_scopes`.
+    """Empty every table between tests, except `role_scopes` and
+    `document_schema`.
 
-    `role_scopes` is reference data owned by its migration, not state a test
-    run produces — wiping it would mean every authenticated request in every
-    test re-seeding it by hand. Excluding it here is closer to the truth than
-    restoring it would be.
+    Both are reference data owned by their migrations, not state a test run
+    produces — wiping either would mean every test that reads scopes, or
+    seeds a new account, re-seeding it by hand. Excluding them here is closer
+    to the truth than restoring them would be.
 
     `documents` carries triggers that forbid DELETE, so they are dropped and
     restored around the wipe. Their definitions are read back out of
@@ -143,7 +144,7 @@ async def clean_database(migrated_database):
         for name, _ in triggers:
             await conn.execute(text(f"DROP TRIGGER IF EXISTS {name}"))
         for table in reversed(SQAlchemyBase.metadata.sorted_tables):
-            if table.name == "role_scopes":
+            if table.name in ("role_scopes", "document_schema"):
                 continue
             await conn.execute(table.delete())
         for _, sql in triggers:

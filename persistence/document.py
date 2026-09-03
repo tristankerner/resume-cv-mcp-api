@@ -52,6 +52,7 @@ class Document(SQAlchemyBase):
     created_at: Mapped[datetime] = mapped_column(default=Clock.utcnow, nullable=False)
     revision_note: Mapped[str | None]
     data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    schema_version: Mapped[int] = mapped_column(nullable=False)
 
     def __repr__(self) -> str:
         return (
@@ -181,6 +182,7 @@ class Document(SQAlchemyBase):
                     created_at=revision.created_at,
                     revision_note=revision.revision_note,
                     data=revision.data,
+                    schema_version=revision.schema_version,
                 )
             )
         for revision in revisions:
@@ -207,7 +209,12 @@ class Document(SQAlchemyBase):
             if existing.type != document.type:
                 raise DocumentTypeConflict(existing.type, document.type)
             document.public = existing.public if public is None else public
-            # A changed `revision_note` alone is still a no-op.
+            # A changed `revision_note` alone is still a no-op. `schema_version`
+            # is deliberately not part of this comparison either: a document
+            # whose content is unchanged should not gain a revision just
+            # because DocumentTypeRegistry's current version moved on — but
+            # that also means bumping the version constant alone never
+            # re-stamps existing rows; only a real content change does.
             if existing.data == document.data and existing.public == document.public:
                 return UpsertResult(existing, created=False)
             document.revision_id = existing.revision_id + 1

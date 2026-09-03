@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import Depends
 from pydantic import BaseModel
@@ -134,12 +134,42 @@ class DocumentService(ServiceProviderInterface):
             raise DocumentErrors.not_found()
         return docs
 
-    def _revisions_response[T: BaseModel](
-        self, docs: list[Document], model: type[T]
-    ) -> GetDocumentRevisionsResponse[T]:
-        return GetDocumentRevisionsResponse[T](
-            data=[self._envelope(doc, model.model_validate) for doc in docs]
-        )
+    def _revision_payload[T: BaseModel](
+        self, doc: Document, model: type[T], current: int
+    ) -> T | dict[str, Any]:
+        """Validated against `model` if `doc` was written at the schema
+        version this build currently considers current; the raw stored
+        payload otherwise, the same tolerance `ResumeTools.slim` already
+        applies when validation fails.
+
+        Validating every revision against the *current* model — the previous
+        behaviour — 500s the moment a document's history spans a schema
+        change, which is the normal shape of a migrated account's history
+        from `SCHEMA_VERSIONING_PLAN.md` Phase 4/5 onward. The alternative
+        (reviving each retired schema version as its own model, under an
+        explicit name) was considered and rejected: the v1 models were
+        deleted deliberately, and every future schema bump would add another
+        one to keep alive purely to validate history nobody reads that way.
+
+        Each `read_*_document` method below types its response's `data`
+        field as `Model | dict[str, Any]` rather than plain `Model`, for
+        exactly this reason: FastAPI re-validates whatever a route returns
+        against its declared response type, so a raw historical payload has
+        to be a value that type actually accepts, not merely an object the
+        caller trusts to skip validation. A route that reads document
+        history is therefore honest about what it can return — "the current
+        shape, or whatever an older revision happened to be" — rather than a
+        type that quietly stops being true the moment an account's history
+        spans a schema change. Not written as one shared, generic response
+        builder: subscripting `GetDocumentResponse` with a `type[T]`-typed
+        parameter is exactly what `ty` refuses to treat as a type expression,
+        and rightly so — it cannot be resolved statically. Same reasoning as
+        `read_private_resume_document`'s neighbours already being three
+        separate methods instead of one parameterised by `DocumentType`.
+        """
+        if doc.schema_version == current:
+            return model.model_validate(doc.data)
+        return doc.data
 
     async def _upsert[T: BaseModel](
         self, request: CreateDocumentRequest[T], doc_type: DocumentType
@@ -159,6 +189,9 @@ class DocumentService(ServiceProviderInterface):
             type=doc_type.value,
             revision_note=request.revision_note,
             data=request.data.model_dump(by_alias=True),
+            schema_version=DocumentTypeRegistry.CURRENT_SCHEMA_VERSION_BY_TYPE[
+                doc_type
+            ],
         )
         # `public` is handed over separately rather than set on the instance:
         # the request may leave it unstated, and only the store can see the
@@ -182,11 +215,27 @@ class DocumentService(ServiceProviderInterface):
 
     async def read_private_resume_document(
         self, document_name: str, revisions: int, order: RevisionOrder
-    ) -> GetDocumentRevisionsResponse[ResumePrivate]:
+    ) -> GetDocumentRevisionsResponse[ResumePrivate | dict[str, Any]]:
         docs = await self._read_private(
             document_name, DocumentType.RESUME, revisions, order
         )
-        return self._revisions_response(docs, ResumePrivate)
+        current = DocumentTypeRegistry.CURRENT_SCHEMA_VERSION_BY_TYPE[
+            DocumentType.RESUME
+        ]
+        return GetDocumentRevisionsResponse[ResumePrivate | dict[str, Any]](
+            data=[
+                GetDocumentResponse[ResumePrivate | dict[str, Any]](
+                    name=doc.name,
+                    revision_id=doc.revision_id,
+                    revision_note=doc.revision_note,
+                    type=doc.type,
+                    public=doc.public,
+                    created_at=doc.created_at,
+                    data=self._revision_payload(doc, ResumePrivate, current),
+                )
+                for doc in docs
+            ]
+        )
 
     async def upsert_resume_document(
         self, request: CreateDocumentRequest[ResumePrivate]
@@ -195,11 +244,27 @@ class DocumentService(ServiceProviderInterface):
 
     async def read_metadata_document(
         self, document_name: str, revisions: int, order: RevisionOrder
-    ) -> GetDocumentRevisionsResponse[ResumeMetadata]:
+    ) -> GetDocumentRevisionsResponse[ResumeMetadata | dict[str, Any]]:
         docs = await self._read_private(
             document_name, DocumentType.METADATA, revisions, order
         )
-        return self._revisions_response(docs, ResumeMetadata)
+        current = DocumentTypeRegistry.CURRENT_SCHEMA_VERSION_BY_TYPE[
+            DocumentType.METADATA
+        ]
+        return GetDocumentRevisionsResponse[ResumeMetadata | dict[str, Any]](
+            data=[
+                GetDocumentResponse[ResumeMetadata | dict[str, Any]](
+                    name=doc.name,
+                    revision_id=doc.revision_id,
+                    revision_note=doc.revision_note,
+                    type=doc.type,
+                    public=doc.public,
+                    created_at=doc.created_at,
+                    data=self._revision_payload(doc, ResumeMetadata, current),
+                )
+                for doc in docs
+            ]
+        )
 
     async def upsert_metadata_document(
         self, request: CreateDocumentRequest[ResumeMetadata]
@@ -208,11 +273,27 @@ class DocumentService(ServiceProviderInterface):
 
     async def read_skill_document(
         self, document_name: str, revisions: int, order: RevisionOrder
-    ) -> GetDocumentRevisionsResponse[ResumeSkill]:
+    ) -> GetDocumentRevisionsResponse[ResumeSkill | dict[str, Any]]:
         docs = await self._read_private(
             document_name, DocumentType.SKILL, revisions, order
         )
-        return self._revisions_response(docs, ResumeSkill)
+        current = DocumentTypeRegistry.CURRENT_SCHEMA_VERSION_BY_TYPE[
+            DocumentType.SKILL
+        ]
+        return GetDocumentRevisionsResponse[ResumeSkill | dict[str, Any]](
+            data=[
+                GetDocumentResponse[ResumeSkill | dict[str, Any]](
+                    name=doc.name,
+                    revision_id=doc.revision_id,
+                    revision_note=doc.revision_note,
+                    type=doc.type,
+                    public=doc.public,
+                    created_at=doc.created_at,
+                    data=self._revision_payload(doc, ResumeSkill, current),
+                )
+                for doc in docs
+            ]
+        )
 
     async def upsert_skill_document(
         self, request: CreateDocumentRequest[ResumeSkill]

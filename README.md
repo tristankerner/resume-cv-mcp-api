@@ -117,10 +117,38 @@ enough structure to see every field, none of it real.
 
 **A new account starts with these three already in place.** `POST /users` and
 application startup's admin bootstrap both seed a private (`public: false`)
-`resume`, `metadata` and `skill` document from `examples/` on creation, so a
-fresh account is never empty — see `services/user/document_seeder.py`.
-`examples/seed-documents.sh` is still useful afterward, for re-seeding or for
-loading real content over the fictional starting point.
+`resume`, `metadata` and `skill` document from the `document_schema` catalogue
+(below) on creation, so a fresh account is never empty — see
+`services/user/document_seeder.py`. `examples/*.json` still exist and still
+matter — they are what `examples/seed-documents.sh` loads, what
+`tests/test_path_resolution.py` resolves paths against, and what the frozen
+migration snapshots below were generated from — but a new account is seeded
+from the catalogue, not from those files directly; `tests/test_catalogue_examples.py`
+is what keeps the two from drifting apart.
+
+### The schema catalogue
+
+Every stored document revision carries a `schema_version`: the row in
+`document_schema` — keyed `(version, document_type)` — it was written
+against. `document_schema` is a historical record, populated only by
+migrations, never by the application: each row freezes that version's JSON
+Schema and a fictional example. `documents(type, schema_version)` carries a
+real foreign key into it, so a row naming a version this build's catalogue
+does not know about cannot be written.
+
+This is what let the v1 (bespoke) to v2 (JSON Resume) resume conversion ship
+as an ordinary deploy: two Alembic revisions convert every stored `resume`,
+`metadata` and `skill` document in place, appending a new revision rather
+than rewriting history, auditing every document before writing and aborting
+the whole migration on any loss. See `SCHEMA_VERSIONING_PLAN.md` for the
+full design and rollback story, and `scripts/migrate_resume_v2.py` for the
+demoted preview tool the migrations' converter is a frozen copy of.
+
+One consequence worth knowing if you read document history: a revision
+written at a schema version this build no longer considers current is
+served **unvalidated**, as the raw stored payload, rather than 500ing —
+`GET /documents/resume/{name}?revisions=5` against an account whose history
+spans the v1→v2 conversion returns both shapes side by side.
 
 ### Revisions
 

@@ -979,6 +979,46 @@ class TestRevisionOptions:
         assert response.status_code == 422
 
 
+class TestMixedSchemaHistory:
+    """The bug SCHEMA_VERSIONING_PLAN.md Phase 6 fixes: validating every
+    revision against the *current* model 500s the moment a document's
+    history spans a schema change — which Phase 4/5's conversions make the
+    normal shape of a migrated account's history."""
+
+    async def test_a_v1_shaped_revision_no_longer_500s(
+        self, client, admin, stored_resume
+    ):
+        v1_shaped = {"profile": {"name": "old shape"}, "no": "basics key here"}
+        async with DatabaseService.session() as db:
+            db.add(
+                Document(
+                    created_by=admin.user_id,
+                    name="resume.json",
+                    revision_id=0,
+                    type="resume",
+                    public=True,
+                    revision_note="pre-migration",
+                    data=v1_shaped,
+                    schema_version=1,
+                )
+            )
+            await db.commit()
+
+        response = await client.get(
+            "/documents/resume/resume.json?revisions=2&order=oldest_first",
+            headers=admin.headers,
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert len(data) == 2
+        # The v1 revision comes back exactly as stored, unvalidated.
+        assert data[0]["revision_id"] == 0
+        assert data[0]["data"] == v1_shaped
+        # The current revision still validates normally.
+        assert data[1]["revision_id"] == 1
+        assert "basics" in data[1]["data"]
+
+
 class TestListDocuments:
     async def test_lists_the_latest_revision_of_each_document(
         self, client, admin, stored_resume, stored_metadata, stored_skill

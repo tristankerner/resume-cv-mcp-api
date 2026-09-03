@@ -438,6 +438,7 @@ class TestSlimming:
                     revision_id=1,
                     type=DocumentType.RESUME.value,
                     data=raw,
+                    schema_version=1,
                 )
             )
             await db.commit()

@@ -1,5 +1,13 @@
 """Offline v1 -> v2 resume migration, for every stored resume document.
 
+**Demoted to a preview tool as of `SCHEMA_VERSIONING_PLAN.md`.** The Alembic
+revision `b0baccd6558a` is now the authoritative writer: it runs the
+equivalent conversion and audit in-process on the next deploy, unattended.
+This script's `--write` is a manual escape hatch of last resort — for
+inspecting, ahead of that deploy, exactly what a database's resume documents
+will become — not the normal way this conversion happens anymore. Its
+`--dry-run` output (the default) stays genuinely useful for that inspection.
+
 Ports the conversion in `data/v2-migration/migrate.py` — the reference
 implementation this migration was designed and validated against — and its
 audit: the multiset of every non-null scalar in the source document, compared
@@ -27,7 +35,7 @@ from sqlalchemy import select
 
 from persistence.document import Document
 from services.database.database_service import DatabaseService
-from services.document.document_types import DocumentType
+from services.document.document_types import DocumentType, DocumentTypeRegistry
 from services.document.dtos.resume_object import (
     Basics,
     Certificate,
@@ -410,6 +418,9 @@ class ResumeMigrator:
             type=document.type,
             revision_note="Migrated to JSON Resume v2 (scripts/migrate_resume_v2.py)",
             data=pruned,
+            schema_version=DocumentTypeRegistry.CURRENT_SCHEMA_VERSION_BY_TYPE[
+                DocumentType.RESUME
+            ],
         )
         async with DatabaseService.session() as db:
             result = await Document.upsert_document(

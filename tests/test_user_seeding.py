@@ -6,8 +6,10 @@ the bootstrap admin.
 import secrets
 
 import pytest
+from sqlalchemy import delete, insert
 
 from persistence.document import Document
+from persistence.document_schema import DocumentSchema
 from persistence.user import User
 from services.auth.roles import Roles
 from services.database.database_service import DatabaseService
@@ -177,3 +179,39 @@ class TestSeedingIsAtomic:
 
         async with DatabaseService.session() as db:
             assert await User.get_user_by_username(db, "half-seeded") is None
+
+
+class TestSeedingCatalogueGuards:
+    """Registration fails loudly, naming the type, when a catalogue example
+    is malformed or a type's row is missing — see
+    SCHEMA_VERSIONING_PLAN.md Phase 7's "hazard stated plainly": a malformed
+    example used to be a build error (DocumentSeeder validated at import);
+    now it is a runtime error during registration, so these two guards are
+    what stand in for that lost build-time check.
+
+    Both tests mutate `document_schema` inside a session that is never
+    committed, so the change is discarded when the session closes — the
+    catalogue other tests see is untouched.
+    """
+
+    async def test_missing_catalogue_row_raises(self, admin):
+        async with DatabaseService.session() as db:
+            await db.execute(
+                delete(DocumentSchema).where(DocumentSchema.document_type == "resume")
+            )
+            with pytest.raises(RuntimeError, match="resume"):
+                await DocumentSeeder().seed(db, admin.user_id)
+
+    async def test_malformed_catalogue_example_raises(self, admin):
+        async with DatabaseService.session() as db:
+            await db.execute(
+                insert(DocumentSchema).values(
+                    version=99,
+                    document_type="resume",
+                    description="malformed, for this test only",
+                    json_schema={},
+                    example={"not": "a valid resume"},
+                )
+            )
+            with pytest.raises(RuntimeError, match="resume"):
+                await DocumentSeeder().seed(db, admin.user_id)

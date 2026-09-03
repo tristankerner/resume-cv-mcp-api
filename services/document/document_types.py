@@ -67,6 +67,19 @@ class DocumentTypeRegistry:
         for doc_type, model in MODELS_BY_TYPE.items()
     }
 
+    # The `document_schema` version every new write is stamped with — see
+    # persistence/document_schema.py and SCHEMA_VERSIONING_PLAN.md. A plain
+    # constant, not a database read: the build ships migrations that insert
+    # the matching catalogue row before this version could ever be written,
+    # so there is nothing to look up at request time. `DocumentSeeder` reads
+    # the catalogue directly instead of using this map, because it also needs
+    # the row's `example` content, not just its version number.
+    CURRENT_SCHEMA_VERSION_BY_TYPE: ClassVar[dict[DocumentType, int]] = {
+        DocumentType.RESUME: 2,
+        DocumentType.METADATA: 2,
+        DocumentType.SKILL: 2,
+    }
+
     @classmethod
     def scopes_for_stored(cls, value: str) -> TypeScopes | None:
         """The scopes governing a type string read back out of the database.
