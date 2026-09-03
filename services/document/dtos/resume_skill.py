@@ -13,7 +13,7 @@ document write rather than a skill release.
 Nothing here restates resume content. Where an instruction names a piece of the
 payload it carries a `path`, rooted at the MCP tool's response rather than at
 the resume, since instructions reach across documents:
-`resume.jobs[].highlights[].summary`, `resume_metadata.role_families`. List
+`resume.work[].highlights[].summary`, `resume_metadata.role_families`. List
 elements are marked `[]`, matching `ResumeMetadata.FieldGuide.path`.
 """
 

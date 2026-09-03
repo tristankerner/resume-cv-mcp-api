@@ -114,6 +114,99 @@
         ]
       },
       {
+        "path": "resume.work[]",
+        "title": "Work",
+        "description": "Employment records, one per engagement rather than one per title.",
+        "purpose": "The spine of the resume: who the candidate worked for, as what, and when. A gap here is the first thing a reader looks for.",
+        "ordering": "Most recent first. Order is meaningful and must not be rearranged for relevance — reorder highlights within an entry instead.",
+        "selection": [
+          "Every entry belongs on the resume unless the whole history does not fit; trim highlights before trimming an entry, since a dropped entry reads as a gap."
+        ],
+        "fields": [
+          {
+            "path": "resume.work[].name",
+            "type": "string",
+            "description": "The employer, as it should be printed.",
+            "use": "resume-ready",
+            "visibility": "public",
+            "required": true
+          },
+          {
+            "path": "resume.work[].position",
+            "type": "string | null",
+            "description": "The headline title for the entry. Restates roles[0].title so a theme that knows nothing about roles still prints the current one.",
+            "use": "resume-ready",
+            "visibility": "public",
+            "required": false,
+            "rules": [
+              "If this disagrees with roles[0].title, trust roles[0] and say so — position is the copy, not the source."
+            ]
+          },
+          {
+            "path": "resume.work[].roles[].title",
+            "type": "string",
+            "description": "One title held within this engagement, most-recent first. Two or more is a promotion, which is the progression a reader is looking for.",
+            "use": "resume-ready",
+            "visibility": "public",
+            "required": true,
+            "example": "Backend Engineer (Contract)"
+          },
+          {
+            "path": "resume.work[].startDate",
+            "type": "string | null",
+            "description": "Start of the engagement, which may predate direct employment where viaEmployer is set.",
+            "use": "resume-ready",
+            "visibility": "public",
+            "required": false,
+            "format": "YYYY-MM"
+          },
+          {
+            "path": "resume.work[].endDate",
+            "type": "string | null",
+            "description": "End of the engagement. Absent means currently employed.",
+            "use": "resume-ready",
+            "visibility": "public",
+            "required": false,
+            "format": "YYYY-MM"
+          },
+          {
+            "path": "resume.work[].roleLocation",
+            "type": "string | null",
+            "description": "How the work was done. See vocabularies for the closed set of values.",
+            "use": "resume-ready",
+            "visibility": "public",
+            "required": false
+          },
+          {
+            "path": "resume.work[].viaEmployer.name",
+            "type": "string",
+            "description": "Legal employer of record for an agency-staffed window at the start of the engagement. Present only when the engagement did not begin as direct employment.",
+            "use": "internal",
+            "visibility": "public",
+            "required": false,
+            "rules": [
+              "Employment verification checks dates against the employer of record, so never print the engagement's start date beside the client's name without accounting for this window."
+            ]
+          },
+          {
+            "path": "resume.work[].location",
+            "type": "string | null",
+            "description": "Where the employer is, not where the work was done — see roleLocation for that.",
+            "use": "resume-ready",
+            "visibility": "public",
+            "required": false
+          },
+          {
+            "path": "resume.work[].description",
+            "type": "string | null",
+            "description": "What the company does. Context for a reader who does not recognise the name; never a description of the job.",
+            "use": "compress",
+            "visibility": "public",
+            "required": false
+          }
+        ]
+      },
+      {
         "path": "resume.work[].highlights[]",
         "title": "Highlights",
         "description": "Per-employer accomplishment bullets.",
@@ -220,6 +313,14 @@
           "Prefer keywords the posting names explicitly over adjacent ones."
         ],
         "fields": [
+          {
+            "path": "resume.skills[].level",
+            "type": "string | null",
+            "description": "The group's overall level. Public, unlike the per-keyword level below — a group rated as a whole reads as a claim, where a keyword rated individually reads as a disclaimer.",
+            "use": "resume-ready",
+            "visibility": "public",
+            "required": false
+          },
           {
             "path": "resume.skills[].keywords[].name",
             "type": "string",
