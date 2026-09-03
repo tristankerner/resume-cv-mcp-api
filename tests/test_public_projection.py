@@ -149,6 +149,31 @@ class RedactionPaths:
         return self._walk(value, model, prefix)
 
 
+class Keys:
+    """Every key name in a serialized payload, at any depth.
+
+    A substring search over the JSON text cannot express "no field is named
+    `publish`": `publications[].publisher` contains that substring and is
+    public, so the search reports a leak that isn't one. Walking the keys is
+    what makes the assertion mean what it says.
+    """
+
+    @classmethod
+    def of(cls, node: Any) -> set[str]:
+        found: set[str] = set()
+        cls()._walk(node, found)
+        return found
+
+    def _walk(self, node: Any, found: set[str]) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                found.add(key)
+                self._walk(value, found)
+        elif isinstance(node, list):
+            for item in node:
+                self._walk(item, found)
+
+
 # Reused verbatim inside `ResumePublic` rather than mirrored, because they
 # carry no private field. `test_shared_models_carry_nothing_private` is what
 # holds that claim true.
@@ -312,6 +337,9 @@ class TestSentinelLeak:
                     ],
                 }
             ],
+            # Carries `publisher`, the one public field whose name contains
+            # "publish" — see `Keys`.
+            "publications": [{"name": "Paper", "publisher": "Journal"}],
             "fineTuningData": {
                 "narrative": {"career_arc": s["narrative"]},
                 "logistics": {"work_authorization": s["logistics"]},
@@ -333,6 +361,6 @@ class TestSentinelLeak:
         payload["skills"][0]["keywords"][0]["publish"] = True
         private = ResumePrivate.model_validate(payload)
         public = PublicProjection.of(private)
-        body = json.dumps(public.model_dump())
-        assert "publish" not in body
-        assert "expert" not in body  # keyword.level
+        dumped = public.model_dump()
+        assert "publish" not in Keys.of(dumped)
+        assert "expert" not in json.dumps(dumped)  # keyword.level, a value not a key

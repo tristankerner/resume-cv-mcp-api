@@ -334,6 +334,10 @@ def resume_payload() -> dict:
                 "keywords": [{"name": "Python", "level": "expert", "lastUsed": "1907"}],
             }
         ],
+        "fineTuningData": {
+            "narrative": {"voice": f"voice-{marker}"},
+            "logistics": {"salaryExpectation": f"salary-{marker}"},
+        },
     }
 
 
@@ -343,6 +347,7 @@ def private_markers(resume_payload) -> list[str]:
     basics = resume_payload["basics"]
     highlight = resume_payload["work"][0]["highlights"][0]
     keyword = resume_payload["skills"][0]["keywords"][0]
+    fine_tuning = resume_payload["fineTuningData"]
     return [
         basics["email"],
         basics["phone"],
@@ -350,6 +355,8 @@ def private_markers(resume_payload) -> list[str]:
         highlight["metrics"][0]["figure"],
         highlight["story"],
         keyword["lastUsed"],
+        fine_tuning["narrative"]["voice"],
+        fine_tuning["logistics"]["salaryExpectation"],
     ]
 
 

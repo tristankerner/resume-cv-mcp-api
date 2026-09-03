@@ -50,12 +50,15 @@ async def test_public_read_by_id(client, admin, stored_resume):
 async def test_public_read_omits_every_private_field(
     client, stored_resume, private_markers
 ):
+    """`fineTuningData`, not `fine_tuning_data`: the route serializes the
+    resume payload by alias, so the snake_case spelling is one this response
+    can never carry and asserting on it would check nothing."""
     body = json.dumps(
         (await client.get("/public/admin-user/resume/resume.json")).json()
     )
     for marker in private_markers:
         assert marker not in body
-    assert "fine_tuning_data" not in body
+    assert "fineTuningData" not in body
 
 
 async def test_public_read_keeps_the_public_fields(client, stored_resume):
