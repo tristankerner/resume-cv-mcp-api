@@ -78,7 +78,7 @@ Below are overly verbos Claude based docs.
 
 | Type | Model | Holds |
 | --- | --- | --- |
-| `resume` | `ResumePrivate` | What happened: jobs, bullets, per-bullet tech and figures, skill ratings, contact details, narrative material. Individual entries can be withheld from the public feed with `publish: false` — see "The website" below |
+| `resume` | `ResumePrivate` | A JSON Resume 1.0 document (https://jsonresume.org/schema), extended with a few private fields: what happened (work history, bullets, per-bullet tech and figures, skill ratings), contact details, narrative material. Individual entries can be withheld from the public feed with `publish: false` — see "The website" below |
 | `metadata` | `ResumeMetadata` | What each field means, which parts are resume-ready, how the highlight ids join, what must never be published |
 | `skill` | `ResumeSkill` | What to do with the other two: the persona, the procedure, the selection and wording rules, the cover-letter guidance, the guardrails, one output spec per artifact |
 
@@ -542,15 +542,24 @@ The public projection needs no credential:
 GET /public/{username}/resume/resume.json
 ```
 
-Redaction is structural rather than conditional. The public and private
-payloads are separate routes with separate response models, and the projection
-re-validates under `extra="forbid"` — if a private field survived, it raises
-instead of serving it.
+Redaction is structural rather than conditional. `ResumePrivate` and
+`ResumePublic` are two separate model trees, not a subclass relationship —
+the public and private payloads are separate routes with separate response
+models, and `PublicProjection.build` re-validates the redacted data through
+`ResumePublic` under `extra="forbid"`: a private field that survived the
+redaction pass has no field to land in and raises instead of serving.
+`tests/test_public_projection.py` holds this two ways — a structural-drift
+test that walks both trees and asserts every field difference between them is
+a declared one, and a sentinel-leak test that populates every private field
+with a unique marker and asserts none of them reach the projection.
 
-Note that `ResumePrivate` subclasses `Resume`, which means a `-> Resume`
-annotation will happily accept and return a private instance; Pydantic only
-redacts at serialization. Use `PublicProjection.of()` rather than trusting the
-type.
+The resume payload is a JSON Resume 1.0 document
+(https://jsonresume.org/schema), with two deliberate deviations: `work[].highlights[]`
+and `skills[].keywords[]` carry objects rather than the plain strings the
+schema specifies, since tailoring needs the specifics, tech, and per-keyword
+rating those objects carry. The feed keeps that shape rather than flattening
+to strict schema conformance, so the website can render highlight specifics
+and per-skill urls.
 
 Those routes answer with `Access-Control-Allow-Origin: *`, so any site can
 `fetch()` them directly — no proxy and no per-site configuration. A minimal
@@ -567,23 +576,25 @@ allowlist, and why it is stamped whether the caller sent an `Origin`.
 
 ### Withholding a single entry
 
-`Document.public` publishes or unpublishes an entire document. A job,
-highlight, skill, skill group, certification, education entry, personal
-project, contact link or location also carries its own `publish: bool`
-(default `true`), which withholds just that one entry from the public feed
-while leaving it in the private payload the MCP client reads.
+`Document.public` publishes or unpublishes an entire document. A work entry,
+highlight, skill, skill keyword, certificate, education entry, project,
+profile or location also carries its own `publish: bool` (default `true`),
+which withholds just that one entry from the public feed while leaving it in
+the private payload the MCP client reads.
 
 This is curation, not a security control — the fields that are actually
-sensitive (`contact.email_address`, `highlight.tech`, `highlight.metrics`,
-`fine_tuning_data`, …) are redacted structurally by the public/private model
-split above, regardless of `publish`. `publish: false` only decides which
-*entries* show up, never which *attributes* of a shown entry are visible.
+sensitive (`basics.email`, `basics.phone`, `highlights[].tech`,
+`highlights[].metrics`, `highlights[].story`, `keywords[].level`,
+`keywords[].lastUsed`, `fineTuningData`, …) are redacted structurally by the
+public/private model split above, regardless of `publish`. `publish: false`
+only decides which *entries* show up, never which *attributes* of a shown
+entry are visible.
 
-Withholding a job or skill group drops it entirely; withholding every
-highlight under a still-published job keeps the job with an empty highlights
-list, since the employment record itself is load-bearing. Withholding every
-skill under a still-published skill group drops the group, since a heading
-with nothing under it is a rendering artifact. See
+Withholding a work entry or skill drops it entirely; withholding every
+highlight under a still-published work entry keeps the entry with an empty
+highlights list, since the employment record itself is load-bearing.
+Withholding every keyword under a still-published skill drops the skill,
+since a heading with nothing under it is a rendering artifact. See
 `PublicProjection` in `services/document/dtos/resume_object.py` for the exact
 rules.
 
