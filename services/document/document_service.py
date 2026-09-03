@@ -147,12 +147,18 @@ class DocumentService(ServiceProviderInterface):
         self._require(DocumentTypeRegistry.SCOPES_BY_TYPE[doc_type].write)
         owner_id = self._owner()
 
+        # Stored aliased, which for the resume payload means camelCase — the
+        # names the JSON Resume schema defines and the names every read surface
+        # serves. A document on disk is then the same document a client sees,
+        # and `ResumeTools.slim`'s raw fallback for a payload that no longer
+        # validates spells its fields the same way as its validated branch.
+        # `scripts/migrate_resume_v2.py` writes aliased for the same reason.
         document = Document(
             created_by=owner_id,
             name=request.name,
             type=doc_type.value,
             revision_note=request.revision_note,
-            data=request.data.model_dump(),
+            data=request.data.model_dump(by_alias=True),
         )
         # `public` is handed over separately rather than set on the instance:
         # the request may leave it unstated, and only the store can see the

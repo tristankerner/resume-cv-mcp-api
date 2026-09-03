@@ -89,6 +89,6 @@ class DocumentSeeder:
                     type=entry.document_type.value,
                     public=False,
                     revision_note=self.REVISION_NOTE,
-                    data=entry.data.model_dump(),
+                    data=entry.data.model_dump(by_alias=True),
                 )
             )

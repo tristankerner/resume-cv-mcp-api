@@ -385,6 +385,46 @@ class TestSlimming:
         assert "publish" not in published_work
         assert withheld_work["publish"] is False
 
+    async def test_the_resume_is_served_under_its_json_resume_field_names(
+        self, admin, stored_resume
+    ):
+        """The MCP payload must spell fields the way the schema does, and the
+        way the metadata and skill documents say it does.
+
+        Multi-word fields are the only ones where the alias and the Python
+        name differ, so they are the only ones that can regress. A dump that
+        forgets `by_alias` hands the client `start_date` while every path in
+        the two companion documents points at `startDate` — instructions
+        aimed at fields the client never receives, which neither validation
+        nor any other test in this file would notice.
+        """
+        document = await self._load(admin, "resume.json")
+        slimmed = ResumeTools.slim(document)
+        work = slimmed["work"][0]
+
+        assert "startDate" in work
+        assert "roleLocation" in work
+        assert "lastUsed" in slimmed["skills"][0]["keywords"][0]
+        assert self._snake_case_keys(slimmed) == []
+
+    def _snake_case_keys(self, node, trail: str = "resume") -> list[str]:
+        """Every key in the resume payload, at any depth, that is not spelled
+        the way the schema spells it. Recursive rather than a handful of named
+        fields so a section added later cannot quietly regress."""
+        if isinstance(node, dict):
+            return [f"{trail}.{key}" for key in node if "_" in key] + [
+                name
+                for key, value in node.items()
+                for name in self._snake_case_keys(value, f"{trail}.{key}")
+            ]
+        if isinstance(node, list):
+            return [
+                name
+                for index, item in enumerate(node)
+                for name in self._snake_case_keys(item, f"{trail}[{index}]")
+            ]
+        return []
+
     async def test_a_document_that_no_longer_validates_still_retrieves(self, admin):
         """A document written under a since-tightened schema — here, missing
         every field `ResumePrivate` requires — must still come back as

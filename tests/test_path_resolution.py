@@ -74,14 +74,29 @@ class PathResolver:
             model = self._step(model, name, path)
 
     def _step(self, model: Any, name: str, path: str) -> Any:
+        """Matches the serialization name only — the alias where a model
+        declares one, the field name where it does not.
+
+        Accepting the Python name as well would defeat the point. `resume.*`
+        fields are aliased to camelCase, so `resume.work[].start_date` names
+        something no client ever receives; a resolver that accepts it passes a
+        path that is wrong on the wire, which is the exact failure this file
+        exists to catch.
+        """
         if not (isinstance(model, type) and issubclass(model, BaseModel)):
             raise TypeError(
                 f"{path!r}: {name!r} has nothing to resolve on — "
                 f"the path is already at a scalar"
             )
         for field_name, info in model.model_fields.items():
-            if name in (info.alias, field_name):
+            serialized = info.alias or field_name
+            if name == serialized:
                 return self._unwrap(info.annotation)
+            if name == field_name:
+                raise ValueError(
+                    f"{path!r}: {field_name!r} is serialized as {serialized!r}; "
+                    f"a path must use the name a client actually sees"
+                )
         raise ValueError(f"{path!r}: {name!r} is not a field of {model.__name__}")
 
     def _unwrap(self, annotation: Any) -> Any:

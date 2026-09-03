@@ -99,6 +99,16 @@ class ResumeTools:
         retrieve. The only place in the codebase where a document is
         deliberately served without validating.
 
+        `by_alias=True` is not cosmetic. The resume payload's field names are
+        the JSON Resume schema's, which are camelCase, and every other surface
+        serves them that way: FastAPI applies aliases to the public feed and to
+        the private route, and documents are stored aliased. Dumping without it
+        here would hand the MCP client `start_date` while the metadata and
+        skill documents tell it to read `startDate` — instructions pointing at
+        fields the client never receives, which nothing else in the stack
+        detects. The metadata and skill models declare no aliases, so this is a
+        no-op for them.
+
         Read time only: `Document.upsert_document` dedups a write on
         `existing.data == document.data`, so slimming what gets written
         instead of what gets read would change revision identity.
@@ -110,7 +120,9 @@ class ResumeTools:
             # build. Same reasoning as `DocumentTypeRegistry.scopes_for_stored`.
             return document.data
         try:
-            return model.model_validate(document.data).model_dump(exclude_defaults=True)
+            return model.model_validate(document.data).model_dump(
+                by_alias=True, exclude_defaults=True
+            )
         except ValidationError:
             return document.data
 
