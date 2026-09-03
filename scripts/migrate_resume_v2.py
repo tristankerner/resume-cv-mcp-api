@@ -337,6 +337,7 @@ class ResumeMigrator:
         self.converted = 0
         self.skipped_already_v2 = 0
         self.refused_for_loss = 0
+        self.failed = 0
 
     async def run(self) -> int:
         async with DatabaseService.session() as db:
@@ -356,15 +357,26 @@ class ResumeMigrator:
 
         print(f"{len(latest)} resume document(s) found across every user.\n")
         for document in latest.values():
-            await self._migrate_one(document)
+            # One unconvertible document must not abort the run. A v1 payload
+            # missing a key `Migration` reads raises, and letting that
+            # propagate would stop every document behind it — on a `--write`
+            # run, halfway through, with no report of what was left. Each
+            # document is independent and every write is its own revision, so
+            # the useful behaviour is to record the failure and carry on.
+            try:
+                await self._migrate_one(document)
+            except Exception as error:  # noqa: BLE001 - reported, not swallowed
+                label = f"user={document.created_by} name={document.name!r}"
+                print(f"{label}: FAILED to convert — {type(error).__name__}: {error}\n")
+                self.failed += 1
 
         print(
             f"\n{self.converted} converted, {self.skipped_already_v2} already v2, "
-            f"{self.refused_for_loss} refused for audit loss."
+            f"{self.refused_for_loss} refused for audit loss, {self.failed} failed."
         )
         if not self.write:
             print("Dry run: nothing was written. Pass --write to write new revisions.")
-        return 1 if self.refused_for_loss else 0
+        return 1 if self.refused_for_loss or self.failed else 0
 
     async def _migrate_one(self, document: Document) -> None:
         label = f"user={document.created_by} name={document.name!r}"
