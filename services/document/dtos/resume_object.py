@@ -898,12 +898,19 @@ class PublicProjection:
         return kept
 
     def _prune(self, node: Any) -> Any:
-        """Drop the lists that filtering emptied, at every depth.
+        """Drop what filtering emptied, before it reaches `ResumePublic`.
 
-        `model_dump` writes every list-valued field whether or not anything
-        survived, and `exclude_none` does not catch them. An absent key and an
-        empty array mean the same thing to the schema, but only one of them
-        renders as an empty heading.
+        This shapes what gets *validated*, not what gets served. `ResumePublic`
+        defaults every list to `[]` and every optional to `None`, so anything
+        pruned here is restored the moment the model is built, and the feed
+        carries `"awards": []` and `"image": null` regardless. The one case it
+        still decides is an all-empty `meta`, which becomes `null` rather than
+        an object of nulls.
+
+        Serving a feed without those empties would mean excluding defaults at
+        the route, which also reaches the response envelope — a change to the
+        published contract, not a detail of this class. Until that call is
+        made, do not read this method as making the feed terse.
         """
         if isinstance(node, dict):
             return {

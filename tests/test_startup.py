@@ -41,10 +41,28 @@ async def test_openapi_documents_both_document_shapes(client):
 
 
 async def test_public_schema_has_no_private_fields(client):
+    """The published schema of the section that holds the contact details,
+    asserted as an exact set.
+
+    Spelled out rather than derived from `PublicBasics`, and exact rather than
+    a couple of `not in` checks: deriving it would compare the model against
+    itself, and naming only `email` and `phone` would let a third private
+    field appear here unnoticed. Adding a field to the public feed should
+    require saying so in this list.
+    """
     schema = (await client.get("/openapi.json")).json()
     basics = schema["components"]["schemas"]["PublicBasics"]["properties"]
-    assert "email" not in basics
-    assert "phone" not in basics
+    assert set(basics) == {
+        "name",
+        "label",
+        "image",
+        "url",
+        "summary",
+        "location",
+        "profiles",
+        "tagline",
+        "additionalLocations",
+    }
 
 
 async def test_mcp_app_is_mounted(client):

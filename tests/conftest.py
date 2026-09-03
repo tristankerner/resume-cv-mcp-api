@@ -382,7 +382,7 @@ def metadata_payload() -> dict:
         "schema_version": "1.0.0",
         "readme": "what each field is for",
         "disclosure": {
-            "never_publish": ["resume.jobs[].highlights[].tech"],
+            "never_publish": ["resume.work[].highlights[].tech"],
             "rationale": "internal scale and vendor stack",
         },
     }
