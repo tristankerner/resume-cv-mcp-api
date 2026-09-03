@@ -152,7 +152,9 @@ class TestResumeTool:
         result = await retrieved(
             resume_id="resume.json", resume_metadata_id="resume.metadata.json"
         )
-        assert result["resume"]["summary"] == resume_payload["summary"]
+        assert (
+            result["resume"]["basics"]["summary"] == resume_payload["basics"]["summary"]
+        )
         assert isinstance(result["resume_metadata"], dict)
 
     async def test_returns_the_skill_alongside_them(
@@ -379,9 +381,9 @@ class TestSlimming:
         )
         assert response.status_code == 200, response.text
         document = await self._load(admin, "resume.json")
-        published_job, withheld_job = ResumeTools.slim(document)["jobs"]
-        assert "publish" not in published_job
-        assert withheld_job["publish"] is False
+        published_work, withheld_work = ResumeTools.slim(document)["work"]
+        assert "publish" not in published_work
+        assert withheld_work["publish"] is False
 
     async def test_a_document_that_no_longer_validates_still_retrieves(self, admin):
         """A document written under a since-tightened schema — here, missing

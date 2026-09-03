@@ -36,14 +36,15 @@ async def test_openapi_documents_both_document_shapes(client):
         ]
 
     assert ref(public) != ref(private)
-    assert "Resume" in ref(public)
+    assert "ResumePublic" in ref(public)
     assert "ResumePrivate" in ref(private)
 
 
 async def test_public_schema_has_no_private_fields(client):
     schema = (await client.get("/openapi.json")).json()
-    contact = schema["components"]["schemas"]["ContactPublic"]["properties"]
-    assert set(contact) == {"locations", "links"}
+    basics = schema["components"]["schemas"]["PublicBasics"]["properties"]
+    assert "email" not in basics
+    assert "phone" not in basics
 
 
 async def test_mcp_app_is_mounted(client):

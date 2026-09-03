@@ -284,44 +284,37 @@ def totp_code():
 @pytest.fixture
 def resume_payload() -> dict:
     """A minimal but complete ResumePrivate. The marker strings are generated so
-    a leak assertion cannot pass by coincidence."""
+    a leak assertion cannot pass by coincidence. `lastUsed` cannot carry the
+    random marker directly — it is `Iso8601`-constrained — so it gets a
+    distinctive, otherwise-unused year instead.
+    """
     marker = secrets.token_hex(8)
     return {
-        "profile": {"name": "Test", "title": "Engineer", "tagline": "tagline"},
-        "contact": {
-            "locations": [{"label": "Remote", "kind": "remote", "note": "note"}],
-            "links": [{"label": "site", "url": "https://example.invalid"}],
-            "email_address": f"private-{marker}@example.invalid",
-            "mobile_number": f"555-{marker}",
+        "basics": {
+            "name": "Test",
+            "label": "Engineer",
+            "tagline": "tagline",
+            "email": f"private-{marker}@example.invalid",
+            "phone": f"555-{marker}",
+            "summary": "summary",
+            "location": {"label": "Remote", "kind": "remote", "note": "note"},
+            "profiles": [{"network": "site", "url": "https://example.invalid"}],
         },
-        "summary": "summary",
-        "skill_groups": [
+        "work": [
             {
-                "name": "group",
-                "skills": [
-                    {
-                        "name": "Python",
-                        "level": "expert",
-                        "last_used": f"last-used-{marker}",
-                    }
-                ],
-            }
-        ],
-        "certifications": [],
-        "jobs": [
-            {
-                "company": "Company",
-                "company_location": "Remote",
-                "start": "2020-01",
-                "end": None,
+                "name": "Company",
+                "location": "Remote",
+                "startDate": "2020-01",
+                "endDate": None,
                 "description": "description",
-                "role_location": "Remote",
-                "roles": [{"title": "Engineer", "start": "2020", "end": None}],
+                "position": "Engineer",
+                "roleLocation": "Remote",
+                "roles": [{"title": "Engineer", "startDate": "2020", "endDate": None}],
                 "highlights": [
                     {
                         "id": "highlight-1",
                         "summary": "did a thing",
-                        "specifics": ["detail"],
+                        "specifics": [{"detail": "detail"}],
                         "tech": [f"tech-{marker}"],
                         "metrics": [
                             {
@@ -330,50 +323,55 @@ def resume_payload() -> dict:
                                 "basis": "basis",
                             }
                         ],
+                        "story": f"story-{marker}",
                     }
                 ],
             }
         ],
-        "education": [],
-        "personal_projects": [],
-        "fine_tuning_data": {"email_address": f"private-{marker}@example.invalid"},
+        "skills": [
+            {
+                "name": "group",
+                "keywords": [{"name": "Python", "level": "expert", "lastUsed": "1907"}],
+            }
+        ],
     }
 
 
 @pytest.fixture
 def private_markers(resume_payload) -> list[str]:
     """Every value that must never appear in a public response."""
-    contact = resume_payload["contact"]
-    highlight = resume_payload["jobs"][0]["highlights"][0]
-    skill = resume_payload["skill_groups"][0]["skills"][0]
+    basics = resume_payload["basics"]
+    highlight = resume_payload["work"][0]["highlights"][0]
+    keyword = resume_payload["skills"][0]["keywords"][0]
     return [
-        contact["email_address"],
-        contact["mobile_number"],
+        basics["email"],
+        basics["phone"],
         highlight["tech"][0],
         highlight["metrics"][0]["figure"],
-        skill["last_used"],
+        highlight["story"],
+        keyword["lastUsed"],
     ]
 
 
 @pytest.fixture
 def withheld_resume_payload(resume_payload) -> dict:
-    """`resume_payload` plus a second job marked `publish: false`.
+    """`resume_payload` plus a second work entry marked `publish: false`.
 
     A separate fixture rather than editing `resume_payload` itself, so every
     existing assertion elsewhere — the CORS tests, the unflagged-projection
     guard — keeps exercising the ordinary, unwithheld path.
     """
-    hidden_job = {
-        **resume_payload["jobs"][0],
-        "company": "Hidden Co",
+    hidden_work = {
+        **resume_payload["work"][0],
+        "name": "Hidden Co",
         "publish": False,
         "highlights": [
-            {**resume_payload["jobs"][0]["highlights"][0], "id": "hidden-highlight"}
+            {**resume_payload["work"][0]["highlights"][0], "id": "hidden-highlight"}
         ],
     }
     return {
         **resume_payload,
-        "jobs": [resume_payload["jobs"][0], hidden_job],
+        "work": [resume_payload["work"][0], hidden_work],
     }
 
 

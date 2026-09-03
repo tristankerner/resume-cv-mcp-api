@@ -32,9 +32,9 @@ from services.document.dtos.rename_document import (
 )
 from services.document.dtos.resume_object import (
     PublicProjection,
-    Resume,
     ResumeMetadata,
     ResumePrivate,
+    ResumePublic,
 )
 from services.document.dtos.resume_skill import ResumeSkill
 from services.document.exceptions import DocumentErrors
@@ -81,7 +81,7 @@ class DocumentService(ServiceProviderInterface):
 
     async def _read_public(
         self, user: User | None, document_name: str
-    ) -> GetDocumentResponse[Resume]:
+    ) -> GetDocumentResponse[ResumePublic]:
         """No credential required, by design. Never 403: whether a private
         document exists is not itself public information."""
         if user is None or not user.active:
@@ -100,13 +100,13 @@ class DocumentService(ServiceProviderInterface):
 
     async def read_public_resume_document_by_username(
         self, username: str, document_name: str
-    ) -> GetDocumentResponse[Resume]:
+    ) -> GetDocumentResponse[ResumePublic]:
         user = await User.get_user_by_username(self.db, username)
         return await self._read_public(user, document_name)
 
     async def read_public_resume_document_by_id(
         self, user_id: int, document_name: str
-    ) -> GetDocumentResponse[Resume]:
+    ) -> GetDocumentResponse[ResumePublic]:
         user = await User.get_user_by_id(self.db, user_id)
         return await self._read_public(user, document_name)
 

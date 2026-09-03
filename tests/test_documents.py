@@ -2,8 +2,10 @@
 revision options, and deletion."""
 
 import json
+from typing import ClassVar
 
 import pytest
+from pydantic import ValidationError
 
 from persistence.document import Document
 from persistence.user import User
@@ -58,9 +60,10 @@ async def test_public_read_omits_every_private_field(
 
 async def test_public_read_keeps_the_public_fields(client, stored_resume):
     data = (await client.get("/public/admin-user/resume/resume.json")).json()["data"]
-    assert data["profile"]["name"] == "Test"
-    assert data["jobs"][0]["highlights"][0]["summary"] == "did a thing"
-    assert set(data["contact"]) == {"locations", "links"}
+    assert data["basics"]["name"] == "Test"
+    assert data["work"][0]["highlights"][0]["summary"] == "did a thing"
+    assert "email" not in data["basics"]
+    assert "phone" not in data["basics"]
 
 
 async def test_public_read_is_deny_by_default(client, stored_metadata):
@@ -191,7 +194,10 @@ async def test_write_starts_at_revision_one(stored_resume):
 async def test_write_increments_revision_when_data_changes(
     client, admin, stored_resume, resume_payload
 ):
-    changed = {**resume_payload, "summary": "a different summary"}
+    changed = {
+        **resume_payload,
+        "basics": {**resume_payload["basics"], "summary": "a different summary"},
+    }
     response = await client.post(
         "/documents/resume",
         headers=admin.headers,
@@ -224,7 +230,10 @@ async def test_write_is_a_no_op_when_data_and_public_are_unchanged(
 async def test_read_returns_the_latest_revision(
     client, admin, stored_resume, resume_payload
 ):
-    changed = {**resume_payload, "summary": "newest"}
+    changed = {
+        **resume_payload,
+        "basics": {**resume_payload["basics"], "summary": "newest"},
+    }
     await client.post(
         "/documents/resume",
         headers=admin.headers,
@@ -236,28 +245,58 @@ async def test_read_returns_the_latest_revision(
         },
     )
     response = await client.get("/documents/resume/resume.json", headers=admin.headers)
-    assert latest(response)["data"]["summary"] == "newest"
+    assert latest(response)["data"]["basics"]["summary"] == "newest"
 
 
-async def test_camel_case_body_is_rejected(client, admin, resume_payload):
+async def test_camel_case_resume_body_is_accepted(client, admin, resume_payload):
+    """Unlike every other document type, the resume payload is JSON Resume
+    shaped and accepts camelCase on the way in — see `resume_object.Base`."""
     camel = {**resume_payload}
-    camel["skillGroups"] = camel.pop("skill_groups")
+    camel["fineTuningData"] = {"narrative": {"careerArc": "arc"}}
     response = await client.post(
         "/documents/resume",
         headers=admin.headers,
         json={"name": "resume.json", "revision_note": "v", "data": camel},
     )
+    assert response.status_code == 200, response.text
+
+
+async def test_camel_case_metadata_body_is_still_rejected(
+    client, admin, metadata_payload
+):
+    """The resume payload's camelCase acceptance is deliberately narrow — the
+    metadata and skill documents keep the API's usual snake_case-only rule."""
+    camel = {**metadata_payload}
+    camel["schemaVersion"] = camel.pop("schema_version")
+    response = await client.post(
+        "/documents/metadata",
+        headers=admin.headers,
+        json={"name": "m.json", "revision_note": "v", "data": camel},
+    )
     assert response.status_code == 422
 
 
-async def test_responses_are_snake_case(client, stored_resume, admin):
+async def test_resume_responses_are_camel_case(client, stored_resume, admin):
+    """Unlike every other body in the API — see `resume_object.Base`."""
     private = json.dumps(
         (
             await client.get("/documents/resume/resume.json", headers=admin.headers)
         ).json()
     )
-    assert "fine_tuning_data" in private
-    assert "fineTuningData" not in private
+    assert "startDate" in private
+    assert "start_date" not in private
+
+
+async def test_metadata_responses_are_snake_case(client, stored_metadata, admin):
+    private = json.dumps(
+        (
+            await client.get(
+                "/documents/metadata/resume.metadata.json", headers=admin.headers
+            )
+        ).json()
+    )
+    assert "never_publish" in private
+    assert "neverPublish" not in private
 
 
 class TestUpsertStatus:
@@ -498,7 +537,7 @@ class TestTypeIsPinnedToRoutes:
         intact = await client.get(
             "/documents/resume/resume.json", headers=admin.headers
         )
-        assert latest(intact)["data"]["profile"]["name"] == "Test"
+        assert latest(intact)["data"]["basics"]["name"] == "Test"
 
     async def test_the_public_route_cannot_be_poisoned(
         self, client, admin, stored_resume, skill_payload
@@ -513,7 +552,7 @@ class TestTypeIsPinnedToRoutes:
         )
         response = await client.get("/public/admin-user/resume/resume.json")
         assert response.status_code == 200
-        assert response.json()["data"]["profile"]["name"] == "Test"
+        assert response.json()["data"]["basics"]["name"] == "Test"
 
     async def test_metadata_cannot_be_written_as_a_resume(
         self, client, admin, stored_metadata, resume_payload
@@ -572,7 +611,13 @@ class TestOwnershipIsolation:
     async def test_two_users_can_each_hold_a_document_of_the_same_name(
         self, client, admin, other_owner, stored_resume, resume_payload
     ):
-        other_payload = {**resume_payload, "summary": "the other owner's summary"}
+        other_payload = {
+            **resume_payload,
+            "basics": {
+                **resume_payload["basics"],
+                "summary": "the other owner's summary",
+            },
+        }
         await client.post(
             "/documents/resume",
             headers=other_owner.headers,
@@ -588,13 +633,21 @@ class TestOwnershipIsolation:
         theirs = await client.get(
             "/documents/resume/resume.json", headers=other_owner.headers
         )
-        assert latest(mine)["data"]["summary"] == "summary"
-        assert latest(theirs)["data"]["summary"] == "the other owner's summary"
+        assert latest(mine)["data"]["basics"]["summary"] == "summary"
+        assert (
+            latest(theirs)["data"]["basics"]["summary"] == "the other owner's summary"
+        )
 
     async def test_public_routes_are_scoped_by_owner_too(
         self, client, admin, other_owner, resume_payload, stored_resume
     ):
-        other_payload = {**resume_payload, "summary": "the other owner's summary"}
+        other_payload = {
+            **resume_payload,
+            "basics": {
+                **resume_payload["basics"],
+                "summary": "the other owner's summary",
+            },
+        }
         await client.post(
             "/documents/resume",
             headers=other_owner.headers,
@@ -608,8 +661,8 @@ class TestOwnershipIsolation:
 
         mine = await client.get("/public/admin-user/resume/resume.json")
         theirs = await client.get("/public/other-owner/resume/resume.json")
-        assert mine.json()["data"]["summary"] == "summary"
-        assert theirs.json()["data"]["summary"] == "the other owner's summary"
+        assert mine.json()["data"]["basics"]["summary"] == "summary"
+        assert theirs.json()["data"]["basics"]["summary"] == "the other owner's summary"
 
     async def test_deleting_your_own_does_not_touch_theirs(
         self, client, admin, other_owner, stored_resume, resume_payload
@@ -689,7 +742,10 @@ class TestPublicFlag:
         """The failure this guards against is quiet: a write that only edits
         content, with no `public` in the body, taking the published document
         offline. `public` is three-valued so that unstated means unchanged."""
-        revised = {**resume_payload, "summary": "reworded"}
+        revised = {
+            **resume_payload,
+            "basics": {**resume_payload["basics"], "summary": "reworded"},
+        }
         response = await client.post(
             "/documents/resume",
             headers=admin.headers,
@@ -750,7 +806,7 @@ class TestEntryWithholding:
         )
         response = await client.get("/public/admin-user/resume/resume.json")
         assert response.status_code == 200
-        companies = [job["company"] for job in response.json()["data"]["jobs"]]
+        companies = [entry["name"] for entry in response.json()["data"]["work"]]
         assert "Hidden Co" not in companies
 
     async def test_a_withheld_job_is_present_in_the_private_read(
@@ -769,7 +825,7 @@ class TestEntryWithholding:
         response = await client.get(
             "/documents/resume/resume.json", headers=admin.headers
         )
-        companies = [job["company"] for job in latest(response)["data"]["jobs"]]
+        companies = [entry["name"] for entry in latest(response)["data"]["work"]]
         assert "Hidden Co" in companies
 
 
@@ -824,7 +880,13 @@ class TestRevisionOptions:
                     "name": "resume.json",
                     "revision_note": f"v{i}",
                     "public": True,
-                    "data": {**resume_payload, "summary": f"summary-{i}"},
+                    "data": {
+                        **resume_payload,
+                        "basics": {
+                            **resume_payload["basics"],
+                            "summary": f"summary-{i}",
+                        },
+                    },
                 },
             )
         response = await client.get(
@@ -832,7 +894,7 @@ class TestRevisionOptions:
         )
         data = response.json()["data"]
         assert len(data) == 1
-        assert data[0]["data"]["summary"] == "summary-2"
+        assert data[0]["data"]["basics"]["summary"] == "summary-2"
 
     async def test_revisions_and_oldest_first_selects_the_most_recent_slice(
         self, client, admin, stored_resume, resume_payload
@@ -847,7 +909,13 @@ class TestRevisionOptions:
                     "name": "resume.json",
                     "revision_note": f"v{i}",
                     "public": True,
-                    "data": {**resume_payload, "summary": f"summary-{i}"},
+                    "data": {
+                        **resume_payload,
+                        "basics": {
+                            **resume_payload["basics"],
+                            "summary": f"summary-{i}",
+                        },
+                    },
                 },
             )
         # Revisions on disk: initial(1), v0(2), v1(3), v2(4), v3(5).
@@ -856,7 +924,7 @@ class TestRevisionOptions:
             headers=admin.headers,
         )
         data = response.json()["data"]
-        assert [d["data"]["summary"] for d in data] == [
+        assert [d["data"]["basics"]["summary"] for d in data] == [
             "summary-1",
             "summary-2",
             "summary-3",
@@ -874,7 +942,13 @@ class TestRevisionOptions:
                     "name": "resume.json",
                     "revision_note": f"v{i}",
                     "public": True,
-                    "data": {**resume_payload, "summary": f"summary-{i}"},
+                    "data": {
+                        **resume_payload,
+                        "basics": {
+                            **resume_payload["basics"],
+                            "summary": f"summary-{i}",
+                        },
+                    },
                 },
             )
         response = await client.get(
@@ -882,7 +956,10 @@ class TestRevisionOptions:
             headers=admin.headers,
         )
         data = response.json()["data"]
-        assert [d["data"]["summary"] for d in data] == ["summary-1", "summary-0"]
+        assert [d["data"]["basics"]["summary"] for d in data] == [
+            "summary-1",
+            "summary-0",
+        ]
 
     async def test_revisions_over_the_cap_is_rejected(
         self, client, admin, stored_resume
@@ -919,7 +996,13 @@ class TestListDocuments:
                     "name": "resume.json",
                     "revision_note": f"v{i}",
                     "public": True,
-                    "data": {**resume_payload, "summary": f"summary-{i}"},
+                    "data": {
+                        **resume_payload,
+                        "basics": {
+                            **resume_payload["basics"],
+                            "summary": f"summary-{i}",
+                        },
+                    },
                 },
             )
         response = await client.get("/documents", headers=admin.headers)
@@ -1015,10 +1098,10 @@ class TestDocumentSchemas:
         fork that never edits its metadata document."""
         response = await client.get("/documents/schemas", headers=admin.headers)
         schema = response.json()["schemas"]["resume"]
-        job = schema["$defs"]["JobPrivate"]["properties"]["publish"]
-        assert job["default"] is True
-        assert "public feed only" in job["description"]
-        assert "tailored resume" in job["description"]
+        work = schema["$defs"]["Work"]["properties"]["publish"]
+        assert work["default"] is True
+        assert "public feed only" in work["description"]
+        assert "tailored resume" in work["description"]
 
 
 class TestDeletion:
@@ -1031,7 +1114,10 @@ class TestDeletion:
             json={
                 "name": "resume.json",
                 "revision_note": "v2",
-                "data": {**resume_payload, "summary": "changed"},
+                "data": {
+                    **resume_payload,
+                    "basics": {**resume_payload["basics"], "summary": "changed"},
+                },
             },
         )
 
@@ -1119,7 +1205,10 @@ class TestRename:
                 "name": "resume.json",
                 "revision_note": "v2",
                 "public": True,
-                "data": {**resume_payload, "summary": "changed"},
+                "data": {
+                    **resume_payload,
+                    "basics": {**resume_payload["basics"], "summary": "changed"},
+                },
             },
         )
 
@@ -1280,52 +1369,53 @@ class TestRename:
 
 class TestPublicProjection:
     """PublicProjection is the redaction primitive; the routes depend on it
-    holding."""
+    holding. See `tests/test_public_projection.py` for the structural
+    guarantees; this class covers the withholding behaviour."""
 
     def test_unflagged_input_projects_exactly_as_before(self, resume_payload):
         """The regression guard: `resume_payload` sets no `publish` anywhere,
         so withholding must be a no-op and the change purely additive."""
         public = PublicProjection.of(ResumePrivate.model_validate(resume_payload))
-        job = resume_payload["jobs"][0]
-        highlight = job["highlights"][0]
-        skill_group = resume_payload["skill_groups"][0]
-        skill = skill_group["skills"][0]
-        assert public.model_dump() == {
-            "profile": resume_payload["profile"],
-            "contact": {
-                "locations": resume_payload["contact"]["locations"],
-                "links": resume_payload["contact"]["links"],
+        work = resume_payload["work"][0]
+        highlight = work["highlights"][0]
+        skill = resume_payload["skills"][0]
+        keyword = skill["keywords"][0]
+        assert public.model_dump(exclude_defaults=True) == {
+            "basics": {
+                "name": resume_payload["basics"]["name"],
+                "label": resume_payload["basics"]["label"],
+                "tagline": resume_payload["basics"]["tagline"],
+                "summary": resume_payload["basics"]["summary"],
+                "location": {
+                    "label": resume_payload["basics"]["location"]["label"],
+                    "kind": resume_payload["basics"]["location"]["kind"],
+                    "note": resume_payload["basics"]["location"]["note"],
+                },
+                "profiles": resume_payload["basics"]["profiles"],
             },
-            "summary": resume_payload["summary"],
-            "skill_groups": [
+            "work": [
                 {
-                    "name": skill_group["name"],
-                    "skills": [{"name": skill["name"], "url": None}],
-                }
-            ],
-            "certifications": [],
-            "jobs": [
-                {
-                    "company": job["company"],
-                    "company_url": None,
-                    "company_location": job["company_location"],
-                    "start": job["start"],
-                    "end": job["end"],
-                    "via_employer": None,
-                    "description": job["description"],
-                    "role_location": job["role_location"],
-                    "roles": job["roles"],
+                    "name": work["name"],
+                    "location": work["location"],
+                    "description": work["description"],
+                    "position": work["position"],
+                    "start_date": work["startDate"],
+                    "role_location": work["roleLocation"],
+                    "roles": [
+                        {"title": "Engineer", "start_date": "2020"},
+                    ],
                     "highlights": [
                         {
                             "id": highlight["id"],
                             "summary": highlight["summary"],
-                            "specifics": highlight["specifics"],
+                            "specifics": [{"detail": "detail"}],
                         }
                     ],
                 }
             ],
-            "education": [],
-            "personal_projects": [],
+            "skills": [
+                {"name": skill["name"], "keywords": [{"name": keyword["name"]}]}
+            ],
         }
 
     def test_drops_private_fields_at_every_depth(self, resume_payload, private_markers):
@@ -1336,168 +1426,170 @@ class TestPublicProjection:
 
     def test_keeps_public_fields(self, resume_payload):
         public = PublicProjection.of(ResumePrivate.model_validate(resume_payload))
-        assert public.jobs[0].highlights[0].summary == "did a thing"
-        assert public.profile.name == "Test"
+        assert public.work[0].highlights[0].summary == "did a thing"
+        assert public.basics.name == "Test"
 
     def test_drops_skill_ratings_but_keeps_the_skill(self, resume_payload):
         """`level` is a fixed vocabulary, so it cannot carry a unique marker
-        into private_markers the way `last_used` does. Assert on the key."""
+        into private_markers the way `lastUsed` does. Assert on the key."""
         public = PublicProjection.of(ResumePrivate.model_validate(resume_payload))
-        skill = public.skill_groups[0].skills[0].model_dump()
-        assert skill["name"] == "Python"
-        assert "level" not in skill
-        assert "last_used" not in skill
+        keyword = public.skills[0].keywords[0].model_dump()
+        assert keyword["name"] == "Python"
+        assert "level" not in keyword
+        assert "last_used" not in keyword
 
-    def test_subclass_passthrough_is_why_this_helper_exists(self, resume_payload):
-        """Resume.model_validate does NOT redact: ResumePrivate subclasses
-        Resume, so validation hands the private instance straight back. This
-        pins the behaviour the helper works around."""
-        from services.document.dtos.resume_object import Resume
+    def test_a_private_field_left_unstripped_raises_instead_of_serving(
+        self, resume_payload
+    ):
+        """The structural guarantee this whole tree exists for: a field
+        `NEVER_PUBLISHED` fails to exclude does not quietly serve, because
+        `ResumePublic.model_validate` has no slot for it and `extra="forbid"`
+        is still in force."""
+
+        class BrokenProjection(PublicProjection):
+            NEVER_PUBLISHED: ClassVar[dict] = {}  # pretend nothing is excluded now
 
         private = ResumePrivate.model_validate(resume_payload)
-        assert isinstance(Resume.model_validate(private), ResumePrivate)
+        with pytest.raises(ValidationError):
+            BrokenProjection(private).build()
 
     def test_publish_flag_never_reaches_the_public_payload(self, resume_payload):
-        """The flag is declared on the private classes only, so the envelope
-        trick that drops `story` and `last_used` drops this too, at every
-        depth, with no explicit exclusion anywhere."""
+        """The flag is declared on the private classes only, so redaction
+        drops it at every depth, with no explicit exclusion anywhere."""
         public = PublicProjection.of(ResumePrivate.model_validate(resume_payload))
         assert "publish" not in json.dumps(public.model_dump())
 
-    def test_a_withheld_job_is_dropped(self, resume_payload):
+    def test_a_withheld_work_entry_is_dropped(self, resume_payload):
         withheld = {
             **resume_payload,
-            "jobs": [{**resume_payload["jobs"][0], "publish": False}],
+            "work": [{**resume_payload["work"][0], "publish": False}],
         }
         public = PublicProjection.of(ResumePrivate.model_validate(withheld))
-        assert public.jobs == []
+        assert public.work == []
 
-    def test_a_withheld_highlight_inside_a_published_job_is_dropped(
+    def test_a_withheld_highlight_inside_a_published_work_entry_is_dropped(
         self, resume_payload
     ):
-        job = resume_payload["jobs"][0]
+        work = resume_payload["work"][0]
         withheld = {
             **resume_payload,
-            "jobs": [
+            "work": [
                 {
-                    **job,
-                    "highlights": [{**job["highlights"][0], "publish": False}],
+                    **work,
+                    "highlights": [{**work["highlights"][0], "publish": False}],
                 }
             ],
         }
         public = PublicProjection.of(ResumePrivate.model_validate(withheld))
-        assert len(public.jobs) == 1
-        assert public.jobs[0].highlights == []
+        assert len(public.work) == 1
+        assert public.work[0].highlights == []
 
-    def test_a_published_job_survives_every_highlight_withheld(self, resume_payload):
-        """The job itself is load-bearing: dropping it would leave a silent
-        gap in the employment timeline, so only the highlights empty out."""
-        job = resume_payload["jobs"][0]
+    def test_a_published_work_entry_survives_every_highlight_withheld(
+        self, resume_payload
+    ):
+        """The employment record is load-bearing: dropping it would leave a
+        silent gap in the timeline, so only the highlights empty out."""
+        work = resume_payload["work"][0]
         withheld = {
             **resume_payload,
-            "jobs": [
+            "work": [
                 {
-                    **job,
-                    "highlights": [{**job["highlights"][0], "publish": False}],
+                    **work,
+                    "highlights": [{**work["highlights"][0], "publish": False}],
                 }
             ],
         }
         public = PublicProjection.of(ResumePrivate.model_validate(withheld))
-        assert public.jobs[0].company == job["company"]
+        assert public.work[0].name == work["name"]
 
     def test_a_withheld_skill_group_is_dropped(self, resume_payload):
         withheld = {
             **resume_payload,
-            "skill_groups": [{**resume_payload["skill_groups"][0], "publish": False}],
+            "skills": [{**resume_payload["skills"][0], "publish": False}],
         }
         public = PublicProjection.of(ResumePrivate.model_validate(withheld))
-        assert public.skill_groups == []
+        assert public.skills == []
 
-    def test_a_withheld_skill_is_dropped_but_the_group_survives(self, resume_payload):
-        group = resume_payload["skill_groups"][0]
-        skills = group["skills"] + [{**group["skills"][0], "name": "Rust"}]
+    def test_a_withheld_keyword_is_dropped_but_the_group_survives(self, resume_payload):
+        group = resume_payload["skills"][0]
+        keywords = group["keywords"] + [{**group["keywords"][0], "name": "Rust"}]
         withheld = {
             **resume_payload,
-            "skill_groups": [
-                {**group, "skills": [{**skills[0], "publish": False}, skills[1]]}
+            "skills": [
+                {**group, "keywords": [{**keywords[0], "publish": False}, keywords[1]]}
             ],
         }
         public = PublicProjection.of(ResumePrivate.model_validate(withheld))
-        assert len(public.skill_groups) == 1
-        assert [s.name for s in public.skill_groups[0].skills] == ["Rust"]
+        assert len(public.skills) == 1
+        assert [k.name for k in public.skills[0].keywords] == ["Rust"]
 
-    def test_a_published_group_with_every_skill_withheld_is_dropped_too(
+    def test_a_published_group_with_every_keyword_withheld_is_dropped_too(
         self, resume_payload
     ):
-        """Unlike a job's highlights, a skill group with nothing left under
-        it is dropped entirely — a heading with no skills is a rendering
-        artifact, not information."""
-        group = resume_payload["skill_groups"][0]
+        """Unlike a work entry's highlights, a skill group with nothing left
+        under it is dropped entirely — a heading with no skills is a
+        rendering artifact, not information."""
+        group = resume_payload["skills"][0]
         withheld = {
             **resume_payload,
-            "skill_groups": [
-                {**group, "skills": [{**group["skills"][0], "publish": False}]}
+            "skills": [
+                {**group, "keywords": [{**group["keywords"][0], "publish": False}]}
             ],
         }
         public = PublicProjection.of(ResumePrivate.model_validate(withheld))
-        assert public.skill_groups == []
+        assert public.skills == []
 
-    def test_a_withheld_certification_is_dropped(self, resume_payload):
+    def test_a_withheld_certificate_is_dropped(self, resume_payload):
         withheld = {
             **resume_payload,
-            "certifications": [{"name": "Withheld Cert", "publish": False}],
+            "certificates": [{"name": "Withheld Cert", "publish": False}],
         }
         public = PublicProjection.of(ResumePrivate.model_validate(withheld))
-        assert public.certifications == []
+        assert public.certificates == []
 
     def test_a_withheld_education_entry_is_dropped(self, resume_payload):
         withheld = {
             **resume_payload,
-            "education": [{"credential": "Withheld Degree", "publish": False}],
+            "education": [{"studyType": "Withheld Degree", "publish": False}],
         }
         public = PublicProjection.of(ResumePrivate.model_validate(withheld))
         assert public.education == []
 
-    def test_a_withheld_personal_project_is_dropped(self, resume_payload):
+    def test_a_withheld_project_is_dropped(self, resume_payload):
         withheld = {
             **resume_payload,
-            "personal_projects": [
-                {"description": "Withheld Project", "publish": False}
-            ],
+            "projects": [{"description": "Withheld Project", "publish": False}],
         }
         public = PublicProjection.of(ResumePrivate.model_validate(withheld))
-        assert public.personal_projects == []
+        assert public.projects == []
 
-    def test_every_location_withheld_keeps_contact_with_an_empty_list(
+    def test_every_location_withheld_keeps_basics_without_a_location(
         self, resume_payload
     ):
-        """Nothing on the page requires locations to be non-empty, so this is
-        a plain filter with no special-casing — unlike a skill group, contact
+        """Nothing on the page requires a location to be present, so this is
+        a plain filter with no special-casing — unlike a skill group, basics
         itself is never dropped."""
-        contact = resume_payload["contact"]
+        basics = resume_payload["basics"]
         withheld = {
             **resume_payload,
-            "contact": {
-                **contact,
-                "locations": [{**contact["locations"][0], "publish": False}],
-            },
+            "basics": {**basics, "location": {**basics["location"], "publish": False}},
         }
         public = PublicProjection.of(ResumePrivate.model_validate(withheld))
-        assert public.contact.locations == []
-        assert public.contact.links != []
+        assert public.basics.location is None
 
-    def test_every_link_withheld_keeps_contact_with_an_empty_list(self, resume_payload):
-        contact = resume_payload["contact"]
+    def test_every_profile_withheld_keeps_basics_with_an_empty_list(
+        self, resume_payload
+    ):
+        basics = resume_payload["basics"]
         withheld = {
             **resume_payload,
-            "contact": {
-                **contact,
-                "links": [{**contact["links"][0], "publish": False}],
+            "basics": {
+                **basics,
+                "profiles": [{**basics["profiles"][0], "publish": False}],
             },
         }
         public = PublicProjection.of(ResumePrivate.model_validate(withheld))
-        assert public.contact.links == []
-        assert public.contact.locations != []
+        assert public.basics.profiles == []
 
 
 class TestAppendOnlyDocuments:

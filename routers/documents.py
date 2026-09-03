@@ -18,7 +18,11 @@ from services.document.dtos.rename_document import (
     RenameDocumentRequest,
     RenameDocumentResponse,
 )
-from services.document.dtos.resume_object import Resume, ResumeMetadata, ResumePrivate
+from services.document.dtos.resume_object import (
+    ResumeMetadata,
+    ResumePrivate,
+    ResumePublic,
+)
 from services.document.dtos.resume_skill import ResumeSkill
 
 
@@ -68,7 +72,7 @@ class DocumentsRouter:
         username: str,
         document_name: str,
         document_service: DocumentServiceDep,
-    ) -> GetDocumentResponse[Resume]:
+    ) -> GetDocumentResponse[ResumePublic]:
         return await document_service.read_public_resume_document_by_username(
             username, document_name
         )
@@ -78,7 +82,7 @@ class DocumentsRouter:
         user_id: int,
         document_name: str,
         document_service: DocumentServiceDep,
-    ) -> GetDocumentResponse[Resume]:
+    ) -> GetDocumentResponse[ResumePublic]:
         return await document_service.read_public_resume_document_by_id(
             user_id, document_name
         )
