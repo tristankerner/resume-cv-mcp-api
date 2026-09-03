@@ -70,6 +70,7 @@ Create Date: 2026-09-03 08:56:46.930415
 
 """
 import json
+import re
 from pathlib import Path
 from typing import Any, ClassVar, Sequence, Union
 
@@ -96,11 +97,29 @@ def _load(name: str) -> Any:
 
 
 class PathRewriter:
-    """Exact-string mapping from a v1 resume-payload path to its v2
+    """Longest-prefix mapping from a v1 resume-payload path to its v2
     equivalent, as referenced from a metadata or skill document. See the
-    module docstring for provenance."""
+    module docstring for provenance.
+
+    Matching is by *prefix*, not by whole string, and is insensitive to `[]`
+    markers on both sides. An exact-string table cannot survive real
+    documents: they reference paths at every depth and in both arities —
+    `resume.contact.locations[].label`, a bare `resume.jobs`, a trailing
+    `resume.jobs[].highlights[].tech[]` — and enumerating every one of those
+    is a table nobody can keep complete. Mapping the longest matching prefix
+    and carrying the remainder handles the whole family from one entry.
+
+    `[]` is stripped for lookup and re-derived from the frozen v2 schema
+    afterwards (`_recase`), because arity can change across the migration:
+    v1's `contact.locations[]` is a list, v2's `basics.location` is a single
+    object, so `contact.locations[].label` must come out as
+    `basics.location.label` and not `basics.location[].label`.
+    """
 
     MAPPING: ClassVar[dict[str, str]] = {
+        # The v1 `Profile` model dissolved into `Basics`; without this the
+        # whole `resume.profile...` family falls through unmapped.
+        "resume.profile": "resume.basics",
         "resume.profile.name": "resume.basics.name",
         "resume.profile.title": "resume.basics.label",
         "resume.profile.tagline": "resume.basics.tagline",
@@ -183,17 +202,85 @@ class PathRewriter:
         "role_families[].lead_highlight_ids": "resume_metadata.role_families[].lead_highlight_ids",
     }
 
+    # v1 identifiers that appear bare in prose rather than as a rooted path
+    # ("fine_tuning_data.logistics is background only", a `trim_order` entry
+    # reading "personal_projects"). Prose-only: they are not paths and must
+    # never be fed to `rewrite_path`.
+    BARE_PROSE: ClassVar[dict[str, str]] = {
+        "fine_tuning_data": "fineTuningData",
+        "skill_groups": "skills",
+        "personal_projects": "projects",
+    }
+
+    @staticmethod
+    def _normalise(path: str) -> str:
+        """Drop `[]` from every segment, so lookup is arity-insensitive."""
+        return ".".join(seg.removesuffix("[]") for seg in path.split("."))
+
+    @classmethod
+    def _recase(cls, normalised_v2: str) -> str:
+        """Re-insert `[]` on every non-terminal array segment, per the frozen
+        v2 schema. Terminal scalar lists carry no marker, matching the v2
+        catalogue example's own convention (`...highlights[].tech`)."""
+        segments = normalised_v2.split(".")
+        out = [segments[0]]
+        for index in range(1, len(segments)):
+            prefix = ".".join(segments[: index + 1])
+            terminal = index == len(segments) - 1
+            marker = "[]" if not terminal and _is_array(prefix) else ""
+            out.append(segments[index] + marker)
+        return ".".join(out)
+
+    @classmethod
+    def _rewrite_single(cls, value: str) -> str:
+        value = value.strip()
+        if not _looks_like_a_path(value):
+            return value
+        segments = cls._normalise(value).split(".")
+        for cut in range(len(segments), 0, -1):
+            prefix = ".".join(segments[:cut])
+            if prefix in _NORMALISED_MAPPING:
+                mapped = [_NORMALISED_MAPPING[prefix], *segments[cut:]]
+                return cls._recase(".".join(mapped))
+        return cls._recase(".".join(segments))
+
     @classmethod
     def rewrite_path(cls, value: str) -> str:
-        return cls.MAPPING.get(value, value)
+        """One path field's value. Real documents put more than one path in a
+        single field (`"resume.education, resume.certifications"`), so a
+        comma-joined list of paths is split, mapped and rejoined; anything
+        else is treated as one value. A value that is not path-shaped at all
+        — a display keyword like `header`, a URL — is returned untouched."""
+        parts = [part.strip() for part in value.split(",")]
+        if len(parts) > 1 and all(_looks_like_a_path(part) for part in parts if part):
+            return ", ".join(cls._rewrite_single(part) for part in parts)
+        return cls._rewrite_single(value)
 
     @classmethod
     def rewrite_prose(cls, text: str) -> str:
-        for old_path in sorted(cls.MAPPING, key=len, reverse=True):
-            if old_path in text:
-                text = text.replace(old_path, cls.MAPPING[old_path])
+        for old, new in _PROSE_SUBSTITUTIONS:
+            if old in text:
+                text = text.replace(old, new)
         return text
 
+
+# Built once from MAPPING. `_NORMALISED_MAPPING` is the arity-insensitive
+# index prefix matching walks; `_PROSE_SUBSTITUTIONS` is every spelling a v1
+# reference can take in prose — rooted, `[]`-less, and bare — longest-first so
+# a shorter key cannot shadow a longer one it is a prefix of.
+_NORMALISED_MAPPING: dict[str, str] = {
+    PathRewriter._normalise(old): PathRewriter._normalise(new)
+    for old, new in PathRewriter.MAPPING.items()
+}
+_PROSE_SUBSTITUTIONS: list[tuple[str, str]] = sorted(
+    {
+        **PathRewriter.MAPPING,
+        **_NORMALISED_MAPPING,
+        **PathRewriter.BARE_PROSE,
+    }.items(),
+    key=lambda item: len(item[0]),
+    reverse=True,
+)
 
 PATH_FIELD_NAMES = frozenset(
     {
@@ -212,12 +299,15 @@ PATH_FIELD_NAMES = frozenset(
         "read_first",
         "resolve_from",
         "reads",
+        # Both carry paths and were missing here. `never_publish` is replaced
+        # wholesale in the merge branch so it survived by luck; `sources` is
+        # unioned, so its v1 entries were being kept verbatim and silently
+        # left pointing at fields that no longer exist.
+        "never_publish",
+        "sources",
     }
 )
 MAYBE_PATH_FIELD_NAMES = frozenset({"header_contents"})
-PROSE_FIELD_NAMES = frozenset(
-    {"readme", "description", "rationale", "rules", "instructions", "note"}
-)
 PATH_ROOTS = ("resume.", "resume_metadata.", "resume_skill.")
 PATH_ROOT_NAMES = frozenset({"resume", "resume_metadata", "resume_skill"})
 
@@ -226,16 +316,62 @@ def _looks_like_a_path(value: str) -> bool:
     return value in PATH_ROOT_NAMES or value.startswith(PATH_ROOTS)
 
 
+def _is_array(v2_path: str) -> bool:
+    """Is this v2 path an array, per the frozen schema? Drives `_recase`."""
+    root_name, *rest = v2_path.split(".")
+    if root_name not in SchemaPathResolver.ROOTS:
+        return False
+    root = SchemaPathResolver.ROOTS[root_name]
+    node: Any = root
+    for raw in rest:
+        node = _deref(node, root)
+        if node.get("type") == "array" and "items" in node:
+            node = _deref(node["items"], root)
+        if not isinstance(node, dict) or "properties" not in node:
+            return False
+        name = raw.removesuffix("[]")
+        if name not in node["properties"]:
+            return False
+        node = node["properties"][name]
+    return _deref(node, root).get("type") == "array"
+
+
+def _deref(node: Any, root: dict) -> Any:
+    """Follow `$ref` and `anyOf`, but stop at an array rather than descending
+    into its items — the caller needs to see that it *is* an array."""
+    while isinstance(node, dict):
+        if "$ref" in node:
+            node = root["$defs"][node["$ref"].split("/")[-1]]
+            continue
+        if "anyOf" in node:
+            candidates = [c for c in node["anyOf"] if c.get("type") != "null"]
+            node = candidates[0] if candidates else node["anyOf"][0]
+            continue
+        break
+    return node
+
+
 class DocumentRewriter:
-    """Recursively rewrites every path-carrying and prose field of a raw
-    metadata/skill document, by field name — see the module docstring for
-    the field lists and the reasoning behind treating them differently."""
+    """Recursively rewrites a raw metadata/skill document: path fields by
+    the mapping, everything else as prose.
+
+    Prose handling is a denylist, not an allowlist. An earlier version listed
+    the prose fields by name and substituted only those, which meant every
+    free-text field nobody thought of — `rule`, `condition`, `never_claim`,
+    `structure`, `cautions` — kept its v1 references and passed every audit,
+    because the audits only check paths. Treating *any* string that is not a
+    path field as prose removes that whole class of miss: the substitution is
+    driven by the frozen mapping table and only ever replaces exact v1
+    spellings, so applying it more widely cannot invent a change.
+    """
 
     def rewrite(self, node: Any) -> Any:
         if isinstance(node, dict):
             return {key: self._value(key, value) for key, value in node.items()}
         if isinstance(node, list):
             return [self.rewrite(item) for item in node]
+        if isinstance(node, str):
+            return PathRewriter.rewrite_prose(node)
         return node
 
     def _value(self, key: str, value: Any) -> Any:
@@ -243,8 +379,6 @@ class DocumentRewriter:
             return self._paths(value)
         if key in MAYBE_PATH_FIELD_NAMES:
             return self._maybe_paths(value)
-        if key in PROSE_FIELD_NAMES:
-            return self._prose(value)
         return self.rewrite(value)
 
     def _paths(self, value: Any) -> Any:
@@ -258,21 +392,13 @@ class DocumentRewriter:
         return value
 
     def _maybe_paths(self, value: Any) -> Any:
+        """`header_contents` mixes paths with display words ("date",
+        "addressee"). Path-shaped entries are mapped; the rest are prose."""
         if isinstance(value, list):
             return [
                 PathRewriter.rewrite_path(v)
                 if isinstance(v, str) and _looks_like_a_path(v)
-                else v
-                for v in value
-            ]
-        return value
-
-    def _prose(self, value: Any) -> Any:
-        if isinstance(value, str):
-            return PathRewriter.rewrite_prose(value)
-        if isinstance(value, list):
-            return [
-                PathRewriter.rewrite_prose(v) if isinstance(v, str) else v
+                else self.rewrite(v)
                 for v in value
             ]
         return value
@@ -390,33 +516,21 @@ class StructureAndProseAudit:
                 if key not in new:
                     self.dropped.append(f"{where}.{key}")
                     continue
-                if key in PROSE_FIELD_NAMES:
-                    self._check_prose(old_value, new[key], f"{where}.{key}")
-                else:
-                    self.check(old_value, new[key], f"{where}.{key}")
+                if key in PATH_FIELD_NAMES or key in MAYBE_PATH_FIELD_NAMES:
+                    # Paths are covered by resolution (check 1), not here.
+                    continue
+                self.check(old_value, new[key], f"{where}.{key}")
         elif isinstance(old, list):
             if not isinstance(new, list) or len(new) < len(old):
                 self.dropped.append(where)
                 return
             for i, old_item in enumerate(old):
                 self.check(old_item, new[i], f"{where}[{i}]")
-
-    def _check_prose(self, old_value: Any, new_value: Any, where: str) -> None:
-        if isinstance(old_value, str):
-            if new_value != PathRewriter.rewrite_prose(old_value):
-                self.prose_mismatches.append(where)
-        elif isinstance(old_value, list):
-            if not isinstance(new_value, list) or len(new_value) < len(old_value):
-                self.dropped.append(where)
-                return
-            for i, old_item in enumerate(old_value):
-                expected = (
-                    PathRewriter.rewrite_prose(old_item)
-                    if isinstance(old_item, str)
-                    else old_item
-                )
-                if new_value[i] != expected:
-                    self.prose_mismatches.append(f"{where}[{i}]")
+        elif isinstance(old, str):
+            # Every string outside a path field is prose, and may differ only
+            # by the known literal substitution.
+            if new != PathRewriter.rewrite_prose(old):
+                self.prose_mismatches.append(where or "<root>")
 
     @property
     def clean(self) -> bool:
@@ -432,8 +546,62 @@ class StructureAndProseAudit:
 
 
 def _unresolved_paths(new_data: dict) -> list[str]:
+    """Path-shaped values that do not resolve against the frozen v2 schema.
+
+    Non-path-shaped values (a display keyword, a URL) are excluded rather
+    than failed — see `_maybe_paths`. They are counted by `_skipped_values`
+    so that exclusion is reported rather than silent.
+    """
     resolver = SchemaPathResolver()
-    return [p for p in PathCollector().collect(new_data) if not resolver.resolves(p)]
+    unresolved = []
+    for collected in PathCollector().collect(new_data):
+        for part in _split_paths(collected):
+            if _looks_like_a_path(part) and not resolver.resolves(part):
+                unresolved.append(part)
+    return unresolved
+
+
+def _skipped_values(new_data: dict) -> list[str]:
+    """Values in a path field that are not path-shaped, so were left alone."""
+    return [
+        part
+        for collected in PathCollector().collect(new_data)
+        for part in _split_paths(collected)
+        if not _looks_like_a_path(part)
+    ]
+
+
+def _split_paths(value: str) -> list[str]:
+    parts = [part.strip() for part in value.split(",")]
+    if len(parts) > 1 and all(_looks_like_a_path(part) for part in parts if part):
+        return parts
+    return [value]
+
+
+# Any surviving reference to a v1-only construct, rooted or bare. This is the
+# check path resolution cannot make: a stale reference sitting in prose is
+# invisible to `_unresolved_paths`, resolves against nothing, and would ship
+# as an instruction naming a field that no longer exists.
+V1_RESIDUE = re.compile(
+    r"\bresume\.(?:profile|contact|jobs|skill_groups|certifications"
+    r"|personal_projects|fine_tuning_data)\b[A-Za-z_\[\]\.]*"
+    r"|\bfine_tuning_data\b|\bskill_groups\b|\bpersonal_projects\b"
+)
+
+
+def _residual_v1_references(node: Any, where: str = "") -> list[str]:
+    """Every place a v1 reference survived, anywhere in the document."""
+    found: list[str] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            found.extend(_residual_v1_references(value, f"{where}.{key}"))
+    elif isinstance(node, list):
+        for index, item in enumerate(node):
+            found.extend(_residual_v1_references(item, f"{where}[{index}]"))
+    elif isinstance(node, str):
+        for hit in V1_RESIDUE.findall(node):
+            found.append(f"{where or '<root>'}: {hit}")
+    return found
 
 
 # --------------------------------------------------------------------------
@@ -514,9 +682,13 @@ class DocumentTypeConverter:
         return new_data
 
     def audit_replace(self, new_data: dict) -> str | None:
+        problems: list[str] = []
         if new_data != self.v2_example:
-            return "replaced document does not equal the v2 catalogue example"
-        return None
+            problems.append("  replaced document does not equal the v2 catalogue example")
+        residual = _residual_v1_references(new_data)
+        if residual:
+            problems.append(f"  v1 references survive in the v2 example: {residual}")
+        return "\n".join(problems) if problems else None
 
     def audit_merge(self, old_data: dict, new_data: dict) -> str | None:
         problems: list[str] = []
@@ -524,6 +696,14 @@ class DocumentTypeConverter:
         unresolved = _unresolved_paths(new_data)
         if unresolved:
             problems.append(f"  paths that do not resolve: {unresolved}")
+
+        # The check resolution cannot make. A v1 reference left in prose
+        # resolves against nothing and so is invisible above, but it is an
+        # instruction naming a field that no longer exists — exactly the
+        # silent breakage this migration exists to prevent.
+        residual = _residual_v1_references(new_data)
+        if residual:
+            problems.append(f"  v1 references that survived conversion: {residual}")
 
         structure = StructureAndProseAudit()
         structure.check(old_data, new_data)
@@ -652,10 +832,19 @@ def upgrade() -> None:
                 schema_version=2,
             )
         )
+        # Reported rather than silent: these are values sitting in a path
+        # field that are not path-shaped — a display keyword, a URL — so the
+        # conversion left them alone and the resolution audit skipped them.
+        # If one of them ought to have been a path, this line is the only
+        # place that would show it.
+        skipped = _skipped_values(new_data)
         print(
             f"user={row.created_by} name={row.name!r} type={row.type}: "
-            f"wrote revision {row.revision_id + 1} ({branch} branch)."
+            f"wrote revision {row.revision_id + 1} ({branch} branch), "
+            f"{len(skipped)} non-path value(s) left untouched."
         )
+        for value in skipped:
+            print(f"    left as-is: {value}")
 
     print(f"{len(candidates)} metadata/skill document(s) found; {len(conversions)} converted.")
 

@@ -8,3 +8,6 @@ coverage.xml
 .pytest_cache/
 htmlcov/
 __pycache__/
+examples/resume.json
+examples/resume.metadata.json
+examples/resume.skill.json
