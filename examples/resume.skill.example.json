@@ -2,7 +2,7 @@
   "name": "resume.skill.example.json",
   "revision_note": "Initial example tailoring skill.",
   "data": {
-    "schema_version": "1.0.0",
+    "schema_version": "2.0.0",
     "generated_at": "2026-01-15",
     "name": "tailor-resume",
     "title": "Tailor a resume to a job posting",
@@ -14,9 +14,9 @@
       {
         "key": "resume",
         "document": "resume.example.json",
-        "holds": "What happened: jobs, bullets, skills, contact details.",
+        "holds": "What happened: work history, highlights, skills, contact details.",
         "required": true,
-        "read_first": "resume.summary",
+        "read_first": "resume.basics.summary",
         "on_missing": "Stop and tell the user the resume document could not be loaded; do not proceed from memory."
       },
       {
@@ -37,6 +37,22 @@
         "rules": [
           "If given a link, fetch it before proceeding rather than guessing from the title."
         ]
+      },
+      {
+        "name": "contact_email",
+        "why": "A resume without a way to reach the candidate back is not usable.",
+        "resolve_from": "resume.basics.email",
+        "confirm_with_user": false,
+        "prompt": "What email address should the resume list?",
+        "rules": []
+      },
+      {
+        "name": "contact_phone",
+        "why": "Some postings and recruiters expect a phone number on the resume.",
+        "resolve_from": "resume.basics.phone",
+        "confirm_with_user": false,
+        "prompt": "What phone number, if any, should the resume list?",
+        "rules": []
       }
     ],
     "procedure": [
@@ -44,8 +60,8 @@
         "id": "read-inputs",
         "title": "Read the resume and metadata before touching the posting",
         "instructions": [
-          "Read resume.summary and resume.jobs[].highlights[].summary for every job.",
-          "Read disclosure.never_publish in the metadata and treat those paths as off-limits for the rest of the run."
+          "Read the professional summary and every highlight summary across the work history.",
+          "Read disclosure.never_publish in the metadata and treat those paths as off-limits for the public feed only — they remain eligible material for a tailored resume or cover letter."
         ],
         "reads": [
           "resume",
@@ -58,7 +74,8 @@
         "title": "Select highlights against the posting",
         "instructions": [
           "Match posting_signals in role_families against the posting text.",
-          "Prefer highlights whose tech list overlaps the posting's stated stack."
+          "Prefer highlights whose tech list overlaps the posting's stated stack.",
+          "Within a highlight, prefer a specific's own tech list over the highlight's broader one when a posting names a narrow requirement."
         ],
         "reads": [
           "resume_metadata.role_families"
@@ -77,23 +94,27 @@
       }
     ],
     "content_selection": {
-      "bullet_source": "resume.jobs[].highlights[].summary",
-      "judgement_source": "resume.jobs[].highlights[].specifics",
+      "bullet_source": "resume.work[].highlights[].summary",
+      "judgement_source": "resume.work[].highlights[].specifics[].detail",
       "rules": [
-        "Never include a highlight whose tech list has zero overlap with the posting, unless fewer than three highlights would remain."
+        "Never include a highlight whose tech list has zero overlap with the posting, unless fewer than three highlights would remain.",
+        "When a specific carries its own tech list, judge that specific's relevance against it rather than against the highlight's broader tech list."
       ],
       "length_limit": "One page",
       "trim_order": [
-        "oldest job's highlights first",
-        "certifications",
-        "personal_projects"
+        "oldest work entry's highlights first",
+        "certificates",
+        "projects"
       ]
     },
     "keywords": {
       "minimum": 3,
       "maximum": 12,
       "sources": [
-        "job_posting"
+        "job_posting",
+        "resume.skills[].keywords[].name",
+        "resume.work[].highlights[].tech",
+        "resume.work[].highlights[].specifics[].tech"
       ],
       "rules": [
         "Only use a keyword if it also describes something true about the candidate."
@@ -102,9 +123,9 @@
     "tailoring_rules": [
       {
         "id": "no-invented-metrics",
-        "rule": "Never state a number that does not appear in resume.jobs[].highlights[].metrics.",
+        "rule": "Never state a number that does not appear in resume.work[].highlights[].metrics.",
         "rationale": "An invented figure is the fastest way to lose credibility if asked about it in an interview.",
-        "applies_to": "resume.jobs[].highlights[].metrics"
+        "applies_to": "resume.work[].highlights[].metrics"
       }
     ],
     "summary": {
@@ -151,8 +172,8 @@
       "proof_selection": [
         "Choose the one highlight whose story field is populated and most relevant to the posting."
       ],
-      "story_path": "resume.jobs[].highlights[].story",
-      "voice_path": "resume.fine_tuning_data.narrative.voice",
+      "story_path": "resume.work[].highlights[].story",
+      "voice_path": "resume.fineTuningData.narrative.voice",
       "when_company_unknown": "Address the work itself rather than inventing enthusiasm for a company the candidate knows nothing about.",
       "never_claim": [
         "Do not claim familiarity with the company's product without evidence in the posting or from the user."
@@ -201,9 +222,9 @@
           "No tables, no text boxes, no graphics."
         ],
         "header_contents": [
-          "resume.profile.name",
-          "resume.profile.title",
-          "one location from resume.contact.locations"
+          "resume.basics.name",
+          "resume.basics.label",
+          "one location from resume.basics.location"
         ],
         "file_name_template": "{name}-resume-{company}.pdf",
         "file_name_example": "alex-rivera-resume-example-corp.pdf"
@@ -219,7 +240,7 @@
           "No letterhead graphics."
         ],
         "header_contents": [
-          "resume.profile.name",
+          "resume.basics.name",
           "date",
           "addressee"
         ],
