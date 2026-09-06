@@ -1,4 +1,7 @@
-# resume-mcp-api
+# resume-cv-mcp-api
+
+A résumé/CV — not anything about resuming a process — served as structured
+data over HTTP and MCP.
 
 Used to store and serve JSON résumés, résumé metadata (also JSON), and 
 fine-tuning skills as JSON. A user may have multiples of these documents. These
@@ -45,8 +48,8 @@ that update, because I made it in a fine-tuned resume, and not in a master.
 
 **Q:** Where's the gui?
 
-**A:** There is a separate repo, which should be available here (around the same time
-that this one is made public): [resume-mcp-api-clients](https://github.com/tristankerner/resume-mcp-api-clients)
+**A:** There is a separate repo, public alongside this one:
+[resume-cv-mcp-api-web-client](https://github.com/tristankerner/resume-cv-mcp-api-web-client)
 
 At the end of the day, I don't know that this project will be particularly useful for 
 anyone else. For the most part, it was something I wanted, for my workflow, and a way 

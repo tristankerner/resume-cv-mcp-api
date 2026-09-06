@@ -309,7 +309,7 @@ class Application:
             # on the REST surface too, so advertising the whole enum would let
             # a connector ask for — and get — users:admin.
             scopes_supported=sorted(str(scope) for scope in OAuthScopes.ISSUABLE),
-            resource_name="resume-api MCP",
+            resource_name="resume-cv-mcp-api MCP",
         )
 
     @staticmethod

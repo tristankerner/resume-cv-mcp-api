@@ -23,7 +23,7 @@ from pathlib import Path
 from cryptography.fernet import Fernet
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-_TMP_DIR = tempfile.mkdtemp(prefix="resume-api-tests-")
+_TMP_DIR = tempfile.mkdtemp(prefix="resume-cv-mcp-api-tests-")
 
 # Pinned rather than left to the default, so a developer whose .env says
 # production does not get a different suite than CI. Tests that need production

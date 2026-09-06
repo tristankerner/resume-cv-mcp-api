@@ -69,7 +69,7 @@ picture; this table is the settings alone.
 | `MFA_CHALLENGE_TTL_MINUTES` | `5` | How long the token `/token`, the docs login, or `POST /oauth/authorize` returns after a correct password stays redeemable with a code. Long enough to find a phone, short enough that one left in a shell history is worthless. |
 | `MFA_TOTP_DRIFT_STEPS` | `1` | Thirty-second steps either side of now that a TOTP code is accepted for. `1` tolerates roughly ninety seconds of clock skew between a phone and this server; `0` demands perfectly synchronised clocks and will generate support requests. |
 | `MFA_BACKUP_CODE_COUNT` | `10` | How many single-use recovery codes a set contains. Regenerating replaces the set outright — there is only ever one live. |
-| `MFA_ISSUER` | `resume-api` | The issuer name shown beside the account in an authenticator app. Purely cosmetic; worth setting when one person runs more than one deployment of this service. |
+| `MFA_ISSUER` | `resume-cv-mcp-api` | The issuer name shown beside the account in an authenticator app. Purely cosmetic; worth setting when one person runs more than one deployment of this service. |
 | `MFA_ENCRYPTION_KEYS` | — (required in production) | Fernet keys sealing TOTP secrets at rest, comma-separated, newest first. See below. |
 
 ### `MFA_ENCRYPTION_KEYS`

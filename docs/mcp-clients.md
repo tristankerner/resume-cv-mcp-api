@@ -169,7 +169,7 @@ execute the URL as a command.
     {
       "id": "resumeMcpKey",
       "type": "promptString",
-      "description": "resume-api MCP key",
+      "description": "resume-cv-mcp-api MCP key",
       "password": true
     }
   ]

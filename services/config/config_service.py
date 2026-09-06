@@ -177,7 +177,7 @@ class ConfigServiceModel(BaseSettings):
     mfa_totp_drift_steps: int = Field(default=1, ge=0, alias="MFA_TOTP_DRIFT_STEPS")
     mfa_backup_code_count: int = Field(default=10, ge=1, alias="MFA_BACKUP_CODE_COUNT")
     # The issuer an authenticator app shows beside the account name.
-    mfa_issuer: str = Field(default="resume-api", alias="MFA_ISSUER")
+    mfa_issuer: str = Field(default="resume-cv-mcp-api", alias="MFA_ISSUER")
 
     # Fernet keys for the TOTP secrets at rest, newest first: every key listed
     # can decrypt, the first one encrypts. Rotating is prepending a new key and

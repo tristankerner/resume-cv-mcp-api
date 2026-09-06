@@ -3,7 +3,7 @@ services:
     build:
       context: ./
       dockerfile: Dockerfile
-    image: resume-api:0.1
+    image: resume-cv-mcp-api:0.1
     volumes:
       - resume-data:/app/data
     env_file:

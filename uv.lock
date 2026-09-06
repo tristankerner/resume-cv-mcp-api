@@ -1527,7 +1527,7 @@ wheels = [
 ]
 
 [[package]]
-name = "resume-api"
+name = "resume-cv-mcp-api"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

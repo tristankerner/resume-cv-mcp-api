@@ -30,14 +30,14 @@ uv run python -m admin_cli bootstrap-admin
 ## Docker
 
 ```bash
-docker build -t resume-mcp-api .
+docker build -t resume-cv-mcp-api .
 docker run --rm -p 8000:8080 \
   -e PORT=8080 \
   -e AUTH_SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(64))") \
   -e BOOTSTRAP_ADMIN_USERNAME=admin \
   -e BOOTSTRAP_ADMIN_PASSWORD='Ch4nge-Me!' \
   -v resume-data:/app/data \
-  resume-mcp-api
+  resume-cv-mcp-api
 ```
 
 The image sets `PORT=8080` and expects whatever's in front of it to map a

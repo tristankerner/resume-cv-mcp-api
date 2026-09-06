@@ -44,7 +44,7 @@ def migration_db(monkeypatch):
     here needs the application, only the migrations themselves."""
     from services.config.config_service import ConfigService
 
-    tmpdir = tempfile.mkdtemp(prefix="resume-api-migration-test-")
+    tmpdir = tempfile.mkdtemp(prefix="resume-cv-mcp-api-migration-test-")
     db_path = Path(tmpdir) / "migration_test.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
     ConfigService.reset()
