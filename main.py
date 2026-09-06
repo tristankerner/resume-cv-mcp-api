@@ -160,7 +160,7 @@ class ClientRoute:
     Which file is the deployment's business: clients live in their own
     repositories and one is copied into the build context before
     `COPY . /app`. .dockerignore keeps a locally built
-    clients/web/dist/index.html out of any image on purpose — it is
+    clients/dist/index.html out of any image on purpose — it is
     gitignored, so nothing reviews what would be served.
 
     Its own class rather than a method on `Application` so the resolved path

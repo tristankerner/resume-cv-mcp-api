@@ -1,0 +1,27 @@
+# The API image with the browser client baked in and served at GET /client.
+#
+# Neither stage below builds from this directory. Two named build contexts do
+# the work, and docker-compose.web-client.yaml supplies both:
+#
+#   api     the image ./Dockerfile produces, as `service:api-base`
+#   client  a resume-cv-mcp-api-web-client checkout — a git URL by default,
+#           swappable for a local one with
+#           --build-context client=../resume-cv-mcp-api-web-client
+#
+# Node 22 to match the deploy pipeline's NODE_VERSION and this client's own CI.
+
+FROM node:22-alpine AS client-build
+WORKDIR /src
+COPY --from=client . /src
+RUN npm ci --no-audit --no-fund && npm run build
+
+FROM api AS runtime
+
+# /app/clients/web/index.html, not /app/clients/index.html: this is the path
+# a production deployment already sets CLIENT_HTML_PATH to (see
+# resume-tristankerner-com's deploy/02-build.sh), and matching it means one
+# documented value is correct for every way of building this image. It has
+# nothing to do with the client repository's own layout, which has no web/
+# directory — only this image's internal path convention.
+COPY --from=client-build /src/dist/index.html /app/clients/web/index.html
+ENV CLIENT_HTML_PATH=/app/clients/web/index.html

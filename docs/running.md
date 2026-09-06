@@ -49,10 +49,11 @@ volume inherits the mountpoint's ownership from the image instead. If you want
 to open the SQLite file directly from the host, run the app outside the
 container — the native-Python path above.
 
-To bake the browser client into the image, copy one into the build context
-before building and set `CLIENT_HTML_PATH` to where `COPY . /app` puts it — see
-the README's "Browser client". The image builds and runs fine without one;
-`GET /client` just is not registered.
+To bake the browser client into this image by hand, copy one into the build
+context before building and set `CLIENT_HTML_PATH` to where `COPY . /app`
+puts it — see the README's "Browser client". The image builds and runs fine
+without one; `GET /client` just is not registered. `Dockerfile.web-client`
+below does the same thing without a manual copy.
 
 ## Docker Compose
 
@@ -65,3 +66,21 @@ docker compose up --build
 same `PORT=8080` contract as the bare Docker path above, plus `env_file:
 ./.env` so you don't have to repeat every variable on the command line. The
 service is reachable at `localhost:8000`.
+
+### With the browser client
+
+```bash
+docker compose build
+cp .env.example .env   # then fill in AUTH_SECRET_KEY at minimum
+docker compose -f docker-compose.web-client.yaml up --build
+```
+
+`Dockerfile.web-client` layers on top of the image the plain `Dockerfile`
+produces — hence building that one first — and builds
+[`resume-cv-mcp-api-web-client`](https://github.com/tristankerner/resume-cv-mcp-api-web-client)
+from source in a second stage, using Docker's named build contexts rather
+than a manual `git clone`. `docker-compose.web-client.yaml`'s header comment
+explains why the two-command sequence is necessary rather than one command
+building both. `CLIENT_REF=<sha-or-tag>` pins which commit of the client gets
+built; unset, it tracks `main`. The result is reachable the same way as the
+plain path above, plus `GET /client`.

@@ -301,8 +301,8 @@ class TestValidationErrorsDoNotEchoInput:
         assert admin.password not in response.text
 
     async def test_the_error_shape_the_client_reads_is_intact(self, client, admin):
-        """clients/web/index.html's parseValidationErrors reads `loc` and
-        `msg` and nothing else — dropping `input` must not disturb those."""
+        """clients/src/lib/api/client.ts's parseValidationErrors reads `loc`
+        and `msg` and nothing else — dropping `input` must not disturb those."""
         response = await client.post(
             "/users/me/mfa/totp",
             headers=admin.headers,

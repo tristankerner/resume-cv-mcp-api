@@ -30,22 +30,24 @@ are ignored on every start after — safe to leave in `.env`.
 ## Adding the browser client
 
 Optional, and a separate repository — this API has no dependency on it. Clone
-[`resume-mcp-api-clients`](https://github.com/tristankerner/resume-mcp-api-clients)
-anywhere, build it, and point `CLIENT_HTML_PATH` at the build output:
+[`resume-cv-mcp-api-web-client`](https://github.com/tristankerner/resume-cv-mcp-api-web-client)
+anywhere, build it, and point `CLIENT_HTML_PATH` at the build output. (Or skip
+this by hand and use `docker-compose.web-client.yaml` instead — see the
+README's "Setup".)
 
 ```bash
-git clone https://github.com/tristankerner/resume-mcp-api-clients clients
-cd clients/web && npm ci && npm run build
+git clone https://github.com/tristankerner/resume-cv-mcp-api-web-client clients
+cd clients && npm ci && npm run build
 ```
 
 ```bash
-CLIENT_HTML_PATH=./clients/web/dist/index.html
+CLIENT_HTML_PATH=./clients/dist/index.html
 ```
 
-The build produces one self-contained HTML file; `web/index.html` is the Vite
-entry stub and is not servable on its own — point this at `dist/`, or the page
-loads blank while it asks this API for `/src/main.tsx`. Node is needed for the
-build and for nothing else here.
+The build produces one self-contained HTML file; `clients/index.html` is the
+Vite entry stub and is not servable on its own — point this at `dist/`, or the
+page loads blank while it asks this API for `/src/main.tsx`. Node is needed
+for the build and for nothing else here.
 
 `GET /client` then serves it same-origin, so `CLIENT_ALLOWED_ORIGINS` does not
 need to name anything: open `http://localhost:8000/client` and log in with the

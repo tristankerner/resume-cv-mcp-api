@@ -67,13 +67,44 @@ real point.
 
 ## Setup
 
-### No Client
-  TODO: Include instructions for configuring and running with Docker or Docker Compose, withoout the web client.
-### Hosted Client
-  TODO: Include instructions for configuring and running with Docker or Docker Compose, but by building and including the web client.
+### Without the web client
 
+```bash
+cp .env.example .env   # then fill in AUTH_SECRET_KEY at minimum
+docker compose up --build
+```
 
-Below are overly verbos Claude based docs. 
+Reachable at `http://localhost:8000`; `/docs` is open since `ENVIRONMENT`
+defaults to `development`. The named `resume-data` volume is intentional, not
+a shortcut — see [docs/running.md](docs/running.md)'s "Docker" section for why
+a bind mount does not work here (the image runs as a non-root user).
+`GET /client` is not registered on this path — see below to change that, or
+[docs/local-only.md](docs/local-only.md) for the fully offline native-Python
+walkthrough instead of Docker.
+
+### With the web client
+
+```bash
+docker compose build
+cp .env.example .env   # then fill in AUTH_SECRET_KEY at minimum
+docker compose -f docker-compose.web-client.yaml up --build
+```
+
+Then open `http://localhost:8000/client` and log in with the bootstrap admin
+credentials from `.env`. This builds
+[`resume-cv-mcp-api-web-client`](https://github.com/tristankerner/resume-cv-mcp-api-web-client)
+from source — `main` by default, override with `CLIENT_REF=<sha-or-tag>` —
+and bakes it into the image at `CLIENT_HTML_PATH`, same-origin, so
+`CLIENT_ALLOWED_ORIGINS` does not need to name anything. See
+`docker-compose.web-client.yaml`'s own comments for why the plain build has to
+run first: Compose builds each service from its own Dockerfile, and cannot
+chain one service's output into another's build context as a dependency.
+
+Developing against a local client checkout instead of a pinned commit needs a
+manual build — see "Browser client" below.
+
+The rest of this README goes deep on how documents, authorization, and the
+client all fit together.
 
 ---
 
@@ -644,30 +675,32 @@ document write.
 
 ## Browser client
 
-[`resume-mcp-api-clients`](https://github.com/tristankerner/resume-mcp-api-clients)
+[`resume-cv-mcp-api-web-client`](https://github.com/tristankerner/resume-cv-mcp-api-web-client)
 is a single-page UI for managing documents, API keys, second factors and — for
 an admin — users and OAuth clients. See its README for what's there and how to
 run it. It is a separate repository, not a submodule: this API has no
 build-time dependency on any client, and nothing here needs one to be present.
+[Docker Compose can also build and bake it in for you](#with-the-web-client) —
+this section is for developing against a manual checkout instead.
 
 To develop against it, clone it wherever you like, build it once
-(`cd web && npm ci && npm run build`), and point `CLIENT_HTML_PATH` at the
-**build output**, `web/dist/index.html`:
+(`npm ci && npm run build`), and point `CLIENT_HTML_PATH` at the
+**build output**, `dist/index.html`:
 
 ```bash
-git clone https://github.com/tristankerner/resume-mcp-api-clients clients
+git clone https://github.com/tristankerner/resume-cv-mcp-api-web-client clients
 ```
 
 ```bash
-CLIENT_HTML_PATH=./clients/web/dist/index.html
+CLIENT_HTML_PATH=./clients/dist/index.html
 ```
 
-`web/index.html` is not that file — it is the Vite entry stub, and serving it
-here yields a blank page whose `/src/main.tsx` request 404s against this API.
-`./clients` is the conventional name — `.dockerignore` expects it when keeping
-a local build out of an image — but nothing enforces it. If the path does not
-exist, `GET /client` declines to register and logs a warning naming the file
-it looked for; nothing else is affected.
+`clients/index.html` is not that file — it is the Vite entry stub, and serving
+it here yields a blank page whose `/src/main.tsx` request 404s against this
+API. `./clients` is the conventional name — `.dockerignore` expects it when
+keeping a local build out of an image — but nothing enforces it. If the path
+does not exist, `GET /client` declines to register and logs a warning naming
+the file it looked for; nothing else is affected.
 
 Unlike the public projection above, the routes the client calls (`/token`,
 `/documents`, `/api-keys`, `/users/*`) are authenticated, so they cannot use a
@@ -685,7 +718,7 @@ set it and `GET /client` returns that file. Which file is the deployment's
 business — it copies a client into the build context before `COPY . /app`, and
 this repository never learns which one. The client's build produces a single
 self-contained HTML file, which is what belongs here. `.dockerignore` still
-keeps a local `clients/web/dist/` and `clients/web/node_modules/` out of any
+keeps a local `clients/dist/` and `clients/node_modules/` out of any
 image: those are whatever the last local build left behind, gitignored and so
 unreviewed, and a deployment composes its own copy of the built file in
 instead. Unset by default, so the API itself depends on no build artifact.

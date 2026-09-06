@@ -147,7 +147,7 @@ class ConfigServiceModel(BaseSettings):
         default=False, alias="OAUTH_REGISTRATION_ENABLED"
     )
 
-    # --- Browser client (clients/web/index.html) -----------------------------
+    # --- Browser client (clients/index.html) --------------------------------
     # Comma-separated origins allowed to call the authenticated routes from a
     # browser — see middleware/client_cors.py. "null" is the origin of a page
     # opened from disk (file://); safe to allowlist because none of these
@@ -158,7 +158,7 @@ class ConfigServiceModel(BaseSettings):
     )
 
     # Set to serve the browser client same-origin at GET /client, from either
-    # clients/web/index.html or a built clients/web/dist/index.html.
+    # clients/index.html or a built clients/dist/index.html.
     # Same-origin means CLIENT_ALLOWED_ORIGINS need not name it.
     client_html_path: str | None = Field(default=None, alias="CLIENT_HTML_PATH")
 

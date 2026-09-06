@@ -1,0 +1,48 @@
+# The same service as docker-compose.yaml, plus the browser client built from
+# source and baked in at CLIENT_HTML_PATH.
+#
+#   docker compose build                                  # builds resume-cv-mcp-api:0.1
+#   cp .env.example .env      # fill in AUTH_SECRET_KEY at minimum
+#   docker compose -f docker-compose.web-client.yaml up --build
+#
+# Then http://localhost:8000/client.
+#
+# The first command is not optional: Dockerfile.web-client's `api` build
+# context below names the image the plain Dockerfile produces, and Compose
+# has no way to build one service from another's output — a
+# `service:api-base` context pointed at a profile-gated service was tried and
+# rejected outright ("declares unknown service ... as additional contexts"),
+# because Compose only resolves services that are actually active. A plain
+# image reference has no such requirement, at the cost of this one extra step.
+#
+# CLIENT_REF pins which commit of the client is built; it defaults to main.
+#   CLIENT_REF=<sha> docker compose -f docker-compose.web-client.yaml build
+#
+# Needs BuildKit and Compose v2.24+ for the additional_contexts below.
+
+services:
+  resume-api:
+    build:
+      context: ./
+      dockerfile: Dockerfile.web-client
+      additional_contexts:
+        api: "docker-image://resume-cv-mcp-api:0.1"
+        client: "https://github.com/tristankerner/resume-cv-mcp-api-web-client.git#${CLIENT_REF:-main}"
+    image: resume-cv-mcp-api-web-client:0.1
+    volumes:
+      - resume-data:/app/data
+    env_file:
+      - ./.env
+    environment:
+      PORT: "8080"
+      # Also set in the image, but repeated here because Compose injects
+      # env_file entries as environment variables and `environment:` is what
+      # wins over them — so an uncommented CLIENT_HTML_PATH left in someone's
+      # .env cannot point this container at a host path that does not exist
+      # inside it.
+      CLIENT_HTML_PATH: /app/clients/web/index.html
+    ports:
+      - "8000:8080"
+
+volumes:
+  resume-data:
