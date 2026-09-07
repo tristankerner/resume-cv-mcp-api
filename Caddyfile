@@ -1,0 +1,28 @@
+# Reverse proxy for docker-compose.caddy.yaml.
+#
+# DOMAIN and ACME_EMAIL come from .env. Caddy obtains and renews a Let's
+# Encrypt certificate for DOMAIN on its own, so nothing here mentions
+# certificate files or a renewal timer.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# The public résumé feed is anonymous and identical for every caller, so
+	# it is the one thing worth caching at the edge. Withholding an entry then
+	# takes up to max-age to become visible — drop this line if that matters
+	# more than the traffic it saves.
+	header /public/* Cache-Control "public, max-age=300"
+
+	# Never cache an authorization response: it would serve one user's
+	# redirect to another.
+	header /oauth/* Cache-Control "no-store"
+
+	reverse_proxy resume-api:8080 {
+		# MCP speaks Streamable HTTP, which is long-lived and incremental.
+		# Response buffering would hold a tool result until the request ended.
+		flush_interval -1
+	}
+}

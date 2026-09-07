@@ -1,0 +1,59 @@
+# Production stack: the API with the browser client baked in, behind Caddy,
+# with HTTPS and Let's Encrypt certificates handled automatically.
+#
+#   docker compose build                                  # builds resume-cv-mcp-api:0.1
+#   cp .env.example .env      # fill in AUTH_SECRET_KEY, DOMAIN, ACME_EMAIL, PUBLIC_BASE_URL
+#   docker compose -f docker-compose.caddy.yaml up -d --build
+#
+# The first command is not optional — see docker-compose.web-client.yaml's
+# header for why Compose cannot chain one service's image into another's build.
+#
+# Only Caddy publishes ports. The API listens on 8080 inside the compose
+# network and is not reachable from outside it, so the only way in is through
+# the proxy that terminates TLS.
+
+services:
+  resume-api:
+    build:
+      context: ./
+      dockerfile: Dockerfile.web-client
+      additional_contexts:
+        api: "docker-image://resume-cv-mcp-api:0.1"
+        client: "https://github.com/tristankerner/resume-cv-mcp-api-web-client.git#${CLIENT_REF:-main}"
+    image: resume-cv-mcp-api-web-client:0.1
+    restart: unless-stopped
+    volumes:
+      - resume-data:/app/data
+    env_file:
+      - ./.env
+    environment:
+      PORT: "8080"
+      # Wins over anything env_file supplies, so a stale CLIENT_HTML_PATH in
+      # someone's .env cannot point this container at a host path.
+      CLIENT_HTML_PATH: /app/clients/web/index.html
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - resume-api
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates live here. Losing this volume means re-issuing on the
+      # next start, which Let's Encrypt rate-limits — keep it.
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  resume-data:
+  caddy-data:
+  caddy-config:
