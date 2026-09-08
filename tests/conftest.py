@@ -286,10 +286,20 @@ def totp_code():
 def resume_payload() -> dict:
     """A minimal but complete ResumePrivate. The marker strings are generated so
     a leak assertion cannot pass by coincidence. `lastUsed` cannot carry the
-    random marker directly — it is `Iso8601`-constrained — so it gets a
-    distinctive, otherwise-unused year instead.
+    random marker directly — it is `Iso8601`-constrained — so the marker is
+    encoded into a full YYYY-MM-DD instead. A bare marker year (e.g. a fixed
+    "1907") is short enough to turn up by chance inside unrelated digits
+    elsewhere in the response, such as a timestamp's microseconds — which is
+    exactly what made this fixture flaky in production. Spreading the marker
+    across year, month, and day, separated by dashes, rules that out.
     """
     marker = secrets.token_hex(8)
+    marker_digits = [int(c, 16) % 10 for c in marker]
+    last_used = (
+        f"1{marker_digits[0]}{marker_digits[1]}{marker_digits[2]}"
+        f"-{marker_digits[3] % 2}{marker_digits[4]}"
+        f"-{marker_digits[5] % 4}{marker_digits[6]}"
+    )
     return {
         "basics": {
             "name": "Test",
@@ -332,7 +342,9 @@ def resume_payload() -> dict:
         "skills": [
             {
                 "name": "group",
-                "keywords": [{"name": "Python", "level": "expert", "lastUsed": "1907"}],
+                "keywords": [
+                    {"name": "Python", "level": "expert", "lastUsed": last_used}
+                ],
             }
         ],
         "fineTuningData": {
