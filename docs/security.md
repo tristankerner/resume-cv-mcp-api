@@ -31,9 +31,23 @@ One scope per document type per verb, plus one for user administration.
 | **metadata** | `metadata:read` | `metadata:write` | `metadata:delete` |
 | **skill** | `skill:read` | `skill:write` | `skill:delete` |
 
+| | read | write | delete |
+| --- | --- | --- | --- |
+| **applications** | `applications:read` | `applications:write` | `applications:delete` |
+| **companies** | `companies:read` | `companies:write` | `companies:delete` |
+| **contacts** | `contacts:read` | `contacts:write` | `contacts:delete` |
+
 | Scope | Grants |
 | --- | --- |
 | `users:admin` | Listing and creating users, resetting a password, clearing a lock, stripping MFA, registering an OAuth client |
+| `audit:read` | Reading your own rows from the audit log |
+
+Application tracking follows the same per-entity shape rather than
+per-document-type, since read/write/delete is the natural split for a
+company, a contact or an application. Company stack items and relationships
+are governed by `companies:*`; application events and attachments by
+`applications:*` — there is no separate scope for either, because neither is
+meaningful without its parent.
 
 Split by type rather than one `resume:*` family covering all three, because the
 three documents aren't equally sensitive: the skill document is procedure, the
@@ -237,6 +251,66 @@ itself is the thing that's lost.
 ```bash
 python -m admin_cli unlock --list
 ```
+
+## Audit log
+
+Every write to a tracking table is recorded by a database trigger — not
+application code, so there is no code path that can mutate a row without
+being seen. `GET /audit` (behind `audit:read`) reads it back, your own rows
+only, with no admin override.
+
+**Audited, full row:** `applications`, `application_events`, `companies`,
+`company_relationships`, `company_stack_items`, `contacts`.
+**Audited, secret column excluded:** `application_attachments` (everything
+but the file content), `users` (everything but the password hash), `api_keys`
+(everything but the key hash), `oauth_clients` (everything but the client
+secret hash).
+
+**Deliberately not audited:** `mfa_credentials`, `mfa_backup_codes`,
+`oauth_authorization_codes`, `oauth_refresh_tokens` and `auth_failures` are
+either secret-bearing or pure churn; `documents` is already append-only, so
+its own table is its history; `document_schema` and `role_scopes` are
+reference data owned by migrations; the audit log does not audit itself.
+
+Each row carries `table_name`, `row_pk`, `operation` (`I`/`U`/`D`),
+`changed_at`, `row_user_id` (the row's owner), `actor_user_id` and
+`actor_credential` (who made the change and how), and — except on delete —
+`old_data`/`new_data`/`changed_columns`. A no-op update (nothing audited
+actually changed) writes nothing.
+
+**Actor attribution is best-effort, not a guarantee.** `row_user_id` is always
+accurate — a trigger reads it straight off the row — but `actor_user_id`
+depends on the application saying who is acting.
+
+How it is carried differs by dialect, and the difference matters to anyone
+adding a write. On Postgres the actor is a transaction-local setting
+(`SET LOCAL`), so it cannot outlive the transaction that set it. **On SQLite
+it is a row in `audit_actor`, which does outlive it**: a write to an audited
+table that does not bind an actor of its own inherits whichever one was bound
+last, and the audit log then names the wrong person. So the rule is
+
+> every write to an audited table binds an actor — `None` where there is no
+> authenticated one.
+
+`ServiceProviderInterface.bind_audit_actor` is the entry point, and passing
+`None` is a real answer, not a fallback: a login-throttle counter and the
+bootstrap admin insert both use it. `admin_cli` clears the actor before it
+runs for the same reason. `tests/test_audit_log.py`'s
+`TestActorDoesNotLeakBetweenRequests` holds the two paths that write without a
+principal — a failed login and an API key's `last_used_at` — to that rule.
+
+What remains genuinely best-effort: a change made by a migration, or by hand
+in `sqlite3`, binds nothing. On Postgres that reads back as `NULL`; on SQLite
+it inherits whatever the service last bound.
+
+`oauth_clients` has no owning user, so its `row_user_id` is always `NULL` —
+which means those rows can never match `GET /audit`'s own-rows-only filter and
+are simply never visible over HTTP, by construction rather than by a special
+case.
+
+Tracking data is never public: there is no equivalent of the résumé's
+published projection anywhere in this feature, and the audit log inherits
+that — it is exposed nowhere except to the row's own owner.
 
 ## The docs are not public in production
 

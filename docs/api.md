@@ -126,6 +126,105 @@ Redirect URIs are checked against `OAUTH_ALLOWED_REDIRECT_HOSTS` at
 registration **and again at every authorization**, so it's live policy rather
 than a one-time gate.
 
+## Application tracking
+
+Companies, contacts, applications and their sub-resources — a job hunt, not a
+résumé. Every row is scoped to its owner; a row belonging to someone else is a
+`404`, never a `403`. List endpoints return
+`{"data": [...], "total", "limit", "offset"}`. `PATCH` is partial: an absent
+field is left alone, an explicit `null` clears it.
+
+### Companies
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/companies` | `companies:read` | Search by `query`; `sort` = `name`\|`-name`\|`created_at`\|`-created_at`. |
+| `POST` | `/companies` | `companies:write` | Create. `409` on a near-duplicate name; `confirm_create_duplicate: true` overrides a fuzzy match (not an exact one). |
+| `GET` | `/companies/{id}` | `companies:read` | Detail: relationships, stack, contacts, up to 20 recent applications. |
+| `PATCH` | `/companies/{id}` | `companies:write` | Update. `409` if the new name collides. |
+| `DELETE` | `/companies/{id}` | `companies:delete` | `409` if any application still references it. |
+| `POST` / `PATCH` / `DELETE` | `/companies/{id}/relationships`, `/company-relationships/{id}` | `companies:write`/`delete` | Directed edges between two of your own companies. |
+| `GET` / `POST` | `/companies/{id}/stack` | `companies:read`/`write` | Technologies observed at the company. Same dedup rule as companies. |
+| `PATCH` / `DELETE` | `/company-stack/{id}` | `companies:write`/`delete` | |
+
+### Contacts
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/contacts` | `contacts:read` | Filter by `company_id`, `query`. |
+| `POST` | `/contacts` | `contacts:write` | Requires at least one of `first_name`, `last_name`, `email`. `409` on a matching email or a fuzzy name match within the same company. |
+| `GET` / `PATCH` / `DELETE` | `/contacts/{id}` | `contacts:read`/`write`/`delete` | Deleting a contact nulls its `contact_id` on any `application_events` row that named it. |
+
+### Applications and events
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/applications` | `applications:read` | Filters: `company_id`, repeatable `status`, `source`, `system`, `query`, `job_code`, `submitted_from`/`submitted_to`, `has_attachments`. |
+| `POST` | `/applications` | `applications:write` | `company_id` required. `409` on a near-duplicate: an existing application with the same `job_code`, or the same company with a similar title and a submission date within 14 days. |
+| `GET` / `PATCH` / `DELETE` | `/applications/{id}` | `applications:read`/`write`/`delete` | `PATCH` rejects a `status` field with `422` — status is derived, never set directly. Delete cascades to its events and attachments. |
+| `GET` / `POST` | `/applications/{id}/events` | `applications:read`/`write` | A status change, a note, a rating, or any combination — at least one is required on create. |
+| `PATCH` | `/application-events/{id}` | `applications:write` | |
+| `DELETE` | `/application-events/{id}` | `applications:delete` | **Returns `200`, not `204`** — the body carries the application's recomputed status. |
+
+`job_code` is the requisition code, optional and free-form. Matching folds
+away case and separators, so `REQ-12345`, `req 12345` and `REQ12345` are one
+code — which is the point, since two recruiters putting the same requisition
+forward rarely spell it the same way. Matching is **not** scoped to the
+company, for the same reason: the second submission usually arrives through a
+different agency. A code with fewer than three alphanumeric characters is
+stored and shown but never matched on, since it would collide with everything.
+
+Every summary carries `job_code_match_count`, the number of *other*
+applications sharing its code, and `GET /applications/{id}` carries
+`related_by_job_code` — those applications in full. Filtering by
+`?job_code=` folds the same way.
+
+An application's `status` is always the status of its most recent event by
+`occurred_at`; `submitted` when it has none. `GET /tracking/enums` (any one
+tracking read scope) lists every status, stack item type, relationship type
+and attachment kind, with display labels and which statuses are terminal.
+
+### Attachments
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| `GET` / `POST` | `/applications/{id}/attachments` | `applications:read`/`write` | Body: `kind`, `filename`, `content_type`, `content_base64`. PDF and `.docx` only, 10 MiB decoded cap. List returns metadata only. |
+| `GET` | `/attachments/{id}` | `applications:read` | Metadata **plus** `content_base64`. |
+| `DELETE` | `/attachments/{id}` | `applications:delete` | |
+
+Upload errors: `415` (unsupported or mismatched content type), `422`
+(malformed base64), `413` (over the size cap), `409` (identical bytes already
+attached — no override).
+
+### Audit
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/audit` | `audit:read` | Your own rows only, filterable by `table` and `row_id`. `table` must be one of the audited tables or `422`. |
+
+Records every write to `applications`, `application_events`,
+`application_attachments`, `companies`, `company_relationships`,
+`company_stack_items`, `contacts`, `users` and `api_keys` — never a secret
+column, and never `documents`, which is append-only and is its own history.
+See [Security](security.md).
+
+### Duplicate-conflict body
+
+The one place `detail` is an object rather than a string, returned by every
+`409` above that names `confirm_create_duplicate`:
+
+```json
+{
+  "detail": {
+    "code": "duplicate_company",
+    "message": "3 companies already look like \"Plaid\". Use one of them, or resend with confirm_create_duplicate: true.",
+    "candidates": [
+      { "id": 12, "label": "Plaid", "match": "exact", "score": 1.0, "hint": "8 applications" }
+    ]
+  }
+}
+```
+
 ## MCP
 
 | Path | Transport | Auth |
@@ -136,9 +235,15 @@ than a one-time gate.
 | --- | --- | --- |
 | `list_resume_documents` | any of the three read scopes | Your documents — id, type, public, revision, note, created_at. No content. Only types the credential may read. |
 | `retrieve_resume_data` | `resume:read`, plus `metadata:read` / `skill:read` when those ids are passed | All three documents in one call. A companion that isn't stored comes back `null`. |
+| `search_companies`, `get_company`, `create_company`, `add_company_stack_items` | `companies:read`/`write` | Look up or create a company before recording an application against it; creates are dedup-checked exactly like the HTTP routes. |
+| `search_contacts`, `create_contact` | `contacts:read`/`write` | Never invents a contact — only records one the user names or the posting states. |
+| `search_applications`, `get_application`, `add_application_event` | `applications:read`/`write` | Summary search excludes job description, prompt text and attachments; `get_application` never returns attachment content. |
+| `record_application` | `applications:write` (+ `companies:write` to create a new company) | The composite tool for the end of a tailoring run — one of `company_id`/`company_name`, plus the documents actually used. |
 
-Both tools return a single text content block with no `structuredContent`
-mirror, which halves the token cost of a call.
+Every tool returns a single text content block with no `structuredContent`
+mirror, which halves the token cost of a call. A blocked duplicate create
+raises a `ToolError` listing the near-matches by id, so the model can reuse
+one or confirm deliberately.
 
 ## Other
 
@@ -155,8 +260,16 @@ mirror, which halves the token cost of a call.
 | `401` | No credential, a bad one, or a permanently locked account |
 | `403` | Authenticated, but the scope is missing |
 | `404` | Not found — also what a private document returns anonymously |
-| `409` | A write whose type disagrees with the stored document's type |
-| `422` | Payload failed validation, or a document name that can't appear in a URL path |
+| `409` | A write whose type disagrees with the stored document's type, a duplicate row, or a company delete blocked by its applications |
+| `413` | An attachment's decoded content exceeds the 10 MiB cap. A body whose base64 is longer than 10 MiB could ever encode to is a `422` instead — refused at validation, before anything is decoded |
+| `415` | An attachment's content type is unsupported, or its bytes don't match the declared type |
+| `422` | Payload failed validation, a document name that can't appear in a URL path, or an invalid cross-entity reference |
+
+`applications.url` and `companies.website` must be `http://` or `https://`.
+The restriction is a `422` on the way in rather than a display concern: the
+browser client renders both as links, so any other scheme is script execution
+in the origin that holds the session token — and these fields are writable
+over MCP by an OAuth connector, not only by the person who later clicks them.
 | `429` | Login throttled; `Retry-After` says how long |
 
 ## Regenerating this reference

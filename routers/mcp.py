@@ -1,96 +1,29 @@
-import json
-
 from fastmcp.exceptions import ToolError
-from fastmcp.server.auth import AuthCheck, require_scopes
-from fastmcp.server.dependencies import get_access_token
+from fastmcp.server.auth import require_scopes
 from fastmcp.tools import ToolResult, tool
-from fastmcp.utilities.authorization import AuthContext
-from mcp.types import TextContent
 from pydantic import ValidationError
 
 from persistence.document import Document
-from services.auth.scopes import ScopeResolver, Scopes
+from services.auth.mcp_tools import McpToolBase
+from services.auth.scopes import Scopes
 from services.database.database_service import DatabaseService
 from services.document.document_reader import DocumentReader
 from services.document.document_types import DocumentType, DocumentTypeRegistry
 
 
-class ResumeTools:
-    """The two MCP tools, and the auth helpers they share.
+class ResumeTools(McpToolBase):
+    """The two résumé-retrieval MCP tools.
 
-    `FileSystemProvider` discovers components by scanning this module for
-    top-level `Tool` objects after import, so a `@tool`-decorated method here
-    would never be found. The two module-level functions below are the
-    required exception to the "no free-standing functions" rule: one-line
-    adapters that delegate straight to this class.
+    `FileSystemProvider` discovers components by scanning every module under
+    `routers/` for top-level `Tool` objects after import, so a
+    `@tool`-decorated method here would never be found. The module-level
+    functions at the foot of this file are the required exception to the
+    "no free-standing functions" rule: one-line adapters that delegate
+    straight to this class. `routers/mcp_tracking.py` follows the same shape.
 
     Both adapters declare `output_schema=None` and return `ToolResult`
-    directly. Left to itself, FastMCP derives an output schema from a `dict`
-    return annotation and then serializes the payload twice — once as a text
-    content block, once as `structuredContent` — which doubles every token
-    this tool costs a client. `output_schema=None` alone does not stop this;
-    a `dict` result still gets a structured mirror regardless of the schema.
-    Only a `ToolResult` carrying nothing but `content` is passed through
-    untouched. Dropping the structured mirror rather than the text block is
-    the safer direction: every client understands a text block, and
-    `structuredContent` is optional in the spec. If a client turns out to
-    need structured content, the revert is to drop `output_schema=None` and
-    return the bare dict again.
+    directly — see `McpToolBase.as_result` for why.
     """
-
-    @staticmethod
-    def current_user_id() -> int:
-        """The caller's id, from the access token's claims.
-
-        Both HTTP and MCP resolve a credential through the same
-        `AuthService.authenticate` (see mcp_verifier.py), so this only reads
-        back an identity already established.
-        """
-        token = get_access_token()
-        if token is None or "user_id" not in token.claims:
-            raise ToolError("Not authenticated")
-        return int(token.claims["user_id"])
-
-    @staticmethod
-    def current_scopes() -> frozenset[Scopes]:
-        """What the calling credential may do, for the checks a decorator cannot make.
-
-        `require_scopes` gates a whole tool, which is right for the scope
-        every call needs and wrong for one that depends on the arguments —
-        asking `retrieve_resume_data` for a metadata document should need
-        `metadata:read`, and asking it for nothing but the résumé should not.
-        """
-        token = get_access_token()
-        return ScopeResolver.parse(token.scopes) if token is not None else frozenset()
-
-    @staticmethod
-    def require_any_scope(*scopes: Scopes) -> AuthCheck:
-        """Allow a call holding any one of `scopes`.
-
-        fastmcp's own `require_scopes` is an AND across everything it is
-        given, which is the wrong shape for the listing tool: it spans the
-        three document types, and a credential narrowed to one of them
-        should see that one.
-        """
-        accepted = {str(scope) for scope in scopes}
-
-        def check(context: AuthContext) -> bool:
-            return context.token is not None and bool(
-                accepted & set(context.token.scopes)
-            )
-
-        return check
-
-    @staticmethod
-    def as_result(payload: dict) -> ToolResult:
-        """One text block, no structured mirror — see the class docstring."""
-        return ToolResult(
-            content=[
-                TextContent(
-                    type="text", text=json.dumps(payload, separators=(",", ":"))
-                )
-            ]
-        )
 
     @classmethod
     def slim(cls, document: Document) -> dict:

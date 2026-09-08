@@ -7,7 +7,7 @@ Pointing an MCP client at this service's tool server.
 | Endpoint | `https://mcp.example.com/resume/mcp` |
 | Transport | Streamable HTTP (not SSE, not stdio) |
 | Auth | `Authorization: Bearer <api key>`, or OAuth 2.1 |
-| Scopes | `resume:read`, `metadata:read`, `skill:read` |
+| Scopes | `resume:read`, `metadata:read`, `skill:read` — plus `applications:*`, `companies:*`, `contacts:*` (read **and** write) if the tailoring flow should record applications |
 
 ## Which credential
 
@@ -70,6 +70,32 @@ Narrower is possible: `retrieve_resume_data` needs `resume:read`, and checks
 the two companion scopes only when their ids are passed. `list_resume_documents`
 reports only the types a key may read, so a narrowed key sees a smaller store
 rather than a refusal.
+
+### Application tracking tools
+
+`search_companies`, `create_company`, `add_company_stack_items`,
+`search_contacts`, `create_contact`, `search_applications`,
+`get_application`, `record_application` and `add_application_event` need
+`applications:read`/`write` and `companies:read`/`write` (plus
+`contacts:read`/`write` if the client records contacts). Add them to the same
+key or OAuth grant as the document scopes:
+
+```bash
+curl -s -X POST https://mcp.example.com/api-keys -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"name":"mcp-client","scopes":["resume:read","metadata:read","skill:read","applications:read","applications:write","companies:read","companies:write","contacts:read","contacts:write"]}' | jq -r .key
+```
+
+`record_application` takes an optional `job_code`, and `search_applications`
+filters on one. Passing it is worth the trouble: it is what identifies the
+same requisition arriving through two different recruiters, and matching folds
+away case and separators, so a code the client records verbatim still matches
+one spelled differently elsewhere. A code already on file is refused as a
+duplicate, with the existing application's id in the error.
+
+Tracking `*:delete`, `audit:read`, every document write scope and
+`users:admin` are never issuable over OAuth — see
+[Security](security.md#scopes) — so a connector that needs to delete a
+tracking row or read the audit log has to use an API key instead. The worst a
+compromised connector token can do under OAuth is add rows, not remove them.
 
 ### Check the key before configuring anything
 

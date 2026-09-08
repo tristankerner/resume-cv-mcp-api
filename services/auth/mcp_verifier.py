@@ -34,5 +34,11 @@ class McpTokenVerifier(TokenVerifier):
                 "sub": principal.username,
                 "user_id": principal.user_id,
                 "scopes": scopes,
+                # Carried so a tool that writes can attribute the change to
+                # the kind of credential that actually made it. The tracking
+                # tools write; without this they would have to guess, and an
+                # OAuth connector's writes would be filed in the audit log as
+                # an API key's.
+                "credential": str(principal.credential),
             },
         )

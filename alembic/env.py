@@ -10,7 +10,16 @@ from alembic import context
 # proposes dropping every table.
 from persistence import (  # noqa: F401
     api_key,
+    application,
+    application_attachment,
+    application_event,
+    audit_actor,
+    audit_log,
     auth_failure,
+    company,
+    company_relationship,
+    company_stack_item,
+    contact,
     document,
     document_schema,
     mfa_backup_code,

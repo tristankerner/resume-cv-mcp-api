@@ -481,6 +481,41 @@ async def stored_skill(client, admin, skill_payload):
 
 
 @pytest.fixture
+async def company(client, admin) -> dict:
+    """One company, owned by `admin`, created through the API."""
+    response = await client.post(
+        "/companies", headers=admin.headers, json={"name": "Acme Inc"}
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+@pytest.fixture
+async def application(client, admin, company) -> dict:
+    """One application, owned by `admin`, to `company`, created through the
+    API."""
+    response = await client.post(
+        "/applications",
+        headers=admin.headers,
+        json={"company_id": company["id"], "job_title": "Software Engineer"},
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+@pytest.fixture
+async def application_event(client, admin, application) -> dict:
+    """One event on `application`, carrying a status."""
+    response = await client.post(
+        f"/applications/{application['id']}/events",
+        headers=admin.headers,
+        json={"status": "screening", "description": "Recruiter call scheduled."},
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+@pytest.fixture
 async def stored_resume(client, admin, resume_payload):
     """resume.json, written through the API so the write path is real.
 

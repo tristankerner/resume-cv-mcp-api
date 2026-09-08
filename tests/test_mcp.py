@@ -10,6 +10,7 @@ from mcp.types import TextContent
 
 from persistence.document import Document
 from routers.mcp import ResumeTools, list_resume_documents, retrieve_resume_data
+from services.auth.mcp_tools import McpToolBase
 from services.auth.mcp_verifier import McpTokenVerifier
 from services.auth.scopes import Scopes
 from services.database.database_service import DatabaseService
@@ -329,6 +330,20 @@ class TestPerTypeScopesOverMcp:
             await retrieve_resume_data(
                 resume_id="resume.json", resume_skill_id="resume.skill.json"
             )
+
+
+class TestMcpToolBaseOutsideAnyRequest:
+    """`ResumeTools` and `TrackingTools` share these four helpers via
+    `McpToolBase`; every other test monkeypatches `current_user_id` /
+    `current_scopes`, so these cover what happens with no MCP access-token
+    context at all - the state before any request has arrived."""
+
+    def test_current_user_id_raises_without_a_token(self):
+        with pytest.raises(ToolError):
+            McpToolBase.current_user_id()
+
+    def test_current_scopes_is_empty_without_a_token(self):
+        assert McpToolBase.current_scopes() == frozenset()
 
 
 class TestNoOutputSchema:

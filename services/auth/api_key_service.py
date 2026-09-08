@@ -30,6 +30,7 @@ class ApiKeyService(ServiceProviderInterface):
 
     async def create(self, request: CreateApiKeyRequest) -> CreateApiKeyResponse:
         self.principal.require_interactive()
+        await self.bind_audit_actor(self.db, self.principal)
 
         # Reloaded rather than trusted off the principal: the ceiling is the
         # caller's *current* roles, and a principal built earlier in this
@@ -74,6 +75,7 @@ class ApiKeyService(ServiceProviderInterface):
         """Soft delete: the row stays so `last_used_at` remains readable after
         the fact, which is the point of having per-client credentials."""
         self.principal.require_interactive()
+        await self.bind_audit_actor(self.db, self.principal)
 
         api_key = await ApiKey.get_by_id(self.db, key_id)
         if api_key is None:

@@ -23,6 +23,14 @@ class Scopes(StrEnum):
     There is no `resume:read:public` — the published projection takes no
     credential at all, so such a scope would be checked nowhere while still
     reading, on a key, as though it did something.
+
+    The tracking feature (companies, contacts, applications) follows the same
+    per-entity shape rather than per-document-type: `applications:*`,
+    `companies:*`, `contacts:*`, plus a single `audit:read`. Company stack
+    items and relationships are governed by `companies:*`; application events
+    and attachments by `applications:*` — there is no separate scope for
+    either, because neither is meaningful without its parent and a credential
+    that can read an application can already see what happened to it.
     """
 
     RESUME_READ = "resume:read"
@@ -36,6 +44,20 @@ class Scopes(StrEnum):
     SKILL_READ = "skill:read"
     SKILL_WRITE = "skill:write"
     SKILL_DELETE = "skill:delete"
+
+    APPLICATIONS_READ = "applications:read"
+    APPLICATIONS_WRITE = "applications:write"
+    APPLICATIONS_DELETE = "applications:delete"
+
+    COMPANIES_READ = "companies:read"
+    COMPANIES_WRITE = "companies:write"
+    COMPANIES_DELETE = "companies:delete"
+
+    CONTACTS_READ = "contacts:read"
+    CONTACTS_WRITE = "contacts:write"
+    CONTACTS_DELETE = "contacts:delete"
+
+    AUDIT_READ = "audit:read"
 
     USERS_ADMIN = "users:admin"
 

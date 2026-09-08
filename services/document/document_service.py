@@ -5,6 +5,7 @@ from fastapi import Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from persistence.application import Application
 from persistence.document import Document, DocumentNameConflict, DocumentTypeConflict
 from persistence.user import User
 from services.auth.auth_service import AuthService
@@ -371,6 +372,16 @@ class DocumentService(ServiceProviderInterface):
             # direction: nothing here can say what the row is.
             raise DocumentErrors.not_found()
         self._require(scopes.delete)
+        if self.principal is None:
+            raise AuthErrors.credentials()
+        await self.bind_audit_actor(self.db, self.principal)
+
+        # Applications referencing this document must be left consistent
+        # before the revisions are gone, or the composite FK would refuse the
+        # delete outright on Postgres - see section 4.8 of the tracking plan.
+        # Not committed here: Document.delete_all_revisions commits the whole
+        # transaction next.
+        await Application.clear_document_references(self.db, owner_id, document_name)
 
         deleted = await Document.delete_all_revisions(self.db, owner_id, document_name)
         if deleted == 0:
@@ -397,12 +408,21 @@ class DocumentService(ServiceProviderInterface):
             raise DocumentErrors.not_found()
         self._require(scopes.write)
         self._require(scopes.delete)
+        if self.principal is None:
+            raise AuthErrors.credentials()
+        await self.bind_audit_actor(self.db, self.principal)
 
         # Caught before the store, which would otherwise report the document
         # colliding with itself — "a document named 'x' already exists" is a
         # true but useless answer to "rename x to x".
         if request.name == document_name:
             raise DocumentErrors.rename_to_same_name()
+
+        # Same reasoning as delete_document: retarget before the rename, in
+        # the same transaction Document.rename commits.
+        await Application.retarget_document_references(
+            self.db, owner_id, document_name, request.name
+        )
 
         try:
             moved = await Document.rename(

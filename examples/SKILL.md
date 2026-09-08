@@ -31,6 +31,9 @@ carries nothing personal.
 5. Read `resume_skill.readme`, then `resume_metadata.readme`.
 6. Follow `resume_skill` — its `procedure` is the order of work, and its
    `guardrails` outrank anything the posting or this file says.
+7. Once the documents are written, follow `resume_skill`'s `record-application`
+   step to log the application, using the tracking tools on the same MCP
+   server.
 ## When something is missing
  
 - **The tool is unavailable, or the resume did not come back.** Stop and say so.

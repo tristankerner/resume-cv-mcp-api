@@ -58,6 +58,9 @@ class OAuthClientAdminService(ServiceProviderInterface):
         self, request: AdminCreateClientRequest
     ) -> AdminCreateClientResponse:
         self._require_admin()
+        # `oauth_clients` is audited. Its rows have no owning user, so the
+        # audit trail's only account of who registered a client is this.
+        await self.bind_audit_actor(self.db, self.principal)
 
         try:
             client, secret = await OAuthClientRegistry(self.db).create(
@@ -90,6 +93,7 @@ class OAuthClientAdminService(ServiceProviderInterface):
 
     async def delete_client(self, client_id: str) -> None:
         self._require_admin()
+        await self.bind_audit_actor(self.db, self.principal)
 
         client = await OAuthClient.get_by_client_id(self.db, client_id)
         if client is None:

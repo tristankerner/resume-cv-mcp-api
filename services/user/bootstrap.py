@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from persistence.audit_actor import AuditActor
 from persistence.user import User
 from services.auth.auth_service import AuthService
 from services.auth.roles import Roles
@@ -75,6 +76,13 @@ class AdminBootstrapper:
                 f"User {request.username!r} already exists but is not an admin. "
                 "Choose a different bootstrap username, or grant the role directly."
             )
+
+        # Bound before the insert, not before the commit: the flush below is
+        # what fires the audit trigger, and on SQLite the trigger reads the
+        # actor row as it stands at that moment. `users` is audited and
+        # nothing is authenticated at bootstrap, so the actor is explicitly
+        # nobody rather than whatever a previous run left in the row.
+        await AuditActor.bind(self.db, None, None)
 
         new_admin = User(
             username=request.username,

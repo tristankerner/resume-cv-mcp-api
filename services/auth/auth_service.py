@@ -10,6 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from persistence.api_key import ApiKey
+from persistence.audit_actor import AuditActor
 from persistence.auth_failure import AuthFailure
 from persistence.base import Clock
 from persistence.oauth_client import OAuthClient
@@ -141,6 +142,11 @@ class AuthService(ServiceProviderInterface):
             if locked is not None
             else LockStatus.OPEN
         )
+        # `users` is audited and nobody is authenticated on a failed login, so
+        # the actor is explicitly nobody. Stating it matters: on SQLite an
+        # unbound write inherits the last actor bound, which would file a
+        # stranger's failed login under whoever last used the service.
+        await self.bind_audit_actor(self.db, None)
         await self.db.commit()
 
         # Counted even when the account has just locked: an attacker who moves
@@ -203,6 +209,10 @@ class AuthService(ServiceProviderInterface):
         if locked is None:
             return
         AccountLock.clear(locked)
+        # Same reasoning as `_register_login_failure`: the login has not
+        # produced a credential yet, so the actor is nobody rather than
+        # whoever was bound last.
+        await self.bind_audit_actor(self.db, None)
         await self.db.commit()
 
     async def verify_current_password(self, user: User, password: str) -> None:
@@ -388,6 +398,13 @@ class AuthService(ServiceProviderInterface):
         ):
             return
         key.last_used_at = now
+        # `api_keys` is audited, so this write has to state its own actor. It
+        # is the key's owner spending the key, which is more informative than
+        # NULL - and without it, on SQLite the row would inherit whichever
+        # actor some earlier request happened to bind. `AuditActor` directly
+        # rather than `bind_audit_actor`: there is no Principal here yet, this
+        # runs while one is being built.
+        await AuditActor.bind(self.db, key.user_id, str(CredentialKind.API_KEY))
         await self.db.commit()
 
     async def _active_user_from_subject(self, payload: dict) -> User | None:

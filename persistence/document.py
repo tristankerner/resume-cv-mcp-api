@@ -85,6 +85,21 @@ class Document(SQAlchemyBase):
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def get_revision(
+        db: AsyncSession, owner_id: int, name: str, revision_id: int
+    ) -> Document | None:
+        """One exact revision, not necessarily the latest - what a stored
+        `<type>_document_name` / `<type>_revision_id` pair on an application
+        points at."""
+        stmt = select(Document).where(
+            Document.created_by == owner_id,
+            Document.name == name,
+            Document.revision_id == revision_id,
+        )
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def get_revisions(
         db: AsyncSession,
         owner_id: int,

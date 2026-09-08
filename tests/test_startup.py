@@ -71,6 +71,27 @@ async def test_mcp_app_is_mounted(client):
     assert response.status_code != 404
 
 
+def test_app_version_matches_pyproject():
+    """Two places state the same fact - pyproject.toml's `version` and
+    `Application.VERSION` - so a test is what stops them drifting."""
+    import tomllib
+    from pathlib import Path
+
+    pyproject = tomllib.loads(
+        (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text()
+    )
+    assert main.app.version == pyproject["project"]["version"]
+
+
+async def test_root_reports_name_version_and_status(client):
+    response = await client.get("/")
+    assert response.json() == {
+        "name": main.Application.TITLE,
+        "version": main.Application.VERSION,
+        "status": "alive",
+    }
+
+
 class TestLifespan:
     async def test_runs_migrations_and_claims_the_database(self, monkeypatch, password):
         """The container path: nothing but environment variables."""
@@ -177,3 +198,8 @@ class TestVerifyMfaKey:
         tasks = main.StartupTasks(ConfigService.get_without_deps())
         with pytest.raises(RuntimeError, match="MFA_ENCRYPTION_KEYS"):
             await tasks.verify_mfa_key()
+
+
+async def test_openapi_info_version_matches(client):
+    schema = (await client.get("/openapi.json")).json()
+    assert schema["info"]["version"] == main.Application.VERSION

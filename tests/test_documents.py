@@ -1236,6 +1236,36 @@ class TestDeletion:
         response = await client.delete("/documents/nope.json", headers=headers)
         assert response.status_code == 404
 
+    async def test_deleting_a_referenced_document_clears_the_application(
+        self, client, admin, company, stored_resume
+    ):
+        """See section 4.8 of the tracking plan: the composite FK has no ON
+        DELETE clause, so the application's reference must be cleared by hand
+        before the document goes, in the same transaction."""
+        created = await client.post(
+            "/applications",
+            headers=admin.headers,
+            json={
+                "company_id": company["id"],
+                "resume_document_name": stored_resume["name"],
+                "resume_revision_id": stored_resume["revision_id"],
+            },
+        )
+        assert created.status_code == 201, created.text
+        application_id = created.json()["id"]
+
+        response = await client.delete("/documents/resume.json", headers=admin.headers)
+        assert response.status_code == 200
+
+        detail = await client.get(
+            f"/applications/{application_id}", headers=admin.headers
+        )
+        assert detail.status_code == 200
+        assert detail.json()["resume_document"] is None
+        # The document name survives as a human-readable label rather than
+        # being silently lost.
+        assert detail.json()["resume_label"] == "resume.json"
+
 
 class TestRename:
     async def test_moves_every_revision(
@@ -1408,6 +1438,37 @@ class TestRename:
             json={"name": "renamed.json"},
         )
         assert response.status_code == 200
+
+    async def test_renaming_a_referenced_document_retargets_the_application(
+        self, client, admin, company, stored_resume
+    ):
+        created = await client.post(
+            "/applications",
+            headers=admin.headers,
+            json={
+                "company_id": company["id"],
+                "resume_document_name": stored_resume["name"],
+                "resume_revision_id": stored_resume["revision_id"],
+            },
+        )
+        assert created.status_code == 201, created.text
+        application_id = created.json()["id"]
+
+        response = await client.patch(
+            "/documents/resume.json",
+            headers=admin.headers,
+            json={"name": "renamed.json"},
+        )
+        assert response.status_code == 200
+
+        detail = await client.get(
+            f"/applications/{application_id}", headers=admin.headers
+        )
+        assert detail.status_code == 200
+        assert detail.json()["resume_document"] == {
+            "name": "renamed.json",
+            "revision_id": stored_resume["revision_id"],
+        }
 
 
 class TestPublicProjection:

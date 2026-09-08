@@ -838,6 +838,24 @@ class TestEffectiveScopes:
         assert Scopes.RESUME_READ.value in scopes
         assert Scopes.METADATA_WRITE.value in scopes
 
+    async def test_member_gets_the_ten_tracking_scopes(self, client, member):
+        """The web client's nav gates the tracking UI on these."""
+        response = await client.get("/users/me", headers=member.headers)
+        scopes = set(response.json()["scopes"])
+        for expected in (
+            "applications:read",
+            "applications:write",
+            "applications:delete",
+            "companies:read",
+            "companies:write",
+            "companies:delete",
+            "contacts:read",
+            "contacts:write",
+            "contacts:delete",
+            "audit:read",
+        ):
+            assert expected in scopes, expected
+
     async def test_roleless_user_gets_no_scopes(self, client, roleless):
         response = await client.get("/users/me", headers=roleless.headers)
         assert response.json()["scopes"] == []

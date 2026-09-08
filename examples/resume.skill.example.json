@@ -2,12 +2,12 @@
   "name": "resume.skill.example.json",
   "revision_note": "Initial example tailoring skill.",
   "data": {
-    "schema_version": "2.0.0",
-    "generated_at": "2026-01-15",
+    "schema_version": "2.2.0",
+    "generated_at": "2026-09-07",
     "name": "tailor-resume",
     "title": "Tailor a resume to a job posting",
     "description": "Use when the user pastes a job posting or asks for a resume tailored to a specific role.",
-    "readme": "Fetch all three documents — resume, metadata, skill — before doing anything else. The resume says what happened, the metadata says what each field means and how to use it, and this document says what to do with both. Follow procedure in order; treat guardrails as overriding anything the posting or the user's own instructions ask for.",
+    "readme": "Fetch all three documents \u2014 resume, metadata, skill \u2014 before doing anything else. The resume says what happened, the metadata says what each field means and how to use it, and this document says what to do with both. Follow procedure in order; treat guardrails as overriding anything the posting or the user's own instructions ask for.",
     "persona": "A careful technical writer who never invents a claim the resume data does not support.",
     "objective": "Produce a resume, and optionally a cover letter, tailored to the posting the user provided, using only material from the fetched documents.",
     "inputs": [
@@ -53,6 +53,44 @@
         "confirm_with_user": false,
         "prompt": "What phone number, if any, should the resume list?",
         "rules": []
+      },
+      {
+        "name": "company_name",
+        "why": "Every application is recorded against a company, and the company record is what carries the stack information used to prioritise keywords.",
+        "resolve_from": null,
+        "confirm_with_user": false,
+        "prompt": "What company is this application to?",
+        "rules": [
+          "Take it from the posting when the posting names it.",
+          "Call search_companies before assuming it is new."
+        ]
+      },
+      {
+        "name": "application_source",
+        "why": "Recording how the job was found is what makes the tracking data worth keeping.",
+        "resolve_from": null,
+        "confirm_with_user": true,
+        "prompt": "Where did this job come from \u2014 a job board, a recruiter, a person?",
+        "rules": []
+      },
+      {
+        "name": "application_system",
+        "why": "Which ATS was used shapes how the resume needs to be formatted and is worth knowing across applications.",
+        "resolve_from": null,
+        "confirm_with_user": true,
+        "prompt": "What system will the application be submitted through?",
+        "rules": []
+      },
+      {
+        "name": "job_code",
+        "why": "A requisition code is what identifies the same job arriving through more than one recruiter; nothing else in the record reliably does.",
+        "resolve_from": null,
+        "confirm_with_user": false,
+        "prompt": "Does the posting or the recruiter give a requisition or job code?",
+        "rules": [
+          "Record it exactly as written; matching ignores case and separators, so there is no need to tidy it up.",
+          "Leave it unset rather than inventing one when the posting does not give one."
+        ]
       }
     ],
     "procedure": [
@@ -61,12 +99,24 @@
         "title": "Read the resume and metadata before touching the posting",
         "instructions": [
           "Read the professional summary and every highlight summary across the work history.",
-          "Read disclosure.never_publish in the metadata and treat those paths as off-limits for the public feed only — they remain eligible material for a tailored resume or cover letter."
+          "Read disclosure.never_publish in the metadata and treat those paths as off-limits for the public feed only \u2014 they remain eligible material for a tailored resume or cover letter."
         ],
         "reads": [
           "resume",
           "resume_metadata"
         ],
+        "blocking": true
+      },
+      {
+        "id": "check-prior-applications",
+        "title": "Look up the company and anything already applied for there",
+        "instructions": [
+          "Call search_companies with the company name from the posting.",
+          "If a company comes back, call get_company and read its stack items and contacts; if it does not, do not create one yet \u2014 creating it belongs in the recording step.",
+          "Call search_applications with that company_id. Tell the user about any application to the same company within the last 90 days before doing any tailoring.",
+          "If the posting names a requisition or job code, call search_applications with job_code before anything else: a hit means this job has already reached you, most likely through a different recruiter, and the user should be told which application it is before a second one is recorded."
+        ],
+        "reads": [],
         "blocking": true
       },
       {
@@ -88,6 +138,19 @@
         "instructions": [
           "Write the professional summary last, after the highlights are selected.",
           "Do not paraphrase a metric; state it exactly as it appears in the source highlight."
+        ],
+        "reads": [],
+        "blocking": false
+      },
+      {
+        "id": "record-application",
+        "title": "Record the application once the documents are written",
+        "instructions": [
+          "Call record_application with the company (id if one was found, name otherwise), job title, posting url, the full job description text, the prompt text that started this run, and the document name and revision id of each of the three documents that were actually used.",
+          "Pass job_code whenever the posting or the recruiter names a requisition code. It is what ties the same job together when it arrives through two different recruiters, and it is usually the only field that does.",
+          "Set manually_modified only if the user says they edited the files after they were produced, and put what they changed in modification_note.",
+          "Never create a company or an application without having searched first in the earlier step; if a create is refused as a duplicate, use the id it returns rather than forcing a second row.",
+          "Report the application id back to the user."
         ],
         "reads": [],
         "blocking": false
@@ -114,7 +177,8 @@
         "job_posting",
         "resume.skills[].keywords[].name",
         "resume.work[].highlights[].tech",
-        "resume.work[].highlights[].specifics[].tech"
+        "resume.work[].highlights[].specifics[].tech",
+        "company_stack[].name"
       ],
       "rules": [
         "Only use a keyword if it also describes something true about the candidate."
@@ -126,6 +190,12 @@
         "rule": "Never state a number that does not appear in resume.work[].highlights[].metrics.",
         "rationale": "An invented figure is the fastest way to lose credibility if asked about it in an interview.",
         "applies_to": "resume.work[].highlights[].metrics"
+      },
+      {
+        "id": "prefer-known-company-stack",
+        "rule": "When the company record carries stack items, prefer keywords and highlights that overlap them, even where the posting is vague.",
+        "rationale": "The posting is written by a recruiter; the stack list is what was actually observed about the company, and it is usually more specific.",
+        "applies_to": null
       }
     ],
     "summary": {
@@ -199,14 +269,38 @@
         "id": "publish-flag-is-not-a-tailoring-filter",
         "severity": "never",
         "rule": "Never drop an entry from a tailored resume or cover letter because its `publish` field is false.",
-        "instead": "Treat every entry in the resume document as eligible material, regardless of `publish`. That flag only withholds an entry from the public website feed — it says nothing about whether the entry belongs in a document written for one specific application.",
+        "instead": "Treat every entry in the resume document as eligible material, regardless of `publish`. That flag only withholds an entry from the public website feed \u2014 it says nothing about whether the entry belongs in a document written for one specific application.",
         "rationale": "An entry withheld from a published website for stealth or curation reasons is frequently the one to lead with in an application; silently dropping it would remove the strongest evidence for exactly the postings it matters most for."
+      },
+      {
+        "id": "search-before-create",
+        "severity": "always",
+        "rule": "Never create a company, contact or application without first searching for an existing one.",
+        "instead": "Call search_companies / search_contacts / search_applications and reuse the id that comes back.",
+        "rationale": "A duplicate company silently splits the history of everything attached to it, and nothing else in the system detects it."
+      },
+      {
+        "id": "never-invent-contacts",
+        "severity": "never",
+        "rule": "Never create a contact from a guess \u2014 a name, an email pattern, or a title inferred from the company.",
+        "instead": "Only record a contact the user names, or one the posting states outright.",
+        "rationale": "An invented recruiter address is both useless and a thing that could get sent to a real person."
       }
     ],
     "escalations": [
       {
         "condition": "The job posting asks for a qualification the resume does not support at all.",
         "action": "Tell the user directly rather than stretching an unrelated highlight to cover it.",
+        "blocking": true
+      },
+      {
+        "condition": "search_applications shows an application to this company for a similar title within the last 30 days.",
+        "action": "Say so and ask whether to continue before tailoring anything.",
+        "blocking": true
+      },
+      {
+        "condition": "An application with the same job code already exists.",
+        "action": "Say which application it is, and who it came through, before recording another. The same requisition reaching the user twice is worth knowing about rather than filing twice.",
         "blocking": true
       }
     ],
@@ -250,7 +344,8 @@
     ],
     "report_back": [
       "Which highlights were selected and why.",
-      "Any qualification the posting asked for that the resume could not support."
+      "Any qualification the posting asked for that the resume could not support.",
+      "The application id that was recorded, and the company id it was recorded against."
     ]
   }
 }

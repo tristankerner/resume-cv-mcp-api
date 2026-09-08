@@ -210,6 +210,22 @@ them is a document write — the next run picks them up with no skill release.
 **→ [Document Types](docs/document-types.md)** — schemas, revisions, publishing,
 and the public feed.
 
+## Application Tracking
+
+Companies, contacts, applications and the events on them (status changes,
+notes, ratings) — a job hunt tracked alongside the résumé that was sent for
+each one, with résumé/metadata/skill document references, attachments, and an
+audit trail of every change. `applications:*`, `companies:*` and `contacts:*`
+scopes, per entity, plus `audit:read`.
+
+The `record_application` MCP tool is meant to run at the end of a tailoring
+session: search for the company first, tailor the résumé, then log the
+application with the documents actually used — see
+`examples/resume.skill.example.json`'s `record-application` step.
+
+**→ [API Reference](docs/api.md#application-tracking)** — every endpoint;
+**→ [Security](docs/security.md#audit-log)** — what the audit log records.
+
 ## MCP Client
 
 The server speaks **Streamable HTTP** at `/resume/mcp`, authenticated by either
@@ -272,9 +288,6 @@ databases and project layout.
 - [ ] **MCP write-back tools** — append a new bullet, skill or certification to
   the master résumé from inside a conversation, so an update made mid-tailoring
   lands in the source of truth instead of a one-off copy.
-- [ ] **Application tracking** — a fourth document type pairing a job
-  description with the tailored résumé and cover letter that were sent, plus
-  dates and outcome, so past applications are queryable.
 
 ## Contributing
 

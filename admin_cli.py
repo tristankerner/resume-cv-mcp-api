@@ -27,6 +27,7 @@ from typing import cast
 from pydantic import SecretStr
 from sqlalchemy import CursorResult, delete, select
 
+from persistence.audit_actor import AuditActor
 from persistence.auth_failure import AuthFailure
 from persistence.base import Clock
 from persistence.mfa_credential import MfaCredential
@@ -326,8 +327,24 @@ class AdminCli:
                 return 1
         return 0
 
+    @staticmethod
+    async def _disown_audit_actor() -> None:
+        """Clear any audit actor the running service left behind.
+
+        On SQLite the actor is a row in the database rather than a
+        transaction-local setting, so it is shared with whatever process wrote
+        it last. Without this, a recovery command run while the service is up
+        files its changes under whoever most recently used the API. Nobody is
+        authenticated here — this script needs no credential at all — so the
+        honest actor is none.
+        """
+        async with DatabaseService.session() as db:
+            await AuditActor.bind(db, None, None)
+            await db.commit()
+
     async def run(self, argv: list[str] | None = None) -> int:
         args = self._parse_args(argv)
+        await self._disown_audit_actor()
         if args.command == "unlock":
             return await self._run_unlock(args)
         if args.command == "reset-password":

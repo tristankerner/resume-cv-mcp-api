@@ -134,28 +134,61 @@ To run them by hand:
 uv run pre-commit run --all-files
 ```
 
+## Application tracking
+
+### Importing a job-hunt spreadsheet
+
+`scripts/import_job_hunt.py` is a one-time import of a personal CSV export
+into companies, applications and events. Dry run by default:
+
+```bash
+PYTHONPATH=. uv run python -m scripts.import_job_hunt \
+    --username YOU --csv "data/2026 Job Hunt - Sheet1.csv"
+```
+
+Add `--write` to actually write, once the dry-run output — company names
+flagged for review, unparseable dates, unmapped response values — looks
+right. It runs as one transaction and is idempotent: re-running against the
+same file finds every row's application already there and writes nothing new.
+
+### SQLite audit trigger columns are literal
+
+The audit-log migration generates three SQLite triggers (insert/update/delete)
+per audited table, and each one names its audited columns explicitly in the
+generated SQL — there is no SQLite equivalent of Postgres' "every column
+except these". A future migration that adds, drops or renames a column on an
+audited table (see [Security](security.md#audit-log) for the list) **must
+drop and recreate that table's three triggers** in the same migration, or
+they silently stop matching the live schema and start throwing on write.
+`tests/test_audit_log.py`'s structural test is the alarm for this — it
+compares `services/tracking/audit_columns.py`'s allowlist against the real
+model columns and fails the day the two disagree.
+
 ## Layout
 
 ```
-routers/            HTTP routes, and the MCP tools
+routers/            HTTP routes, and the MCP tools (mcp.py, mcp_tracking.py)
 services/auth/      authentication, scopes, Principal, API keys, throttling, MFA
 services/user/      user CRUD, first-admin bootstrap, new-account document seeding
 services/oauth/     OAuth 2.1 authorization server and admin client registration
 services/document/  document reads, writes, and the public projection
+services/tracking/  companies, contacts, applications, events, attachments, audit
 persistence/        SQLAlchemy models
 middleware/         CORS for the public feed and for the browser client
 alembic/            migrations, run automatically at startup
 admin_cli.py        last-resort account recovery, direct against the database
 examples/           fictional document fixtures, the seeding script, and SKILL.md
+scripts/            one-off maintenance scripts (resume v2 migration, CSV import)
 ```
 
 ### Code conventions
 
 `CLAUDE.md` is the authority. In short: async-first, strict type hints, and
 everything lives in a class — no free-standing functions or module-level
-variables, with four framework-forced exceptions documented there
-(`alembic/`, `tests/`, `routers/mcp.py`'s two tool adapters, and `main.py`'s
-ASGI entrypoint).
+variables, with the framework-forced exceptions documented there
+(`alembic/versions/*` and `alembic/env.py`, `tests/`, the `@tool` adapters in
+`routers/mcp.py` and `routers/mcp_tracking.py`, and `main.py`'s ASGI
+entrypoint).
 
 ## Local MCP connection
 

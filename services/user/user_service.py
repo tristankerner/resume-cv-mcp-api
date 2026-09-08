@@ -93,6 +93,7 @@ class UserService(ServiceProviderInterface):
         """
         self.principal.require_scope(Scopes.USERS_ADMIN)
         self.principal.require_interactive()
+        await self.bind_audit_actor(self.db, self.principal)
 
         existing_user = await User.get_user_by_username(self.db, request.username)
         if existing_user is not None:
@@ -156,6 +157,7 @@ class UserService(ServiceProviderInterface):
         if request.disabled is not None:
             self.principal.require_scope(Scopes.USERS_ADMIN)
 
+        await self.bind_audit_actor(self.db, self.principal)
         existing_user = await User.get_user_by_id(self.db, request.user_id)
         if existing_user is None:
             raise UserErrors.not_found()
@@ -209,6 +211,7 @@ class UserService(ServiceProviderInterface):
         other restriction on that key meaningless.
         """
         self.principal.require_interactive()
+        await self.bind_audit_actor(self.db, self.principal)
 
         user = await User.get_user_by_id(self.db, self.principal.user_id)
         if user is None:
@@ -231,6 +234,7 @@ class UserService(ServiceProviderInterface):
         """
         self.principal.require_scope(Scopes.USERS_ADMIN)
         self.principal.require_interactive()
+        await self.bind_audit_actor(self.db, self.principal)
 
         user = await User.get_user_by_id(self.db, user_id)
         if user is None:
@@ -249,6 +253,7 @@ class UserService(ServiceProviderInterface):
         not impose one by hand. Not restricted to permanently locked accounts.
         """
         self.principal.require_scope(Scopes.USERS_ADMIN)
+        await self.bind_audit_actor(self.db, self.principal)
 
         user = await User.get_user_by_id(self.db, user_id)
         if user is None:

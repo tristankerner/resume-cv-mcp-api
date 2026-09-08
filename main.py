@@ -26,12 +26,17 @@ from persistence.mfa_credential import MfaCredential
 from persistence.oauth_authorization_code import OAuthAuthorizationCode
 from persistence.oauth_refresh_token import OAuthRefreshToken
 from routers.api_keys import ApiKeysRouter
+from routers.applications import ApplicationsRouter
+from routers.audit import AuditRouter
 from routers.auth import AuthRouter
+from routers.companies import CompaniesRouter
+from routers.contacts import ContactsRouter
 from routers.docs import DocsRouter
 from routers.documents import DocumentsRouter
 from routers.mfa import MfaRouter
 from routers.oauth import OAuthRouter
 from routers.oauth_clients import OAuthClientsRouter
+from routers.tracking_meta import TrackingMetaRouter
 from routers.users import UsersRouter
 from services.auth.mcp_verifier import McpTokenVerifier
 from services.auth.mfa.secret_box import MfaSecretBox
@@ -217,6 +222,8 @@ class Application:
     """Assembles the ASGI app: MCP mount, middleware, routers, client route."""
 
     LOG: ClassVar[logging.Logger] = logging.getLogger("uvicorn")
+    VERSION: ClassVar[str] = "0.2.0"
+    TITLE: ClassVar[str] = "resume-cv-mcp-api"
 
     def __init__(self, config_service: ConfigService | None = None):
         self.config_service = config_service or ConfigService.get_without_deps()
@@ -231,6 +238,8 @@ class Application:
         mcp_app = mcp.http_app(path="/mcp")
 
         self._app = FastAPI(
+            title=self.TITLE,
+            version=self.VERSION,
             lifespan=combine_lifespans(self._lifespan, mcp_app.lifespan),
             swagger_ui_parameters={"defaultModelsExpandDepth": -1},
             # The built-in docs are served without a credential. Switching them
@@ -271,6 +280,11 @@ class Application:
             OAuthRouter(),
             OAuthClientsRouter(),
             MfaRouter(),
+            CompaniesRouter(),
+            ContactsRouter(),
+            ApplicationsRouter(),
+            TrackingMetaRouter(),
+            AuditRouter(),
         ):
             self._app.include_router(router.router)
 
@@ -279,7 +293,7 @@ class Application:
         self._app.get("/")(self.root)
 
     async def root(self) -> dict[str, str]:
-        return {"I'm": "alive"}
+        return {"name": self.TITLE, "version": self.VERSION, "status": "alive"}
 
     @property
     def app(self) -> FastAPI:

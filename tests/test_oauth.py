@@ -1132,6 +1132,28 @@ class TestIssuableScopes:
         for forbidden in ("users:admin", "resume:write", "resume:delete"):
             assert forbidden not in asm["scopes_supported"], forbidden
 
+    async def test_tracking_read_and_write_are_advertised_but_not_delete(self, client):
+        """The tracking MCP tools have to create rows during a tailoring run,
+        so read and write are issuable - but delete, and the audit trail,
+        stay off limits to a connector token."""
+        asm = (await client.get("/.well-known/oauth-authorization-server")).json()
+        for expected in (
+            "applications:read",
+            "applications:write",
+            "companies:read",
+            "companies:write",
+            "contacts:read",
+            "contacts:write",
+        ):
+            assert expected in asm["scopes_supported"], expected
+        for forbidden in (
+            "applications:delete",
+            "companies:delete",
+            "contacts:delete",
+            "audit:read",
+        ):
+            assert forbidden not in asm["scopes_supported"], forbidden
+
     async def test_asking_for_everything_grants_only_the_issuable_set(
         self, client, admin, password
     ):
