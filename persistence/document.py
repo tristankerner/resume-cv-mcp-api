@@ -3,7 +3,7 @@ from typing import Any, NamedTuple
 
 from sqlalchemy import JSON, ForeignKey, Index, event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Mapped, Session, mapped_column
+from sqlalchemy.orm import InstrumentedAttribute, Mapped, Session, mapped_column
 
 from .base import Clock, SQAlchemyBase
 
@@ -59,6 +59,13 @@ class Document(SQAlchemyBase):
             f"Document(created_by={self.created_by!r}, name={self.name!r}, "
             f"revision_id={self.revision_id!r}, type={self.type!r})"
         )
+
+    @classmethod
+    def heavy_columns(cls) -> tuple[InstrumentedAttribute[Any], ...]:
+        """The résumé/metadata/skill JSON itself. `DocumentSummary`'s
+        docstring promises none of its content, and every other reader of a
+        `Document` row wants the content, not the summary."""
+        return (cls.data,)
 
     @staticmethod
     def block_mutations(session: Session, flush_context: Any, instances: Any) -> None:
@@ -135,7 +142,7 @@ class Document(SQAlchemyBase):
             .group_by(Document.name)
             .subquery()
         )
-        stmt = (
+        stmt = Document.light(
             select(Document)
             .join(
                 latest_ids,
@@ -149,8 +156,10 @@ class Document(SQAlchemyBase):
 
     @staticmethod
     async def delete_all_revisions(db: AsyncSession, owner_id: int, name: str) -> int:
-        stmt = select(Document).where(
-            Document.created_by == owner_id, Document.name == name
+        stmt = Document.light(
+            select(Document).where(
+                Document.created_by == owner_id, Document.name == name
+            )
         )
         result = await db.execute(stmt)
         revisions = list(result.scalars().all())

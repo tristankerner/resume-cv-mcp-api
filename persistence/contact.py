@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Clock, SQAlchemyBase
+from .page import Page
 
 
 class Contact(SQAlchemyBase):
@@ -94,25 +95,16 @@ class Contact(SQAlchemyBase):
                 | func.lower(func.coalesce(Contact.email, "")).like(pattern)
             )
 
-        total = (
-            await db.execute(
-                select(func.count()).select_from(Contact).where(*conditions)
-            )
-        ).scalar_one()
-        rows = list(
-            (
-                await db.execute(
-                    select(Contact)
-                    .where(*conditions)
-                    .order_by(Contact.last_name, Contact.first_name)
-                    .limit(limit)
-                    .offset(offset)
-                )
-            )
-            .scalars()
-            .all()
+        stmt = (
+            select(Contact)
+            .where(*conditions)
+            .order_by(Contact.last_name, Contact.first_name)
         )
-        return rows, total
+        total_stmt = select(func.count()).select_from(Contact).where(*conditions)
+        rows, total = await Page.fetch(
+            db, stmt, limit=limit, offset=offset, total_stmt=total_stmt
+        )
+        return [row[0] for row in rows], total
 
     @staticmethod
     async def get_by_email(

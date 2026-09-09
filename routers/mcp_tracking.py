@@ -126,17 +126,19 @@ class TrackingTools(McpToolBase):
         normalized = Normalizer.company_name(query)
         async with DatabaseService.session() as db:
             rows, _total = await Company.search(db, owner, None, 10_000, 0, "name")
-            haystack = [(row.id, row.name, row.normalized_name) for row in rows]
+            haystack = [
+                (row.company.id, row.company.name, row.company.normalized_name)
+                for row in rows
+            ]
             candidates = DuplicateFinder.rank(normalized, haystack, limit=limit)
-            by_id = {row.id: row for row in rows}
-            counts = await Company.counts_for(db, owner, [c.id for c in candidates])
+            by_id = {row.company.id: row for row in rows}
         return {
             "companies": [
                 {
                     "id": candidate.id,
-                    "name": by_id[candidate.id].name,
-                    "website": by_id[candidate.id].website,
-                    "application_count": counts.get(candidate.id, (0, 0))[0],
+                    "name": by_id[candidate.id].company.name,
+                    "website": by_id[candidate.id].company.website,
+                    "application_count": by_id[candidate.id].application_count,
                     "match": candidate.match,
                     "score": candidate.score,
                 }

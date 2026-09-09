@@ -24,11 +24,19 @@ class DatabaseService:
                 str(settings.database_url),
                 echo=settings.database_echo,
                 # A serverless Postgres suspends its compute when idle (Neon
-                # after five minutes) and every pooled connection dies with it,
-                # so the first request after a quiet spell would be served a
-                # dead socket. Both settings are no-ops on SQLite.
-                pool_pre_ping=True,
-                pool_recycle=300,
+                # after five minutes) and every pooled connection dies with
+                # it, so the first request after a quiet spell would be
+                # served a dead socket without some form of mitigation.
+                # `pool_pre_ping` would cover that, but it spends a round
+                # trip on *every* checkout, not just a stale one - after
+                # QUERY_PERFORMANCE_PLAN.md's phases land `/applications` at
+                # two statements, that ping is a third of the request. Recycle
+                # alone gets the same protection more cheaply: 240s is under
+                # Neon's five-minute suspend, so a pooled connection is always
+                # discarded and replaced before Neon would have killed it -
+                # no request ever reaches a dead socket, and no request pays
+                # for a ping it didn't need. No-op on SQLite.
+                pool_recycle=240,
             )
             cls._session_factory = async_sessionmaker(
                 bind=cls._engine,
@@ -46,7 +54,7 @@ class DatabaseService:
     @classmethod
     def session_factory(cls) -> async_sessionmaker[AsyncSession]:
         """Built on first use, not at import. Keeps the pool settings and
-        their reasoning — see the pool_pre_ping comment."""
+        their reasoning — see the `pool_recycle` comment in `_ensure_built`."""
         _, session_factory = cls._ensure_built()
         return session_factory
 

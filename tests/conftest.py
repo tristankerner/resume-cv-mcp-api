@@ -66,6 +66,7 @@ from services.auth.roles import Roles
 from services.auth.scopes import ScopeResolver
 from services.config.config_service import ConfigService
 from services.database.database_service import DatabaseService
+from tests.support.query_recorder import QueryRecorder
 
 
 def pytest_sessionfinish(session, exitstatus):
@@ -170,6 +171,19 @@ async def client():
     transport = ASGITransport(app=main.app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
+
+
+@pytest.fixture
+def query_recorder():
+    """A fresh `QueryRecorder`, entered and exited around the test.
+
+    Not a context manager itself: most tests want to record everything a
+    request does, so entering here removes a `with` block from every call
+    site. A test that needs to scope recording more narrowly can construct
+    `QueryRecorder` directly instead of using this fixture.
+    """
+    with QueryRecorder() as recorder:
+        yield recorder
 
 
 @dataclass

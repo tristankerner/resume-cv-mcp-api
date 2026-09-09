@@ -4,7 +4,7 @@ from typing import Any
 from sqlalchemy import JSON, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.mutable import MutableList
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import InstrumentedAttribute, Mapped, mapped_column
 
 from .base import SQAlchemyBase
 
@@ -52,6 +52,13 @@ class User(SQAlchemyBase):
     def __repr__(self) -> str:
         return f"User(id={self.id!r}, username={self.username!r})"
 
+    @classmethod
+    def heavy_columns(cls) -> tuple[InstrumentedAttribute[Any], ...]:
+        """The argon2 hash. `get_user_by_username` and `get_user_by_id` do
+        not use `light` — they feed password verification and the current-user
+        DTO respectively, and the latter is one row per request, not a page."""
+        return (cls.password,)
+
     @staticmethod
     async def get_user_by_username(db: AsyncSession, username: str) -> User | None:
         user = (
@@ -68,7 +75,7 @@ class User(SQAlchemyBase):
         Scans rather than filters: roles is a JSON column with no index to use,
         and this is only asked at startup on a table of a handful of rows.
         """
-        users = (await db.execute(select(User))).scalars().all()
+        users = (await db.execute(User.light(select(User)))).scalars().all()
         return any(role in (user.roles or []) for user in users)
 
     @staticmethod

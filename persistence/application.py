@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from typing import Any, NamedTuple
 
 from sqlalchemy import (
     CheckConstraint,
@@ -12,9 +13,12 @@ from sqlalchemy import (
     select,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import InstrumentedAttribute, Mapped, mapped_column
 
 from .base import Clock, SQAlchemyBase
+from .batch_count import BatchCount
+from .page import Page
+from .related_count import RelatedCount
 
 
 class Application(SQAlchemyBase):
@@ -117,6 +121,12 @@ class Application(SQAlchemyBase):
             f"company_id={self.company_id!r}, status={self.status!r})"
         )
 
+    @classmethod
+    def heavy_columns(cls) -> tuple[InstrumentedAttribute[Any], ...]:
+        """The three a summary never shows. `ApplicationDetail` reads all of
+        them, so `Application.get` deliberately does not use `light`."""
+        return (cls.initial_prompt_text, cls.job_description, cls.modification_note)
+
     @staticmethod
     async def get(
         db: AsyncSession, user_id: int, application_id: int
@@ -140,7 +150,7 @@ class Application(SQAlchemyBase):
     ) -> list[Application]:
         """Newest `date_submitted` first, NULLs last - the shape
         `recent_applications` on a company detail wants."""
-        stmt = (
+        stmt = Application.light(
             select(Application)
             .where(Application.user_id == user_id, Application.company_id == company_id)
             .order_by(
@@ -161,9 +171,11 @@ class Application(SQAlchemyBase):
         recruiters — often two different agencies, and so two different
         company rows — putting the same requisition forward.
         """
-        stmt = select(Application).where(
-            Application.user_id == user_id,
-            Application.normalized_job_code == normalized_job_code,
+        stmt = Application.light(
+            select(Application).where(
+                Application.user_id == user_id,
+                Application.normalized_job_code == normalized_job_code,
+            )
         )
         if exclude_id is not None:
             stmt = stmt.where(Application.id != exclude_id)
@@ -180,19 +192,13 @@ class Application(SQAlchemyBase):
         grouped query. The caller subtracts the row itself to get "how many
         *others*"."""
         codes = [code for code in set(normalized_job_codes) if code]
-        if not codes:
-            return {}
-        rows = (
-            await db.execute(
-                select(Application.normalized_job_code, func.count())
-                .where(
-                    Application.user_id == user_id,
-                    Application.normalized_job_code.in_(codes),
-                )
-                .group_by(Application.normalized_job_code)
-            )
-        ).all()
-        return {row[0]: row[1] for row in rows}
+        return await BatchCount.for_keys(
+            db,
+            key_column=Application.normalized_job_code,
+            owner_column=Application.user_id,
+            owner_id=user_id,
+            keys=codes,
+        )
 
     @staticmethod
     async def search(
@@ -211,8 +217,9 @@ class Application(SQAlchemyBase):
         sort: str = "-date_submitted",
         limit: int = 50,
         offset: int = 0,
-    ) -> tuple[list[Application], int]:
+    ) -> tuple[list[ApplicationSearchRow], int]:
         from .application_attachment import ApplicationAttachment
+        from .application_event import ApplicationEvent
         from .company import Company
 
         conditions = [Application.user_id == user_id]
@@ -240,12 +247,14 @@ class Application(SQAlchemyBase):
                 attachment_exists if has_attachments else ~attachment_exists
             )
 
-        needs_company_join = query is not None or sort in ("company", "-company")
-
         def _base(select_clause):
-            stmt = select_clause.where(*conditions)
-            if needs_company_join:
-                stmt = stmt.join(Company, Company.id == Application.company_id)
+            # Always joined, not just when the sort or query needs it: every
+            # row's company name now rides along in the same query - see
+            # ApplicationSearchRow. `company_id` is a NOT NULL FK, so an
+            # inner join can never drop a row or change a count.
+            stmt = select_clause.where(*conditions).join(
+                Company, Company.id == Application.company_id
+            )
             if query:
                 pattern = f"%{query.lower()}%"
                 stmt = stmt.where(
@@ -253,10 +262,6 @@ class Application(SQAlchemyBase):
                     | func.lower(Company.name).like(pattern)
                 )
             return stmt
-
-        total = (
-            await db.execute(_base(select(func.count(Application.id))))
-        ).scalar_one()
 
         if sort == "company":
             order = (Company.name.asc(),)
@@ -272,10 +277,33 @@ class Application(SQAlchemyBase):
             }
             order = order_by.get(sort, order_by["-date_submitted"])
 
-        stmt = _base(select(Application)).order_by(*order, Application.id.desc())
-        stmt = stmt.limit(limit).offset(offset)
-        rows = list((await db.execute(stmt)).scalars().all())
-        return rows, total
+        row_stmt = Application.light(
+            _base(
+                select(
+                    Application,
+                    Company.name,
+                    RelatedCount.column(
+                        child_owner=ApplicationEvent.user_id,
+                        child_parent=ApplicationEvent.application_id,
+                        parent_key=Application.id,
+                        owner_id=user_id,
+                        label="event_count",
+                    ),
+                    RelatedCount.column(
+                        child_owner=ApplicationAttachment.user_id,
+                        child_parent=ApplicationAttachment.application_id,
+                        parent_key=Application.id,
+                        owner_id=user_id,
+                        label="attachment_count",
+                    ),
+                )
+            )
+        ).order_by(*order, Application.id.desc())
+        total_stmt = _base(select(func.count(Application.id)))
+        rows, total = await Page.fetch(
+            db, row_stmt, limit=limit, offset=offset, total_stmt=total_stmt
+        )
+        return [ApplicationSearchRow(*row) for row in rows], total
 
     @staticmethod
     async def candidates_for_dedup(
@@ -319,13 +347,15 @@ class Application(SQAlchemyBase):
         the transaction. See section 4.8 of the tracking plan.
         """
         result = await db.execute(
-            select(Application).where(
-                Application.user_id == owner_id,
-                or_(
-                    Application.resume_document_name == document_name,
-                    Application.metadata_document_name == document_name,
-                    Application.skill_document_name == document_name,
-                ),
+            Application.light(
+                select(Application).where(
+                    Application.user_id == owner_id,
+                    or_(
+                        Application.resume_document_name == document_name,
+                        Application.metadata_document_name == document_name,
+                        Application.skill_document_name == document_name,
+                    ),
+                )
             )
         )
         for application in result.scalars().all():
@@ -349,13 +379,15 @@ class Application(SQAlchemyBase):
         `new_name`. Revision ids do not change during a rename. Does not
         commit - see `clear_document_references`."""
         result = await db.execute(
-            select(Application).where(
-                Application.user_id == owner_id,
-                or_(
-                    Application.resume_document_name == old_name,
-                    Application.metadata_document_name == old_name,
-                    Application.skill_document_name == old_name,
-                ),
+            Application.light(
+                select(Application).where(
+                    Application.user_id == owner_id,
+                    or_(
+                        Application.resume_document_name == old_name,
+                        Application.metadata_document_name == old_name,
+                        Application.skill_document_name == old_name,
+                    ),
+                )
             )
         )
         for application in result.scalars().all():
@@ -365,3 +397,19 @@ class Application(SQAlchemyBase):
                 application.metadata_document_name = new_name
             if application.skill_document_name == old_name:
                 application.skill_document_name = new_name
+
+
+class ApplicationSearchRow(NamedTuple):
+    """One row of `Application.search`'s result: the entity plus the fields
+    a summary needs that would otherwise cost a lookup of their own - a
+    company name and two `RelatedCount` columns. See
+    `QUERY_PERFORMANCE_PLAN.md` Phase 4. `job_code_match_count` is
+    deliberately not here - it counts siblings across the whole table
+    rather than children of this row, so it stays a grouped follow-up in
+    `Application.job_code_match_counts`.
+    """
+
+    application: Application
+    company_name: str
+    event_count: int
+    attachment_count: int

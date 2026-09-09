@@ -1,10 +1,11 @@
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Text, func, select
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Text, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Clock, SQAlchemyBase
+from .batch_count import BatchCount
 
 
 class ApplicationEvent(SQAlchemyBase):
@@ -77,23 +78,13 @@ class ApplicationEvent(SQAlchemyBase):
         events to call `len` on them is a query per row, and 200 of those is
         what `limit` allows.
         """
-        if not application_ids:
-            return {}
-        rows = (
-            await db.execute(
-                select(ApplicationEvent.application_id, func.count())
-                .where(
-                    ApplicationEvent.user_id == user_id,
-                    ApplicationEvent.application_id.in_(application_ids),
-                )
-                .group_by(ApplicationEvent.application_id)
-            )
-        ).all()
-        counts = {row[0]: row[1] for row in rows}
-        return {
-            application_id: counts.get(application_id, 0)
-            for application_id in application_ids
-        }
+        return await BatchCount.for_keys(
+            db,
+            key_column=ApplicationEvent.application_id,
+            owner_column=ApplicationEvent.user_id,
+            owner_id=user_id,
+            keys=application_ids,
+        )
 
     @staticmethod
     async def list_for_application(

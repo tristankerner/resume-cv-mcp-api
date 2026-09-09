@@ -8,6 +8,7 @@ from persistence.application_event import ApplicationEvent
 from persistence.base import Clock
 from persistence.company import Company
 from persistence.contact import Contact
+from persistence.lookup import Lookup
 from services.auth.auth_service import AuthService
 from services.auth.principal import Principal
 from services.auth.scopes import Scopes
@@ -42,12 +43,6 @@ class ContactService(TrackingServiceBase):
         company = await Company.get(self.db, self._owner(), company_id)
         if company is None:
             raise TrackingErrors.invalid_reference("company_id", "company")
-
-    async def _company_name(self, company_id: int | None) -> str | None:
-        if company_id is None:
-            return None
-        company = await Company.get(self.db, self._owner(), company_id)
-        return company.name if company is not None else None
 
     async def _candidates(
         self,
@@ -100,8 +95,33 @@ class ContactService(TrackingServiceBase):
         )
         raise TrackingErrors.duplicate("duplicate_contact", message, candidates)
 
+    async def _to_dtos(self, contacts: list[Contact]) -> list[ContactDto]:
+        """DTOs for a page of contacts in one round trip for every company
+        name, rather than one `Company.get` per row - the N+1 that made
+        `GET /contacts` the worst endpoint in the system."""
+        if not contacts:
+            return []
+        company_ids = [
+            contact.company_id for contact in contacts if contact.company_id is not None
+        ]
+        names = await Lookup.map(
+            self.db,
+            key_column=Company.id,
+            value_columns=(Company.name,),
+            owner_column=Company.user_id,
+            owner_id=self._owner(),
+            keys=company_ids,
+        )
+        return [
+            ContactView.of(
+                contact,
+                names[contact.company_id].name if contact.company_id in names else None,
+            )
+            for contact in contacts
+        ]
+
     async def _to_dto(self, contact: Contact) -> ContactDto:
-        return ContactView.of(contact, await self._company_name(contact.company_id))
+        return (await self._to_dtos([contact]))[0]
 
     async def _require_contact(self, contact_id: int) -> Contact:
         contact = await Contact.get(self.db, self._owner(), contact_id)
@@ -117,7 +137,7 @@ class ContactService(TrackingServiceBase):
         rows, total = await Contact.search(
             self.db, owner, query, company_id, limit, offset
         )
-        data = [await self._to_dto(row) for row in rows]
+        data = await self._to_dtos(list(rows))
         return ListEnvelope(data=data, total=total, limit=limit, offset=offset)
 
     async def get_contact(self, contact_id: int) -> ContactDto:

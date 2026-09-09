@@ -1,10 +1,15 @@
 from datetime import datetime
+from typing import NamedTuple
 
 from sqlalchemy import ForeignKey, Index, Text, UniqueConstraint, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Clock, SQAlchemyBase
+from .batch_count import BatchCount
+from .lookup import Lookup
+from .page import Page
+from .related_count import RelatedCount
 
 
 class Company(SQAlchemyBase):
@@ -68,16 +73,13 @@ class Company(SQAlchemyBase):
         limit: int,
         offset: int,
         sort: str = "name",
-    ) -> tuple[list[Company], int]:
+    ) -> tuple[list[CompanySearchRow], int]:
+        from .application import Application
+        from .contact import Contact
+
         conditions = [Company.user_id == user_id]
         if query:
             conditions.append(func.lower(Company.name).like(f"%{query.lower()}%"))
-
-        total = (
-            await db.execute(
-                select(func.count()).select_from(Company).where(*conditions)
-            )
-        ).scalar_one()
 
         order = {
             "name": Company.name.asc(),
@@ -86,20 +88,32 @@ class Company(SQAlchemyBase):
             "-created_at": Company.created_at.desc(),
         }.get(sort, Company.name.asc())
 
-        rows = list(
-            (
-                await db.execute(
-                    select(Company)
-                    .where(*conditions)
-                    .order_by(order)
-                    .limit(limit)
-                    .offset(offset)
-                )
+        row_stmt = (
+            select(
+                Company,
+                RelatedCount.column(
+                    child_owner=Application.user_id,
+                    child_parent=Application.company_id,
+                    parent_key=Company.id,
+                    owner_id=user_id,
+                    label="application_count",
+                ),
+                RelatedCount.column(
+                    child_owner=Contact.user_id,
+                    child_parent=Contact.company_id,
+                    parent_key=Company.id,
+                    owner_id=user_id,
+                    label="contact_count",
+                ),
             )
-            .scalars()
-            .all()
+            .where(*conditions)
+            .order_by(order)
         )
-        return rows, total
+        total_stmt = select(func.count()).select_from(Company).where(*conditions)
+        rows, total = await Page.fetch(
+            db, row_stmt, limit=limit, offset=offset, total_stmt=total_stmt
+        )
+        return [CompanySearchRow(*row) for row in rows], total
 
     @staticmethod
     async def names_for(
@@ -108,48 +122,45 @@ class Company(SQAlchemyBase):
         """Name per company id, in one query. Filtered on the owner like every
         other read here, so an id belonging to someone else simply does not
         come back."""
-        if not company_ids:
-            return {}
-        rows = (
-            await db.execute(
-                select(Company.id, Company.name).where(
-                    Company.user_id == user_id, Company.id.in_(company_ids)
-                )
-            )
-        ).all()
-        return {row[0]: row[1] for row in rows}
+        rows = await Lookup.map(
+            db,
+            key_column=Company.id,
+            value_columns=(Company.name,),
+            owner_column=Company.user_id,
+            owner_id=user_id,
+            keys=company_ids,
+        )
+        return {company_id: row.name for company_id, row in rows.items()}
 
     @staticmethod
     async def counts_for(
         db: AsyncSession, user_id: int, company_ids: list[int]
     ) -> dict[int, tuple[int, int]]:
         """`(application_count, contact_count)` per company id, via two grouped
-        aggregate queries rather than a count per row."""
-        if not company_ids:
-            return {}
+        aggregate queries rather than a count per row.
 
+        Kept as its own batched pair alongside `Company.search`'s correlated
+        columns rather than replaced by them: `CompanyService.get_company`
+        wants the counts for exactly one row it already has, where a
+        correlated subquery would cost the same round trip for no benefit.
+        """
         from .application import Application
         from .contact import Contact
 
-        application_rows = (
-            await db.execute(
-                select(Application.company_id, func.count())
-                .where(
-                    Application.user_id == user_id,
-                    Application.company_id.in_(company_ids),
-                )
-                .group_by(Application.company_id)
-            )
-        ).all()
-        contact_rows = (
-            await db.execute(
-                select(Contact.company_id, func.count())
-                .where(Contact.user_id == user_id, Contact.company_id.in_(company_ids))
-                .group_by(Contact.company_id)
-            )
-        ).all()
-        applications = {row[0]: row[1] for row in application_rows}
-        contacts = {row[0]: row[1] for row in contact_rows}
+        applications = await BatchCount.for_keys(
+            db,
+            key_column=Application.company_id,
+            owner_column=Application.user_id,
+            owner_id=user_id,
+            keys=company_ids,
+        )
+        contacts = await BatchCount.for_keys(
+            db,
+            key_column=Contact.company_id,
+            owner_column=Contact.user_id,
+            owner_id=user_id,
+            keys=company_ids,
+        )
         return {
             company_id: (applications.get(company_id, 0), contacts.get(company_id, 0))
             for company_id in company_ids
@@ -167,3 +178,14 @@ class Company(SQAlchemyBase):
             )
         ).all()
         return [(row.id, row.name, row.normalized_name) for row in rows]
+
+
+class CompanySearchRow(NamedTuple):
+    """One row of `Company.search`'s result: the entity plus the two
+    `RelatedCount` columns a summary needs, so the list endpoint no longer
+    follows up with `Company.counts_for`. See `QUERY_PERFORMANCE_PLAN.md`
+    Phase 4."""
+
+    company: Company
+    application_count: int
+    contact_count: int

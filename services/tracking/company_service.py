@@ -116,18 +116,17 @@ class CompanyService(TrackingServiceBase):
         self._require(Scopes.COMPANIES_READ)
         owner = self._owner()
         rows, total = await Company.search(self.db, owner, query, limit, offset, sort)
-        counts = await Company.counts_for(self.db, owner, [row.id for row in rows])
         data = [
             CompanySummary(
-                id=row.id,
-                name=row.name,
-                website=row.website,
-                description=row.description,
-                personal_note=row.personal_note,
-                application_count=counts.get(row.id, (0, 0))[0],
-                contact_count=counts.get(row.id, (0, 0))[1],
-                created_at=row.created_at,
-                updated_at=row.updated_at,
+                id=row.company.id,
+                name=row.company.name,
+                website=row.company.website,
+                description=row.company.description,
+                personal_note=row.company.personal_note,
+                application_count=row.application_count,
+                contact_count=row.contact_count,
+                created_at=row.company.created_at,
+                updated_at=row.company.updated_at,
             )
             for row in rows
         ]
@@ -140,17 +139,16 @@ class CompanyService(TrackingServiceBase):
         summary = await self._to_summary(company)
 
         edges = await CompanyRelationship.list_for_company(self.db, owner, company_id)
-        other_ids = {
-            edge.to_company_id
-            if edge.from_company_id == company_id
-            else edge.from_company_id
-            for edge in edges
-        }
+        other_ids = list(
+            {
+                edge.to_company_id
+                if edge.from_company_id == company_id
+                else edge.from_company_id
+                for edge in edges
+            }
+        )
         names = {company_id: company.name}
-        for other_id in other_ids:
-            other = await Company.get(self.db, owner, other_id)
-            if other is not None:
-                names[other_id] = other.name
+        names.update(await Company.names_for(self.db, owner, other_ids))
         relationships = [
             CompanyRelationshipDto(
                 id=edge.id,

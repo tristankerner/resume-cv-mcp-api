@@ -1,10 +1,12 @@
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import ForeignKey, Index, Text, UniqueConstraint, func, select
+from sqlalchemy import ForeignKey, Index, Text, UniqueConstraint, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Mapped, defer, mapped_column
+from sqlalchemy.orm import InstrumentedAttribute, Mapped, mapped_column
 
 from .base import Clock, SQAlchemyBase
+from .batch_count import BatchCount
 
 
 class ApplicationAttachment(SQAlchemyBase):
@@ -45,29 +47,25 @@ class ApplicationAttachment(SQAlchemyBase):
             f"application_id={self.application_id!r}, filename={self.filename!r})"
         )
 
+    @classmethod
+    def heavy_columns(cls) -> tuple[InstrumentedAttribute[Any], ...]:
+        """The base64 blob. Every query that only needs metadata defers it -
+        see `get_with_content` for the one that deliberately does not."""
+        return (cls.content_base64,)
+
     @staticmethod
     async def counts_for(
         db: AsyncSession, user_id: int, application_ids: list[int]
     ) -> dict[int, int]:
         """Attachment count per application id, in one grouped query - see
         `ApplicationEvent.counts_for` for why this is not a count per row."""
-        if not application_ids:
-            return {}
-        rows = (
-            await db.execute(
-                select(ApplicationAttachment.application_id, func.count())
-                .where(
-                    ApplicationAttachment.user_id == user_id,
-                    ApplicationAttachment.application_id.in_(application_ids),
-                )
-                .group_by(ApplicationAttachment.application_id)
-            )
-        ).all()
-        counts = {row[0]: row[1] for row in rows}
-        return {
-            application_id: counts.get(application_id, 0)
-            for application_id in application_ids
-        }
+        return await BatchCount.for_keys(
+            db,
+            key_column=ApplicationAttachment.application_id,
+            owner_column=ApplicationAttachment.user_id,
+            owner_id=user_id,
+            keys=application_ids,
+        )
 
     @staticmethod
     async def list_metadata_for_application(
@@ -76,13 +74,14 @@ class ApplicationAttachment(SQAlchemyBase):
         return list(
             (
                 await db.execute(
-                    select(ApplicationAttachment)
-                    .options(defer(ApplicationAttachment.content_base64))
-                    .where(
-                        ApplicationAttachment.user_id == user_id,
-                        ApplicationAttachment.application_id == application_id,
+                    ApplicationAttachment.light(
+                        select(ApplicationAttachment)
+                        .where(
+                            ApplicationAttachment.user_id == user_id,
+                            ApplicationAttachment.application_id == application_id,
+                        )
+                        .order_by(ApplicationAttachment.created_at.desc())
                     )
-                    .order_by(ApplicationAttachment.created_at.desc())
                 )
             )
             .scalars()
@@ -96,11 +95,11 @@ class ApplicationAttachment(SQAlchemyBase):
         return (
             (
                 await db.execute(
-                    select(ApplicationAttachment)
-                    .options(defer(ApplicationAttachment.content_base64))
-                    .where(
-                        ApplicationAttachment.id == attachment_id,
-                        ApplicationAttachment.user_id == user_id,
+                    ApplicationAttachment.light(
+                        select(ApplicationAttachment).where(
+                            ApplicationAttachment.id == attachment_id,
+                            ApplicationAttachment.user_id == user_id,
+                        )
                     )
                 )
             )
@@ -132,12 +131,12 @@ class ApplicationAttachment(SQAlchemyBase):
         return (
             (
                 await db.execute(
-                    select(ApplicationAttachment)
-                    .options(defer(ApplicationAttachment.content_base64))
-                    .where(
-                        ApplicationAttachment.user_id == user_id,
-                        ApplicationAttachment.application_id == application_id,
-                        ApplicationAttachment.sha256 == sha256,
+                    ApplicationAttachment.light(
+                        select(ApplicationAttachment).where(
+                            ApplicationAttachment.user_id == user_id,
+                            ApplicationAttachment.application_id == application_id,
+                            ApplicationAttachment.sha256 == sha256,
+                        )
                     )
                 )
             )

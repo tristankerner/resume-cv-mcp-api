@@ -1,10 +1,35 @@
 from datetime import UTC, datetime
+from typing import Any
 
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import Select
+from sqlalchemy.orm import DeclarativeBase, InstrumentedAttribute, defer
 
 
 class SQAlchemyBase(DeclarativeBase):
-    pass
+    @classmethod
+    def heavy_columns(cls) -> tuple[InstrumentedAttribute[Any], ...]:
+        """Columns a summary view never reads.
+
+        Overridden by the models whose rows carry large `Text` or `JSON` the
+        list endpoints discard. Empty here, so a model that says nothing
+        keeps fetching everything.
+        """
+        return ()
+
+    @classmethod
+    def light(cls, stmt: Select[Any]) -> Select[Any]:
+        """`stmt`, with `heavy_columns` left on the server.
+
+        `raiseload=True` is the point rather than a precaution: without it a
+        deferred column silently issues its own SELECT on first access, which
+        turns one fixed over-fetch into a per-row round trip - strictly
+        worse than what this replaces. With it, the same mistake raises
+        `InvalidRequestError` in a test.
+        """
+        heavy = cls.heavy_columns()
+        if not heavy:
+            return stmt
+        return stmt.options(*(defer(column, raiseload=True) for column in heavy))
 
 
 class Clock:

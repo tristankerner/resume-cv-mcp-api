@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import SQAlchemyBase
+from .page import Page
 
 
 class AuditLogEntry(SQAlchemyBase):
@@ -56,22 +57,13 @@ class AuditLogEntry(SQAlchemyBase):
         if row_pk is not None:
             conditions.append(AuditLogEntry.row_pk == row_pk)
 
-        total = (
-            await db.execute(
-                select(func.count()).select_from(AuditLogEntry).where(*conditions)
-            )
-        ).scalar_one()
-        rows = list(
-            (
-                await db.execute(
-                    select(AuditLogEntry)
-                    .where(*conditions)
-                    .order_by(AuditLogEntry.changed_at.desc(), AuditLogEntry.id.desc())
-                    .limit(limit)
-                    .offset(offset)
-                )
-            )
-            .scalars()
-            .all()
+        stmt = (
+            select(AuditLogEntry)
+            .where(*conditions)
+            .order_by(AuditLogEntry.changed_at.desc(), AuditLogEntry.id.desc())
         )
-        return rows, total
+        total_stmt = select(func.count()).select_from(AuditLogEntry).where(*conditions)
+        rows, total = await Page.fetch(
+            db, stmt, limit=limit, offset=offset, total_stmt=total_stmt
+        )
+        return [row[0] for row in rows], total

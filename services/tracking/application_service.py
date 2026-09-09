@@ -4,13 +4,14 @@ from typing import Annotated
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from persistence.application import Application
+from persistence.application import Application, ApplicationSearchRow
 from persistence.application_attachment import ApplicationAttachment
 from persistence.application_event import ApplicationEvent
 from persistence.base import Clock
 from persistence.company import Company
 from persistence.contact import Contact
 from persistence.document import Document
+from persistence.lookup import Lookup
 from services.auth.auth_service import AuthService
 from services.auth.principal import Principal
 from services.auth.scopes import Scopes
@@ -133,30 +134,59 @@ class ApplicationService(TrackingServiceBase):
         company = await Company.get(self.db, self._owner(), company_id)
         return company.name if company is not None else ""
 
-    async def _event_dto(self, event: ApplicationEvent) -> ApplicationEventDto:
-        contact_name = None
-        if event.contact_id is not None:
-            contact = await Contact.get(self.db, self._owner(), event.contact_id)
-            if contact is not None:
-                contact_name = (
-                    " ".join(
-                        part for part in (contact.first_name, contact.last_name) if part
-                    ).strip()
-                    or None
-                )
-        status = ApplicationStatus(event.status) if event.status is not None else None
-        return ApplicationEventDto(
-            id=event.id,
-            application_id=event.application_id,
-            status=status,
-            status_label=APPLICATION_STATUS_LABELS[status] if status else None,
-            contact_id=event.contact_id,
-            contact_name=contact_name,
-            description=event.description,
-            rating=event.rating,
-            occurred_at=event.occurred_at,
-            created_at=event.created_at,
+    async def _event_dtos(
+        self, events: list[ApplicationEvent]
+    ) -> list[ApplicationEventDto]:
+        """DTOs for a page of events in one round trip for every contact
+        name, rather than one `Contact.get` per row."""
+        if not events:
+            return []
+        contact_ids = [
+            event.contact_id for event in events if event.contact_id is not None
+        ]
+        names = await Lookup.map(
+            self.db,
+            key_column=Contact.id,
+            value_columns=(Contact.first_name, Contact.last_name),
+            owner_column=Contact.user_id,
+            owner_id=self._owner(),
+            keys=contact_ids,
         )
+
+        def _contact_name(contact_id: int | None) -> str | None:
+            if contact_id is None or contact_id not in names:
+                return None
+            row = names[contact_id]
+            return (
+                " ".join(
+                    part for part in (row.first_name, row.last_name) if part
+                ).strip()
+                or None
+            )
+
+        result = []
+        for event in events:
+            status = (
+                ApplicationStatus(event.status) if event.status is not None else None
+            )
+            result.append(
+                ApplicationEventDto(
+                    id=event.id,
+                    application_id=event.application_id,
+                    status=status,
+                    status_label=APPLICATION_STATUS_LABELS[status] if status else None,
+                    contact_id=event.contact_id,
+                    contact_name=_contact_name(event.contact_id),
+                    description=event.description,
+                    rating=event.rating,
+                    occurred_at=event.occurred_at,
+                    created_at=event.created_at,
+                )
+            )
+        return result
+
+    async def _event_dto(self, event: ApplicationEvent) -> ApplicationEventDto:
+        return (await self._event_dtos([event]))[0]
 
     async def _attachment_dto(
         self, attachment: ApplicationAttachment
@@ -220,6 +250,43 @@ class ApplicationService(TrackingServiceBase):
 
     async def _to_summary(self, application: Application) -> ApplicationSummary:
         return (await self._to_summaries([application]))[0]
+
+    async def _summaries_from_search_rows(
+        self, rows: list[ApplicationSearchRow]
+    ) -> list[ApplicationSummary]:
+        """Summaries for a page `Application.search` already produced: the
+        company name and per-row counts rode along as correlated columns, so
+        only `job_code_match_count` still needs a grouped follow-up - and
+        that follow-up is skipped entirely when nothing on the page carries
+        a job code."""
+        if not rows:
+            return []
+        owner = self._owner()
+        job_code_totals = await Application.job_code_match_counts(
+            self.db,
+            owner,
+            [
+                row.application.normalized_job_code
+                for row in rows
+                if row.application.normalized_job_code
+            ],
+        )
+        return [
+            ApplicationView.summary(
+                row.application,
+                row.company_name,
+                row.event_count,
+                row.attachment_count,
+                # Minus one for the row itself: the field answers "how many
+                # *others* share this code".
+                max(
+                    job_code_totals.get(row.application.normalized_job_code or "", 0)
+                    - 1,
+                    0,
+                ),
+            )
+            for row in rows
+        ]
 
     async def _related_by_job_code(
         self, application: Application
@@ -329,7 +396,7 @@ class ApplicationService(TrackingServiceBase):
             limit=limit,
             offset=offset,
         )
-        data = await self._to_summaries(list(rows))
+        data = await self._summaries_from_search_rows(list(rows))
         return ListEnvelope(data=data, total=total, limit=limit, offset=offset)
 
     async def get_application(self, application_id: int) -> ApplicationDetail:
@@ -337,12 +404,9 @@ class ApplicationService(TrackingServiceBase):
         owner = self._owner()
         application = await self._require_application(application_id)
         company_name = await self._company_name(application.company_id)
-        events = [
-            await self._event_dto(event)
-            for event in await ApplicationEvent.list_for_application(
-                self.db, owner, application_id
-            )
-        ]
+        events = await self._event_dtos(
+            await ApplicationEvent.list_for_application(self.db, owner, application_id)
+        )
         attachments = [
             await self._attachment_dto(attachment)
             for attachment in await ApplicationAttachment.list_metadata_for_application(
@@ -504,7 +568,7 @@ class ApplicationService(TrackingServiceBase):
         rows = await ApplicationEvent.list_for_application(
             self.db, owner, application_id
         )
-        data = [await self._event_dto(row) for row in rows]
+        data = await self._event_dtos(rows)
         return ListEnvelope(data=data, total=len(data), limit=len(data), offset=0)
 
     async def _event_write_response(
