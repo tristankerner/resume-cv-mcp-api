@@ -1,7 +1,6 @@
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict, Field
 
+from services.common.datetimes import UtcDatetime
 from services.tracking.dtos.application import ApplicationSummary
 from services.tracking.dtos.common import HttpUrlText
 from services.tracking.dtos.contact import Contact
@@ -22,7 +21,7 @@ class CompanyRelationshipDto(BaseModel):
     to_company_name: str
     type: CompanyRelationshipType
     note: str | None
-    created_at: datetime
+    created_at: UtcDatetime
 
 
 class CompanyStackItemDto(BaseModel):
@@ -33,8 +32,8 @@ class CompanyStackItemDto(BaseModel):
     name: str
     type: StackItemType
     description: str | None
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
 
 
 class CompanySummary(BaseModel):
@@ -47,8 +46,8 @@ class CompanySummary(BaseModel):
     personal_note: str | None
     application_count: int
     contact_count: int
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
 
 
 class CompanyDetail(CompanySummary):

@@ -23,6 +23,7 @@ from services.tracking.dtos.attachment import (
     CreateAttachmentRequest,
 )
 from services.tracking.dtos.common import ListEnvelope
+from services.tracking.dtos.contact import ContactOption
 from services.tracking.enums import ApplicationStatus
 
 ApplicationSort = Literal[
@@ -36,6 +37,10 @@ ApplicationSort = Literal[
 ]
 Limit = Annotated[int, Query(ge=1, le=200)]
 Offset = Annotated[int, Query(ge=0)]
+# Wider than the ordinary list `Limit`: capped at
+# `CompanyRelationship.MAX_RELATED_COMPANIES` (200) companies rather than 200
+# rows, and each company can hold several contacts.
+ContactOptionsLimit = Annotated[int, Query(ge=1, le=500)]
 
 
 class ApplicationsRouter:
@@ -68,6 +73,9 @@ class ApplicationsRouter:
         )
         self.router.post("/applications/{application_id}/attachments", status_code=201)(
             self.create_attachment
+        )
+        self.router.get("/applications/{application_id}/contact-options")(
+            self.contact_options
         )
         self.router.get("/applications/{application_id}")(self.get_application)
         self.router.patch("/applications/{application_id}")(self.update_application)
@@ -177,6 +185,15 @@ class ApplicationsRouter:
         attachment_service: AttachmentServiceDep,
     ) -> AttachmentMeta:
         return await attachment_service.create_attachment(application_id, request)
+
+    async def contact_options(
+        self,
+        application_id: int,
+        application_service: ApplicationServiceDep,
+        query: str | None = None,
+        limit: ContactOptionsLimit = 200,
+    ) -> ListEnvelope[ContactOption]:
+        return await application_service.contact_options(application_id, query, limit)
 
     async def get_attachment(
         self, attachment_id: int, attachment_service: AttachmentServiceDep

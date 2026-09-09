@@ -1,8 +1,9 @@
-from datetime import date, datetime
+from datetime import date
 from typing import Annotated, ClassVar, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from services.common.datetimes import UtcDatetime
 from services.tracking.dtos.application_event import ApplicationEvent
 from services.tracking.dtos.attachment import AttachmentMeta
 from services.tracking.dtos.common import DocumentRef, HttpUrlText
@@ -53,14 +54,14 @@ class ApplicationSummary(BaseModel):
     system: str | None
     status: ApplicationStatus
     status_label: str
-    status_changed_at: datetime | None
+    status_changed_at: UtcDatetime | None
     date_submitted: date | None
     manually_modified: bool
     resume_label: str | None
     event_count: int
     attachment_count: int
-    created_at: datetime
-    updated_at: datetime
+    created_at: UtcDatetime
+    updated_at: UtcDatetime
 
 
 class ApplicationDetail(ApplicationSummary):
@@ -130,6 +131,7 @@ class UpdateApplicationRequest(BaseModel):
     modification_note: str | None = None
     source: str | None = Field(default=None, max_length=300)
     system: str | None = Field(default=None, max_length=300)
+    confirm_create_duplicate: bool = False
 
     @model_validator(mode="after")
     def _check_document_ref_pairs(self) -> Self:

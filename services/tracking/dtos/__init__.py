@@ -25,7 +25,7 @@ from .company import (
     UpdateCompanyRequest,
     UpdateCompanyStackItemRequest,
 )
-from .contact import Contact, CreateContactRequest, UpdateContactRequest
+from .contact import Contact, ContactOption, CreateContactRequest, UpdateContactRequest
 from .enums import ApplicationStatusValue, EnumsResponse, EnumValue
 
 __all__ = [
@@ -42,6 +42,7 @@ __all__ = [
     "CompanyStackItemDto",
     "CompanySummary",
     "Contact",
+    "ContactOption",
     "CreateApplicationEventRequest",
     "CreateApplicationRequest",
     "CreateAttachmentRequest",

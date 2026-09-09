@@ -1,5 +1,7 @@
 """Companies: CRUD, dedup, relationships, stack items, ownership isolation."""
 
+import pytest
+
 from persistence.application import Application
 from services.database.database_service import DatabaseService
 
@@ -307,6 +309,129 @@ class TestCompanyRelationships:
             json=body,
         )
         assert second.status_code == 409
+
+    async def test_inverse_duplicate_paired_type_is_409(self, client, admin, company):
+        """ "Acme `parent_of` Globex" when "Globex `child_of` Acme" already
+        exists describes the same fact twice."""
+        parent = await client.post(
+            "/companies", headers=admin.headers, json={"name": "Globex Corp"}
+        )
+        parent_id = parent.json()["id"]
+        first = await client.post(
+            f"/companies/{parent_id}/relationships",
+            headers=admin.headers,
+            json={"to_company_id": company["id"], "type": "child_of"},
+        )
+        assert first.status_code == 201, first.text
+
+        response = await client.post(
+            f"/companies/{company['id']}/relationships",
+            headers=admin.headers,
+            json={"to_company_id": parent_id, "type": "parent_of"},
+        )
+        assert response.status_code == 409, response.text
+        detail = response.json()["detail"]
+        assert "Globex Corp" in detail
+        assert "Child" in detail or "child_of" in detail
+
+    async def test_inverse_duplicate_does_not_auto_create_an_edge(
+        self, client, admin, company
+    ):
+        parent = await client.post(
+            "/companies", headers=admin.headers, json={"name": "Globex Corp"}
+        )
+        parent_id = parent.json()["id"]
+        await client.post(
+            f"/companies/{parent_id}/relationships",
+            headers=admin.headers,
+            json={"to_company_id": company["id"], "type": "child_of"},
+        )
+        refused = await client.post(
+            f"/companies/{company['id']}/relationships",
+            headers=admin.headers,
+            json={"to_company_id": parent_id, "type": "parent_of"},
+        )
+        assert refused.status_code == 409
+
+        detail = await client.get(f"/companies/{parent_id}", headers=admin.headers)
+        assert len(detail.json()["relationships"]) == 1
+
+    async def test_inverse_duplicate_customer_vendor_pair_is_409(
+        self, client, admin, company
+    ):
+        vendor = await client.post(
+            "/companies", headers=admin.headers, json={"name": "Vendor Inc"}
+        )
+        vendor_id = vendor.json()["id"]
+        first = await client.post(
+            f"/companies/{vendor_id}/relationships",
+            headers=admin.headers,
+            json={"to_company_id": company["id"], "type": "customer_of"},
+        )
+        assert first.status_code == 201, first.text
+
+        response = await client.post(
+            f"/companies/{company['id']}/relationships",
+            headers=admin.headers,
+            json={"to_company_id": vendor_id, "type": "vendor_of"},
+        )
+        assert response.status_code == 409, response.text
+
+    async def test_inverse_duplicate_symmetric_type_is_409(
+        self, client, admin, company
+    ):
+        """`partner_of` is genuinely symmetric - "A partner_of B" and
+        "B partner_of A" are one fact told twice."""
+        other = await client.post(
+            "/companies", headers=admin.headers, json={"name": "Partner Co"}
+        )
+        other_id = other.json()["id"]
+        first = await client.post(
+            f"/companies/{other_id}/relationships",
+            headers=admin.headers,
+            json={"to_company_id": company["id"], "type": "partner_of"},
+        )
+        assert first.status_code == 201, first.text
+
+        response = await client.post(
+            f"/companies/{company['id']}/relationships",
+            headers=admin.headers,
+            json={"to_company_id": other_id, "type": "partner_of"},
+        )
+        assert response.status_code == 409, response.text
+
+    @pytest.mark.parametrize(
+        "relationship_type", ["staffing_agency_for", "acquired_by"]
+    )
+    async def test_directional_type_is_allowed_in_both_directions(
+        self, client, admin, company, relationship_type
+    ):
+        """These two are directional and have no reverse term in the enum,
+        so the opposite edge is a different fact, not a restatement: "A
+        acquired_by B" means B bought A, and "B acquired_by A" is the
+        opposite claim. Refusing the second as a duplicate would block
+        legitimate data, so neither appears in `INVERSES`.
+        """
+        other = await client.post(
+            "/companies", headers=admin.headers, json={"name": "Counterparty Co"}
+        )
+        other_id = other.json()["id"]
+        first = await client.post(
+            f"/companies/{other_id}/relationships",
+            headers=admin.headers,
+            json={"to_company_id": company["id"], "type": relationship_type},
+        )
+        assert first.status_code == 201, first.text
+
+        reverse = await client.post(
+            f"/companies/{company['id']}/relationships",
+            headers=admin.headers,
+            json={"to_company_id": other_id, "type": relationship_type},
+        )
+        assert reverse.status_code == 201, reverse.text
+
+        detail = await client.get(f"/companies/{company['id']}", headers=admin.headers)
+        assert len(detail.json()["relationships"]) == 2
 
     async def test_update_and_delete(self, client, admin, company):
         parent = await client.post(

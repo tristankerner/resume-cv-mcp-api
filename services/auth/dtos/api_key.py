@@ -1,8 +1,7 @@
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from services.auth.scopes import Scopes
+from services.common.datetimes import UtcDatetime
 
 
 class CreateApiKeyRequest(BaseModel):
@@ -33,10 +32,10 @@ class ApiKeyDto(BaseModel):
     name: str
     prefix: str
     scopes: list[Scopes]
-    created_at: datetime
-    last_used_at: datetime | None = None
-    expires_at: datetime | None = None
-    revoked_at: datetime | None = None
+    created_at: UtcDatetime
+    last_used_at: UtcDatetime | None = None
+    expires_at: UtcDatetime | None = None
+    revoked_at: UtcDatetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

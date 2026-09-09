@@ -1,8 +1,7 @@
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from services.auth.mfa.kinds import MfaMethodKind
+from services.common.datetimes import UtcDatetime
 
 
 class PasswordConfirmRequest(BaseModel):
@@ -60,9 +59,9 @@ class MfaCredentialStatus(BaseModel):
     id: int
     kind: MfaMethodKind
     label: str
-    created_at: datetime
-    activated_at: datetime | None
-    last_used_at: datetime | None
+    created_at: UtcDatetime
+    activated_at: UtcDatetime | None
+    last_used_at: UtcDatetime | None
     remaining: int | None
 
     model_config = ConfigDict(from_attributes=True)

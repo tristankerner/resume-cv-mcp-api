@@ -420,6 +420,83 @@ class TestUpdates:
         assert response.status_code == 401
 
 
+class TestTimezone:
+    """`users.timezone` — display-only, self-service, and not gated behind
+    an interactive login (it is not an account-recovery field)."""
+
+    async def test_set_and_read_on_self_with_a_non_admin_credential(
+        self, client, roleless
+    ):
+        response = await client.patch(
+            f"/users/{roleless.user_id}",
+            headers=roleless.headers,
+            json={"timezone": "America/Chicago"},
+        )
+        assert response.status_code == 204, response.text
+
+        me = await client.get("/users/me", headers=roleless.headers)
+        assert me.json()["timezone"] == "America/Chicago"
+
+    async def test_unknown_iana_name_is_422(self, client, roleless):
+        response = await client.patch(
+            f"/users/{roleless.user_id}",
+            headers=roleless.headers,
+            json={"timezone": "Not/A_Zone"},
+        )
+        assert response.status_code == 422
+
+    async def test_null_reads_back_as_none(self, client, roleless):
+        set_response = await client.patch(
+            f"/users/{roleless.user_id}",
+            headers=roleless.headers,
+            json={"timezone": "America/Chicago"},
+        )
+        assert set_response.status_code == 204, set_response.text
+
+        clear_response = await client.patch(
+            f"/users/{roleless.user_id}",
+            headers=roleless.headers,
+            json={"timezone": None},
+        )
+        assert clear_response.status_code == 204, clear_response.text
+
+        me = await client.get("/users/me", headers=roleless.headers)
+        assert me.json()["timezone"] is None
+
+    async def test_setting_only_timezone_is_not_rejected_as_empty(
+        self, client, roleless
+    ):
+        response = await client.patch(
+            f"/users/{roleless.user_id}",
+            headers=roleless.headers,
+            json={"timezone": "America/Chicago"},
+        )
+        assert response.status_code == 204, response.text
+
+    async def test_not_gated_behind_require_interactive(self, client, member):
+        headers = await narrowed_api_key(client, member, Scopes.RESUME_READ)
+        response = await client.patch(
+            f"/users/{member.user_id}",
+            headers=headers,
+            json={"timezone": "America/Chicago"},
+        )
+        assert response.status_code == 204, response.text
+
+    async def test_admin_sees_it_on_the_list_endpoint(self, client, admin, roleless):
+        set_response = await client.patch(
+            f"/users/{roleless.user_id}",
+            headers=roleless.headers,
+            json={"timezone": "America/Chicago"},
+        )
+        assert set_response.status_code == 204, set_response.text
+
+        listing = await client.get("/users", headers=admin.headers)
+        row = next(
+            row for row in listing.json()["data"] if row["id"] == roleless.user_id
+        )
+        assert row["timezone"] == "America/Chicago"
+
+
 class TestChangePassword:
     """POST /users/me/password — self-service, current-password-checked."""
 

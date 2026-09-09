@@ -1,7 +1,8 @@
-from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
+
+from services.common.datetimes import UtcDatetime
 
 
 class AuditEntry(BaseModel):
@@ -11,7 +12,7 @@ class AuditEntry(BaseModel):
     table_name: str
     row_pk: str
     operation: str
-    changed_at: datetime
+    changed_at: UtcDatetime
     row_user_id: int | None
     actor_user_id: int | None
     actor_credential: str | None

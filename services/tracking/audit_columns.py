@@ -151,6 +151,7 @@ class AuditColumns:
                 "last_name",
                 "roles",
                 "active",
+                "timezone",
                 "failed_login_count",
                 "first_failed_login_at",
                 "locked_until",

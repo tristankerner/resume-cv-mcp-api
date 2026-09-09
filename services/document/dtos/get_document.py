@@ -1,6 +1,6 @@
-from datetime import datetime
-
 from pydantic import BaseModel
+
+from services.common.datetimes import UtcDatetime
 
 
 class GetDocumentResponse[T](BaseModel):
@@ -11,7 +11,7 @@ class GetDocumentResponse[T](BaseModel):
     revision_note: str | None = None
     type: str
     public: bool
-    created_at: datetime
+    created_at: UtcDatetime
     data: T
 
 

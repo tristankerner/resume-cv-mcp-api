@@ -1,4 +1,4 @@
-from enum import StrEnum
+from enum import StrEnum, nonmember
 
 
 class ApplicationStatus(StrEnum):
@@ -84,6 +84,36 @@ class CompanyRelationshipType(StrEnum):
     STAFFING_AGENCY_FOR = "staffing_agency_for"
     ACQUIRED_BY = "acquired_by"
     PARTNER_OF = "partner_of"
+
+    # The type that states the same fact from the other company's side, for
+    # the inverse-duplicate check in `CompanyService.create_relationship`.
+    #
+    # `child_of`/`parent_of` and `customer_of`/`vendor_of` swap. `partner_of`
+    # maps to itself because it is genuinely symmetric: "A partner_of B" and
+    # "B partner_of A" are one fact told twice.
+    #
+    # `staffing_agency_for` and `acquired_by` are deliberately absent, and
+    # must stay absent. Both are directional with no term for the reverse
+    # reading in this enum: "A acquired_by B" means B bought A, so
+    # "B acquired_by A" is the opposite claim, not a restatement - and
+    # likewise an agency staffing for a client is not the client staffing
+    # for the agency. Mapping either to itself would refuse a legitimate
+    # second edge as a duplicate. A type with no entry here simply gets no
+    # inverse check.
+    #
+    # `nonmember` keeps this off the member list `list(CompanyRelationshipType)`
+    # and friends iterate; a `ClassVar` annotation here defeats that (`ty`
+    # then treats it as a member again), so the dict-of-str type is left to
+    # inference instead.
+    INVERSES = nonmember(
+        {
+            "child_of": "parent_of",
+            "parent_of": "child_of",
+            "customer_of": "vendor_of",
+            "vendor_of": "customer_of",
+            "partner_of": "partner_of",
+        }
+    )
 
 
 COMPANY_RELATIONSHIP_TYPE_LABELS: dict[CompanyRelationshipType, str] = {

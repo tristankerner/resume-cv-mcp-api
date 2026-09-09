@@ -21,6 +21,7 @@ dependencies = [
     "sqlalchemy>=2.0.52",
     "cryptography>=45.0.0",
     "pyotp>=2.9.0",
+    "tzdata>=2026.3",
 ]
 
 [tool.fastapi]

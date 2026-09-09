@@ -30,6 +30,19 @@ With one, a challenge to redeem at `/token/mfa` — so a script that reads
 `/token/mfa` returns the first shape. Both paths issue the same kind of token,
 so either satisfies the interactive-login requirements below.
 
+## Datetime format
+
+Every `datetime` field in a response body is RFC 3339 UTC with a literal `Z`:
+`"2026-09-09T12:00:00Z"`. Sub-second precision may or may not be present;
+don't depend on it either way. A request body may send any offset, or none —
+no offset means UTC. Either way, the value stored is naive UTC; the API never
+renders a user's local time itself. `users.timezone` exists so a client knows
+what to convert to (see [Users](#users)).
+
+`date`-typed fields — `applications.date_submitted` is the only one — are bare
+calendar dates, `"2026-09-09"`, with no time component and no timezone. They
+are calendar days, not instants, and are never converted.
+
 ## Documents
 
 | Method | Path | Auth | Purpose |
@@ -79,7 +92,7 @@ mint time rather than taken from the token.
 | --- | --- | --- | --- |
 | `GET` | `/users/me` | key | Your own account. |
 | `POST` | `/users/me/password` | **login** | Change your own password. Requires the current one. |
-| `PATCH` | `/users/{user_id}` | key, or **login** for recovery fields | Edit an account. `password`, `username`, `email` and `roles` require an interactive login. |
+| `PATCH` | `/users/{user_id}` | key, or **login** for recovery fields | Edit an account. `password`, `username`, `email` and `roles` require an interactive login; `timezone` does not. |
 | `GET` | `/users` | key + `users:admin` | List every user. |
 | `POST` | `/users` | **login** + `users:admin` | Create an account. Seeded with the three example documents. |
 | `POST` | `/users/{user_id}/password` | **login** + `users:admin` | Admin password reset, bypassing the current one. |
@@ -87,6 +100,12 @@ mint time rather than taken from the token.
 | `DELETE` | `/users/{user_id}/mfa` | **login** + `users:admin` | Strip every second factor from an account. |
 
 Passwords must be 8+ characters with upper, lower, digit and symbol.
+
+`GET /users/me` and `GET /users` both carry `timezone` — an IANA name
+(`"America/Chicago"`) or `null` for UTC. `PATCH /users/{user_id}` accepts the
+same shape; an unknown name is a `422`. Display-only: the API always emits UTC
+(see [Datetime format](#datetime-format) above) and never renders a user's
+local time itself — this is what a client converts with.
 
 ## Multi-factor authentication
 
@@ -143,7 +162,7 @@ field is left alone, an explicit `null` clears it.
 | `GET` | `/companies/{id}` | `companies:read` | Detail: relationships, stack, contacts, up to 20 recent applications. |
 | `PATCH` | `/companies/{id}` | `companies:write` | Update. `409` if the new name collides. |
 | `DELETE` | `/companies/{id}` | `companies:delete` | `409` if any application still references it. |
-| `POST` / `PATCH` / `DELETE` | `/companies/{id}/relationships`, `/company-relationships/{id}` | `companies:write`/`delete` | Directed edges between two of your own companies. |
+| `POST` / `PATCH` / `DELETE` | `/companies/{id}/relationships`, `/company-relationships/{id}` | `companies:write`/`delete` | Directed edges between two of your own companies. `409` on an exact repeat (same direction, same type) or an inverse duplicate — e.g. `Acme parent_of Globex` when `Globex child_of Acme` already exists states the same fact. Paired types are `child_of`/`parent_of` and `customer_of`/`vendor_of`, plus `partner_of` with itself; `staffing_agency_for` and `acquired_by` are directional, so the reverse edge is a different fact and is allowed. The inverse edge is never auto-created. |
 | `GET` / `POST` | `/companies/{id}/stack` | `companies:read`/`write` | Technologies observed at the company. Same dedup rule as companies. |
 | `PATCH` / `DELETE` | `/company-stack/{id}` | `companies:write`/`delete` | |
 
@@ -161,10 +180,11 @@ field is left alone, an explicit `null` clears it.
 | --- | --- | --- | --- |
 | `GET` | `/applications` | `applications:read` | Filters: `company_id`, repeatable `status`, `source`, `system`, `query`, `job_code`, `submitted_from`/`submitted_to`, `has_attachments`. |
 | `POST` | `/applications` | `applications:write` | `company_id` required. `409` on a near-duplicate: an existing application with the same `job_code`, or the same company with a similar title and a submission date within 14 days. |
-| `GET` / `PATCH` / `DELETE` | `/applications/{id}` | `applications:read`/`write`/`delete` | `PATCH` rejects a `status` field with `422` — status is derived, never set directly. Delete cascades to its events and attachments. |
+| `GET` / `PATCH` / `DELETE` | `/applications/{id}` | `applications:read`/`write`/`delete` | `PATCH` rejects a `status` field with `422` — status is derived, never set directly. Changing `job_code` to one another application already carries is a `409`, exactly like create; `confirm_create_duplicate: true` overrides. The fuzzy title/company/date heuristic stays create-only. Delete cascades to its events and attachments. |
 | `GET` / `POST` | `/applications/{id}/events` | `applications:read`/`write` | A status change, a note, a rating, or any combination — at least one is required on create. |
 | `PATCH` | `/application-events/{id}` | `applications:write` | |
 | `DELETE` | `/application-events/{id}` | `applications:delete` | **Returns `200`, not `204`** — the body carries the application's recomputed status. |
+| `GET` | `/applications/{id}/contact-options` | `applications:read` **and** `contacts:read` | Contacts plausibly involved in this application, reached by walking `company_relationships` out from its own company — up to 3 hops, both directions, capped at 200 companies. `query` filters like `GET /contacts`; `limit` defaults to 200 (max 500). Each row carries `depth` (0 = the application's own company) and `via`, the chain of intermediate company names. Shapes what a client *offers*, not an authorization boundary — `POST`/`PATCH` on an event still accepts any contact the caller owns, whether or not it appears here. |
 
 `job_code` is the requisition code, optional and free-form. Matching folds
 away case and separators, so `REQ-12345`, `req 12345` and `REQ12345` are one

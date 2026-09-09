@@ -1,5 +1,5 @@
 from datetime import date
-from typing import Annotated
+from typing import Annotated, ClassVar
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,10 +9,12 @@ from persistence.application_attachment import ApplicationAttachment
 from persistence.application_event import ApplicationEvent
 from persistence.base import Clock
 from persistence.company import Company
+from persistence.company_relationship import CompanyRelationship
 from persistence.contact import Contact
 from persistence.document import Document
 from persistence.lookup import Lookup
 from services.auth.auth_service import AuthService
+from services.auth.exceptions import AuthErrors
 from services.auth.principal import Principal
 from services.auth.scopes import Scopes
 from services.database.database_service import DatabaseService
@@ -34,6 +36,7 @@ from services.tracking.dtos.application_event import (
 )
 from services.tracking.dtos.attachment import AttachmentMeta
 from services.tracking.dtos.common import DuplicateCandidate, ListEnvelope
+from services.tracking.dtos.contact import ContactOption
 from services.tracking.duplicates import DuplicateFinder
 from services.tracking.enums import APPLICATION_STATUS_LABELS, ApplicationStatus
 from services.tracking.exceptions import TrackingErrors
@@ -50,6 +53,13 @@ DOCUMENT_SLOTS = (
 class ApplicationService(TrackingServiceBase):
     """Applications and their events. See sections 5.3, 5.4, 5.6 and 14.5 of
     the tracking plan."""
+
+    # Both, not either: `contact-options` returns contact PII keyed off an
+    # application, so both gates apply. See _require_contact_options_scopes.
+    CONTACT_OPTIONS_SCOPES: ClassVar[tuple[Scopes, ...]] = (
+        Scopes.APPLICATIONS_READ,
+        Scopes.CONTACTS_READ,
+    )
 
     async def _require_application(self, application_id: int) -> Application:
         application = await Application.get(self.db, self._owner(), application_id)
@@ -481,10 +491,30 @@ class ApplicationService(TrackingServiceBase):
     async def update_application(
         self, application_id: int, request: UpdateApplicationRequest
     ) -> ApplicationSummary:
+        """Partial update. Only `job_code` gets duplicate detection here,
+        unlike `create_application`'s pair of checks - `_candidates`' fuzzy
+        title/company/date heuristic stays create-only. Inline editing means
+        a `PATCH` per keystroke as a user fixes a typo in a job title, and
+        running a fuzzy match against every other application at the same
+        company on each of those would flag edits that are not duplicates at
+        all. A job code is an exact identifier, so it is the only field
+        worth blocking an edit over.
+        """
         self._require(Scopes.APPLICATIONS_WRITE)
         await self._begin_write()
         application = await self._require_application(application_id)
         fields = request.model_fields_set
+
+        if "job_code" in fields and not request.confirm_create_duplicate:
+            normalized = Normalizer.job_code(request.job_code)
+            # Only when the normalized code actually changes: re-checking a
+            # no-op write would refuse a `PATCH` that retyped the code the
+            # row already carries.
+            if normalized is not None and normalized != application.normalized_job_code:
+                candidates = await self._job_code_candidates(
+                    request.job_code, application_id
+                )
+                self._refuse_if_duplicate(candidates, by_job_code=True)
 
         if "company_id" in fields and request.company_id is not None:
             await self._validate_company(request.company_id)
@@ -659,6 +689,105 @@ class ApplicationService(TrackingServiceBase):
         await self._recompute_status(application)
         await self.db.commit()
         return await self._event_write_response(None, application)
+
+    def _require_contact_options_scopes(self) -> None:
+        """Both `applications:read` and `contacts:read`, unlike `_require`'s
+        single scope: this endpoint returns contact PII keyed off an
+        application, so both gates apply."""
+        if self.principal is None:
+            raise AuthErrors.credentials()
+        if not all(
+            self.principal.has_scope(scope) for scope in self.CONTACT_OPTIONS_SCOPES
+        ):
+            raise AuthErrors.insufficient_all_scopes(
+                str(scope) for scope in self.CONTACT_OPTIONS_SCOPES
+            )
+
+    @staticmethod
+    def _via(path: str, names: dict[int, str]) -> str | None:
+        """The path column from `CompanyRelationship.related_company_ids` -
+        `>`-separated intermediate company ids, empty at depth 0 - turned
+        into the human-readable chain `ContactOption.via` carries.
+
+        An id with no name is dropped from the chain rather than raising:
+        every intermediate is normally in `names`, since the ids are ordered
+        by depth and a company is only reachable through its predecessors,
+        but a `company_relationships` edge can outlive the company it points
+        at while SQLite leaves this feature's foreign keys unenforced.
+        """
+        chain = [
+            names[company_id]
+            for company_id in (int(segment) for segment in path.split(">") if segment)
+            if company_id in names
+        ]
+        return " → ".join(chain) if chain else None
+
+    async def contact_options(
+        self, application_id: int, query: str | None, limit: int
+    ) -> ListEnvelope[ContactOption]:
+        """Contacts plausibly involved in `application_id`, reached by
+        walking `company_relationships` out from its own company - up to 3
+        hops, both directions. Shapes what the client's event composer
+        *offers*; it is not an authorization boundary. `create_event` and
+        `update_event` still accept any contact the caller owns, whether or
+        not it appears here - see `create_event`'s docstring for why writes
+        stay permissive while this lookup filters.
+        """
+        self._require_contact_options_scopes()
+        application = await self._require_application(application_id)
+        owner = self._owner()
+
+        graph = await CompanyRelationship.related_company_ids(
+            self.db, owner, application.company_id
+        )
+        company_ids = [row.company_id for row in graph]
+        by_company = {row.company_id: row for row in graph}
+
+        contacts = await Contact.for_companies(
+            self.db, owner, company_ids, query, limit
+        )
+        names = await Company.names_for(self.db, owner, company_ids)
+
+        options = []
+        for contact in contacts:
+            # `Contact.for_companies` filtered on `company_id.in_(company_ids)`,
+            # which a NULL company_id can never satisfy - the check narrows
+            # the type for `by_company[...]` rather than expecting to fire.
+            if contact.company_id is None:
+                continue
+            company_name = names.get(contact.company_id)
+            # A reachable company with no resolvable name means a
+            # `company_relationships` edge pointing at a row that is gone -
+            # possible only because SQLite does not enforce this feature's
+            # foreign keys (see the tracking plan). Skip rather than emit a
+            # nameless option: `ContactOption.company_name` is non-optional
+            # precisely so the client can group on it without a null check.
+            if company_name is None:
+                continue
+            row = by_company[contact.company_id]
+            options.append(
+                ContactOption(
+                    id=contact.id,
+                    first_name=contact.first_name,
+                    last_name=contact.last_name,
+                    email=contact.email,
+                    phone=contact.phone,
+                    rating=contact.rating,
+                    company_id=contact.company_id,
+                    company_name=company_name,
+                    depth=row.depth,
+                    via=self._via(row.path, names),
+                )
+            )
+        options.sort(
+            key=lambda option: (
+                option.depth,
+                option.company_name,
+                option.last_name or "",
+                option.first_name or "",
+            )
+        )
+        return ListEnvelope(data=options, total=len(options), limit=limit, offset=0)
 
     @staticmethod
     def get_with_deps(

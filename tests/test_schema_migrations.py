@@ -35,6 +35,9 @@ PHASE_4 = "b0baccd6558a"  # convert resume documents to v2
 PHASE_5 = "78480d80f589"  # convert metadata/skill documents to v2
 BEFORE_ALL = "f3106ced7318"  # head immediately before this plan's work
 
+USER_TIMEZONE = "cecabf408169"  # add users.timezone + rebuild SQLite audit triggers
+BEFORE_USER_TIMEZONE = "c0d3b18e4a52"  # head immediately before that revision
+
 
 @pytest.fixture
 def migration_db(monkeypatch):
@@ -521,3 +524,83 @@ class TestPhase5MetadataAndSkillConversion:
         current = conn.execute("SELECT version_num FROM alembic_version").fetchone()
         assert current == (PHASE_4,)
         conn.close()
+
+
+class TestAddUserTimezone:
+    """`cecabf408169` - a nullable `users.timezone`, and the SQLite audit
+    trigger rebuild that a new column on an audited table requires. See
+    `a71e4c05d938` for the same shape on `applications`."""
+
+    def test_new_column_is_audited(self, migration_db):
+        connect, cfg = migration_db
+        command.upgrade(cfg, USER_TIMEZONE)
+        conn = connect()
+        conn.execute(
+            "INSERT INTO users (username, password, roles, active, timezone) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("admin", "x", json.dumps(["admin"]), 1, "America/Chicago"),
+        )
+        conn.commit()
+        new_data = conn.execute(
+            "SELECT new_data FROM audit_log WHERE table_name='users' AND operation='I'"
+        ).fetchone()[0]
+        conn.close()
+        assert json.loads(new_data)["timezone"] == "America/Chicago"
+
+    def test_updating_only_timezone_changes_only_timezone(self, migration_db):
+        """Proves the `IS NOT` union was rebuilt with `timezone` in it, not
+        just the `json_object` - a trigger that only gained the column in its
+        snapshot but not in its change-detection union would report every
+        audited column as changed on every update."""
+        connect, cfg = migration_db
+        command.upgrade(cfg, USER_TIMEZONE)
+        conn = connect()
+        conn.execute(
+            "INSERT INTO users (username, password, roles, active, timezone) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("admin", "x", json.dumps(["admin"]), 1, None),
+        )
+        conn.commit()
+        conn.execute(
+            "UPDATE users SET timezone = ? WHERE username = 'admin'",
+            ("America/New_York",),
+        )
+        conn.commit()
+        changed = conn.execute(
+            "SELECT changed_columns FROM audit_log WHERE table_name='users' "
+            "AND operation='U'"
+        ).fetchone()[0]
+        conn.close()
+        assert json.loads(changed) == ["timezone"]
+
+    def test_downgrade_rebuilds_triggers_and_writes_still_succeed(self, migration_db):
+        """A downgrade that left the `timezone`-naming trigger in place would
+        turn the next ordinary write to `users` into a runtime error about a
+        column that no longer exists - SQLite resolves a trigger body when it
+        fires, not when it is created. This is the failure a naive "did the
+        migration run" check would miss."""
+        connect, cfg = migration_db
+        command.upgrade(cfg, USER_TIMEZONE)
+        conn = connect()
+        conn.execute(
+            "INSERT INTO users (username, password, roles, active, timezone) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("admin", "x", json.dumps(["admin"]), 1, "America/Chicago"),
+        )
+        conn.commit()
+        conn.close()
+
+        command.downgrade(cfg, BEFORE_USER_TIMEZONE)
+
+        conn = connect()
+        conn.execute(
+            "UPDATE users SET failed_login_count = failed_login_count + 1 "
+            "WHERE username = 'admin'"
+        )
+        conn.commit()
+        changed = conn.execute(
+            "SELECT changed_columns FROM audit_log WHERE table_name='users' "
+            "AND operation='U'"
+        ).fetchone()[0]
+        conn.close()
+        assert json.loads(changed) == ["failed_login_count"]

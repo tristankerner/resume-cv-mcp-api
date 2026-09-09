@@ -1,6 +1,15 @@
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Text, func, select, update
+from sqlalchemy import (
+    CheckConstraint,
+    ForeignKey,
+    Index,
+    Text,
+    case,
+    func,
+    select,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -105,6 +114,55 @@ class Contact(SQAlchemyBase):
             db, stmt, limit=limit, offset=offset, total_stmt=total_stmt
         )
         return [row[0] for row in rows], total
+
+    @staticmethod
+    async def for_companies(
+        db: AsyncSession,
+        user_id: int,
+        company_ids: list[int],
+        query: str | None,
+        limit: int,
+    ) -> list[Contact]:
+        """Every one of this owner's contacts at any of `company_ids`, one
+        `WHERE company_id IN (...)` query - the contact half of
+        `GET /applications/{id}/contact-options`. Same `LIKE` filter as
+        `search`. Unpaginated by design: the caller already bounded
+        `company_ids` to `CompanyRelationship.MAX_RELATED_COMPANIES`, so
+        `limit` alone is the only cap this needs.
+
+        `company_ids` is treated as an *ordered* preference list, not a set,
+        and rows are returned in that order. This is what makes `limit`
+        safe: the caller passes companies ordered by graph distance, so a
+        result that has to be truncated drops the most distant contacts
+        rather than an arbitrary slice. Ordering by `company_id` instead
+        would truncate by row id, and an application whose own company
+        happened to have a high id could lose every one of its direct
+        contacts while keeping three-hop strangers.
+        """
+        if not company_ids:
+            return []
+        conditions = [Contact.user_id == user_id, Contact.company_id.in_(company_ids)]
+        if query:
+            pattern = f"%{query.lower()}%"
+            conditions.append(
+                func.lower(
+                    func.coalesce(Contact.first_name, "")
+                    + " "
+                    + func.coalesce(Contact.last_name, "")
+                ).like(pattern)
+                | func.lower(func.coalesce(Contact.email, "")).like(pattern)
+            )
+        preference = case(
+            {company_id: rank for rank, company_id in enumerate(company_ids)},
+            value=Contact.company_id,
+        )
+        stmt = (
+            select(Contact)
+            .where(*conditions)
+            .order_by(preference, Contact.id)
+            .limit(limit)
+        )
+        return list((await db.execute(stmt)).scalars().all())
 
     @staticmethod
     async def get_by_email(

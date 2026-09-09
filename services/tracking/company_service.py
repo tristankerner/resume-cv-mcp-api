@@ -31,6 +31,10 @@ from services.tracking.dtos.company import (
     UpdateCompanyStackItemRequest,
 )
 from services.tracking.duplicates import DuplicateFinder
+from services.tracking.enums import (
+    COMPANY_RELATIONSHIP_TYPE_LABELS,
+    CompanyRelationshipType,
+)
 from services.tracking.exceptions import TrackingErrors
 from services.tracking.normalization import Normalizer
 from services.tracking.tracking_service import TrackingServiceBase
@@ -312,17 +316,43 @@ class CompanyService(TrackingServiceBase):
         if target is None:
             raise TrackingErrors.invalid_reference("to_company_id", "company")
 
-        existing = [
+        edges = await CompanyRelationship.list_for_company(self.db, owner, company_id)
+
+        same_direction = [
             edge
-            for edge in await CompanyRelationship.list_for_company(
-                self.db, owner, company_id
-            )
+            for edge in edges
             if edge.from_company_id == company_id
             and edge.to_company_id == request.to_company_id
             and edge.type == request.type
         ]
-        if existing:
+        if same_direction:
             raise TrackingErrors.relationship_exists()
+
+        # The inverse direction, same or paired type, already states this
+        # fact - "Acme parent_of Globex" when "Globex child_of Acme" exists
+        # describes one relationship twice. Checked after the exact-repeat
+        # check above, which has its own, more specific message.
+        #
+        # `.get`, not `[...]`: the directional types that have no reverse
+        # term in the enum are absent from INVERSES on purpose, and get no
+        # inverse check rather than a KeyError. See that dict's comment.
+        inverse_type = CompanyRelationshipType.INVERSES.get(request.type.value)
+        inverse = [
+            edge
+            for edge in edges
+            if inverse_type is not None
+            and edge.from_company_id == request.to_company_id
+            and edge.to_company_id == company_id
+            and edge.type == inverse_type
+        ]
+        if inverse:
+            existing_label = COMPANY_RELATIONSHIP_TYPE_LABELS[
+                CompanyRelationshipType(inverse[0].type)
+            ]
+            raise TrackingErrors.relationship_exists(
+                f'That relationship already exists: "{target.name}" is '
+                f'{existing_label} "{company.name}".'
+            )
 
         edge = CompanyRelationship(
             user_id=owner,

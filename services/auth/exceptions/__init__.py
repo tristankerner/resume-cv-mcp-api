@@ -105,6 +105,24 @@ class AuthErrors:
             },
         )
 
+    @staticmethod
+    def insufficient_all_scopes(scopes: Iterable[str]) -> HTTPException:
+        """The same refusal where every one of several scopes is required.
+        `GET /applications/{id}/contact-options` is the case: it returns
+        contact PII keyed off an application, so both `applications:read`
+        and `contacts:read` apply, unlike `insufficient_any_scope`'s "any one
+        would do"."""
+        listed = sorted(scopes)
+        return HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Requires all of these scopes: " + ", ".join(listed),
+            headers={
+                "WWW-Authenticate": (
+                    f'Bearer error="insufficient_scope", scope="{" ".join(listed)}"'
+                )
+            },
+        )
+
 
 class MfaErrors:
     """Second-factor refusals. See AuthErrors for the same one-static-method-

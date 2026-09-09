@@ -195,6 +195,11 @@ class UserService(ServiceProviderInterface):
             existing_user.active = not request.disabled
         if is_admin and request.roles is not None:
             existing_user.roles = [item.value for item in request.roles]
+        # `model_fields_set`, not `is not None`: unlike every field above,
+        # `null` is a meaningful, explicit value here (it means UTC), so it
+        # has to be distinguishable from "omitted".
+        if "timezone" in request.model_fields_set:
+            existing_user.timezone = request.timezone
 
         await self.db.commit()
         return True

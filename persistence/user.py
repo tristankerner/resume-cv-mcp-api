@@ -20,6 +20,10 @@ class User(SQAlchemyBase):
     password: Mapped[str | None]
     roles: Mapped[list[str]] = mapped_column(MutableList.as_mutable(JSON))
     active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    # IANA name, e.g. "America/Chicago". NULL means UTC. Display-only - the
+    # API always emits UTC; this is what the client converts to. Never used
+    # server-side to render a time.
+    timezone: Mapped[str | None]
 
     # Login throttling, distinct from `active` on purpose: `active` is checked
     # on every credential, whereas these are read only where a password is

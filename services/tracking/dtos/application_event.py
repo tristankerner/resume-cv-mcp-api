@@ -1,7 +1,6 @@
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict, Field
 
+from services.common.datetimes import UtcDatetime
 from services.tracking.enums import ApplicationStatus
 
 
@@ -16,8 +15,8 @@ class ApplicationEvent(BaseModel):
     contact_name: str | None
     description: str | None
     rating: int | None
-    occurred_at: datetime
-    created_at: datetime
+    occurred_at: UtcDatetime
+    created_at: UtcDatetime
 
 
 class CreateApplicationEventRequest(BaseModel):
@@ -27,7 +26,7 @@ class CreateApplicationEventRequest(BaseModel):
     contact_id: int | None = None
     description: str | None = None
     rating: int | None = Field(default=None, ge=1, le=10)
-    occurred_at: datetime | None = None
+    occurred_at: UtcDatetime | None = None
 
 
 class UpdateApplicationEventRequest(BaseModel):
@@ -37,7 +36,7 @@ class UpdateApplicationEventRequest(BaseModel):
     contact_id: int | None = None
     description: str | None = None
     rating: int | None = Field(default=None, ge=1, le=10)
-    occurred_at: datetime | None = None
+    occurred_at: UtcDatetime | None = None
 
 
 class ApplicationEventWriteResponse(BaseModel):
@@ -50,4 +49,4 @@ class ApplicationEventWriteResponse(BaseModel):
     event: ApplicationEvent | None
     application_status: ApplicationStatus
     application_status_label: str
-    application_status_changed_at: datetime | None
+    application_status_changed_at: UtcDatetime | None

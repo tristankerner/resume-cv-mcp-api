@@ -12,6 +12,9 @@ class UserDto(BaseModel):
     last_name: str | None = None
     active: bool | None = None
     roles: list[Roles] = []
+    # IANA name, or `None` for UTC. Display-only — the API never renders
+    # local time; the client converts. See services/common/datetimes.py.
+    timezone: str | None = None
     # What this user's roles grant, not what any particular credential of
     # theirs carries — an API key or OAuth token is narrowed further. Populated
     # by UserService.get_current_user, since UserDto also comes from

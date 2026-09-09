@@ -1,8 +1,8 @@
-from datetime import datetime
 from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from services.common.datetimes import UtcDatetime
 from services.tracking.enums import AttachmentKind
 
 
@@ -16,7 +16,7 @@ class AttachmentMeta(BaseModel):
     content_type: str
     byte_size: int
     sha256: str
-    created_at: datetime
+    created_at: UtcDatetime
 
 
 class AttachmentDetail(AttachmentMeta):

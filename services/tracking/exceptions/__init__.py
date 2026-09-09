@@ -123,10 +123,12 @@ class TrackingErrors:
         )
 
     @staticmethod
-    def relationship_exists() -> HTTPException:
-        return HTTPException(
-            status_code=409, detail="That relationship already exists."
-        )
+    def relationship_exists(
+        detail: str = "That relationship already exists.",
+    ) -> HTTPException:
+        """`detail` is overridden for the inverse-duplicate case, so the
+        message can name the existing edge that already states the fact."""
+        return HTTPException(status_code=409, detail=detail)
 
     @staticmethod
     def invalid_audit_table(valid: list[str]) -> HTTPException:

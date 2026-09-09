@@ -1,8 +1,7 @@
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict
 
 from services.auth.roles import Roles
+from services.common.datetimes import UtcDatetime
 
 
 class AdminUserDto(BaseModel):
@@ -19,9 +18,10 @@ class AdminUserDto(BaseModel):
     last_name: str | None = None
     active: bool
     roles: list[Roles]
+    timezone: str | None = None
     failed_login_count: int
-    locked_until: datetime | None = None
-    locked_permanently_at: datetime | None = None
+    locked_until: UtcDatetime | None = None
+    locked_permanently_at: UtcDatetime | None = None
     mfa_enrolled: bool = False
     locked: bool = False
 

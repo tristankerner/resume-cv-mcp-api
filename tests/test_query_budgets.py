@@ -288,3 +288,61 @@ class TestOverFetch:
         assert response.status_code == 200, response.text
         assert heavy_description not in response.text
         assert "job_description" not in response.json()["data"][0]
+
+
+class TestContactOptions:
+    async def test_contact_options(self, client, admin):
+        """1 auth + application fetch + the graph CTE + contacts +
+        `Company.names_for` = 5, flat regardless of how many companies or
+        contacts the graph holds. One more than
+        `FEATURE_EXPANSION_PLAN.md` section 4.3's "three statements" - that
+        count is for the graph-and-contacts portion alone and does not
+        include the application ownership/existence lookup, which cannot be
+        skipped without an authorization gap.
+        """
+        company_id = await _make_company(client, admin, "Options Co")
+        other_id = await _make_company(client, admin, "Options Other")
+        response = await client.post(
+            f"/companies/{company_id}/relationships",
+            headers=admin.headers,
+            json={"to_company_id": other_id, "type": "partner_of"},
+        )
+        assert response.status_code == 201, response.text
+        application_id = await _make_application(
+            client, admin, company_id, "Options Role"
+        )
+        await _make_contact(client, admin, other_id, "Options Person")
+
+        with QueryRecorder() as small:
+            response = await client.get(
+                f"/applications/{application_id}/contact-options", headers=admin.headers
+            )
+        assert response.status_code == 200, response.text
+
+        # 30 companies fanned out from `company_id`, 100 contacts spread
+        # across them - large enough that a per-company or per-contact query
+        # would show up in the count immediately.
+        for i in range(30):
+            related_id = await _make_company(client, admin, f"Options Fan {i}")
+            relate_response = await client.post(
+                f"/companies/{company_id}/relationships",
+                headers=admin.headers,
+                json={"to_company_id": related_id, "type": "partner_of"},
+            )
+            assert relate_response.status_code == 201, relate_response.text
+            for j in range(3):
+                await _make_contact(client, admin, related_id, f"Fan Person {i} {j}")
+        for j in range(10):
+            await _make_contact(client, admin, other_id, f"More Person {j}")
+
+        with QueryRecorder() as large:
+            response = await client.get(
+                f"/applications/{application_id}/contact-options",
+                headers=admin.headers,
+                params={"limit": 500},
+            )
+        assert response.status_code == 200, response.text
+        assert len(response.json()["data"]) >= 100
+
+        assert small.count() == large.count(), (small.tally(), large.tally())
+        assert small.count() == 5

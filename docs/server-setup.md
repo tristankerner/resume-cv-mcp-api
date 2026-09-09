@@ -195,6 +195,16 @@ value for each of those, so a copied `.env` starts as-is.
 | --- | --- | --- |
 | `ENVIRONMENT` | `development` | `development` or `production`. Development leaves `/docs`, `/redoc` and `/openapi.json` open; production puts all three behind a login. Nothing else branches on this. |
 
+### Timezone data
+
+`users.timezone` validates against the system tz database via Python's
+`zoneinfo`. The `tzdata` package is a direct dependency for exactly this
+reason — the Alpine base image the [Dockerfile](../Dockerfile) builds from
+does not ship one, and without `tzdata` every `PATCH /users/{id}` carrying a
+`timezone` would 500 in the container while working fine on a dev machine
+whose OS does have one. Nothing to configure; `uv sync` or the Docker build
+installs it like any other dependency.
+
 ### Database
 
 | Setting | Default | |

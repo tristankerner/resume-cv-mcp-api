@@ -653,3 +653,125 @@ class TestJobCode:
             params={"table": "applications", "row_id": str(created.json()["id"])},
         )
         assert audit.json()["data"][0]["new_data"]["job_code"] == "REQ-12345"
+
+
+class TestUpdateJobCodeDuplicateDetection:
+    """`PATCH /applications/{id}` job-code duplicate detection - see
+    FEATURE_EXPANSION_PLAN.md section 7.2. Only an exact job-code collision
+    is refused; the fuzzy title/company/date heuristic stays create-only."""
+
+    async def test_changing_to_a_code_another_application_already_carries_is_409(
+        self, client, admin, company
+    ):
+        existing = await client.post(
+            "/applications",
+            headers=admin.headers,
+            json={"company_id": company["id"], "job_code": "REQ-12345"},
+        )
+        assert existing.status_code == 201, existing.text
+        mine = await client.post(
+            "/applications",
+            headers=admin.headers,
+            json={"company_id": company["id"], "job_code": "REQ-999"},
+        )
+        assert mine.status_code == 201, mine.text
+
+        response = await client.patch(
+            f"/applications/{mine.json()['id']}",
+            headers=admin.headers,
+            json={"job_code": "req 12345"},
+        )
+        assert response.status_code == 409, response.text
+        detail = response.json()["detail"]
+        assert detail["code"] == "duplicate_application"
+        assert [c["id"] for c in detail["candidates"]] == [existing.json()["id"]]
+
+    async def test_confirm_create_duplicate_overrides(self, client, admin, company):
+        existing = await client.post(
+            "/applications",
+            headers=admin.headers,
+            json={"company_id": company["id"], "job_code": "REQ-12345"},
+        )
+        assert existing.status_code == 201, existing.text
+        mine = await client.post(
+            "/applications",
+            headers=admin.headers,
+            json={"company_id": company["id"], "job_code": "REQ-999"},
+        )
+        assert mine.status_code == 201, mine.text
+
+        response = await client.patch(
+            f"/applications/{mine.json()['id']}",
+            headers=admin.headers,
+            json={"job_code": "REQ-12345", "confirm_create_duplicate": True},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["job_code"] == "REQ-12345"
+
+    async def test_repatching_the_same_code_the_row_already_has_is_not_refused(
+        self, client, admin, company
+    ):
+        created = await client.post(
+            "/applications",
+            headers=admin.headers,
+            json={"company_id": company["id"], "job_code": "REQ-12345"},
+        )
+        assert created.status_code == 201, created.text
+
+        response = await client.patch(
+            f"/applications/{created.json()['id']}",
+            headers=admin.headers,
+            json={"job_code": "REQ-12345"},
+        )
+        assert response.status_code == 200, response.text
+
+    async def test_clearing_the_code_to_null_is_not_refused(
+        self, client, admin, company
+    ):
+        existing = await client.post(
+            "/applications",
+            headers=admin.headers,
+            json={"company_id": company["id"], "job_code": "REQ-12345"},
+        )
+        assert existing.status_code == 201, existing.text
+        mine = await client.post(
+            "/applications",
+            headers=admin.headers,
+            json={"company_id": company["id"], "job_code": "REQ-999"},
+        )
+        assert mine.status_code == 201, mine.text
+
+        response = await client.patch(
+            f"/applications/{mine.json()['id']}",
+            headers=admin.headers,
+            json={"job_code": None},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["job_code"] is None
+
+    async def test_a_collision_with_another_users_application_is_not_refused(
+        self, client, admin, other_owner, company
+    ):
+        their_company = await client.post(
+            "/companies", headers=other_owner.headers, json={"name": "Theirs Inc"}
+        )
+        assert their_company.status_code == 201, their_company.text
+        await client.post(
+            "/applications",
+            headers=other_owner.headers,
+            json={"company_id": their_company.json()["id"], "job_code": "REQ-12345"},
+        )
+        mine = await client.post(
+            "/applications",
+            headers=admin.headers,
+            json={"company_id": company["id"], "job_code": "REQ-999"},
+        )
+        assert mine.status_code == 201, mine.text
+
+        response = await client.patch(
+            f"/applications/{mine.json()['id']}",
+            headers=admin.headers,
+            json={"job_code": "REQ-12345"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["job_code"] == "REQ-12345"

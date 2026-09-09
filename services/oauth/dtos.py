@@ -2,10 +2,11 @@
 one, since that is the vocabulary a client implementation was written
 against."""
 
-from datetime import datetime
 from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from services.common.datetimes import UtcDatetime
 
 
 class AuthorizationServerMetadata(BaseModel):
@@ -120,7 +121,7 @@ class AdminClientDto(BaseModel):
     response_types: list[str]
     token_endpoint_auth_method: str
     scope: str | None = None
-    created_at: datetime
+    created_at: UtcDatetime
     confidential: bool = False
 
     model_config = ConfigDict(from_attributes=True)
