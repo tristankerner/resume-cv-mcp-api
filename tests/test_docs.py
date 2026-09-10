@@ -40,8 +40,15 @@ def production(monkeypatch):
     Settings are memoised for the life of the process, but conftest's
     `fresh_settings` drops that cache around every test, so setting the
     variable here is enough to have it read on the next request.
+
+    Passkeys off: conftest pins WEBAUTHN_ALLOWED_ORIGINS to a plain-http
+    origin for the development-mode suite, and `_validate_webauthn_origins`
+    demands https in production — a test that wants both turns passkeys back
+    on itself, with an origin that satisfies that check.
     """
     monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("WEBAUTHN_RP_ID", "")
+    monkeypatch.setenv("WEBAUTHN_ALLOWED_ORIGINS", "")
 
 
 class TestEnvironmentSetting:
@@ -58,6 +65,8 @@ class TestEnvironmentSetting:
         """Deployment platforms are not consistent about case, and being strict
         about it means a service that will not start."""
         monkeypatch.setenv("ENVIRONMENT", " Production ")
+        monkeypatch.setenv("WEBAUTHN_RP_ID", "")
+        monkeypatch.setenv("WEBAUTHN_ALLOWED_ORIGINS", "")
         assert ConfigServiceModel().is_production is True
 
     def test_an_unrecognised_value_is_rejected(self, monkeypatch):

@@ -121,6 +121,25 @@ caio==0.12.2 \
     --hash=sha256:e0ba5f8c0dc7035c05817ca1399dd7d6121ea55c363a079c334a151a75094322 \
     --hash=sha256:e33295963f5a4787355b8bfd754b4f0e7ac5d535138860748c1eb833ca10d620
     # via aiofile
+cbor2==6.1.4 \
+    --hash=sha256:01ecc79a28f33d17331943ce508fc1e21f4b06553c73f874f4c77120d72b2ef9 \
+    --hash=sha256:0859a0837e6e2d4fe5f5b849f6475797e4db545da98c19db4b1d3487bd47aa22 \
+    --hash=sha256:164ca22b509408435b2d8236c80c964e4fc77c085ab034569cd04c40d5cc8883 \
+    --hash=sha256:179a794bf4be1d46ff190695929f65f0b42019c156919846ae539d2a7ec42e54 \
+    --hash=sha256:239db0f92d537fd29eaec4e40195fc3b2b48bc34a5887059658162489a9eb6ae \
+    --hash=sha256:24da0a481294ac416e1e369e2d204b2b1d993cbd082d0d99fa3d6f5f27ae5e69 \
+    --hash=sha256:3f4a434c36bb0d33aeb48ddae8e8b673ca7e1f14545ee7cf4a4c7c39380ea9a2 \
+    --hash=sha256:6abcf072b8c0fdc8ad7902ee26a906cafbf3427d026b662ff21166a253f85e18 \
+    --hash=sha256:71fcf4f237d68bf4445bf45070f36f82b333f2e6a62612aa2c256683b51378a9 \
+    --hash=sha256:7336ff4cb7d161ec43b65eef43bf3e9bcab44bd152efb54dd637b7afe711254f \
+    --hash=sha256:7deccc50fd0b55c4c7dd265b144c5358a645121e457c0ae3722b5ad59832b257 \
+    --hash=sha256:855764e02dc60ab9413acd044e997c3170000fdea6155d6c43a923a1d966dbe6 \
+    --hash=sha256:8f1019494b0ec81a3df3ebb01b6acb446d5b946fe35845b1726379abd66a71da \
+    --hash=sha256:9b904b8d0f4ddac9259197d21d121fae4cb8b555700d65bc12c5d46a2e6c2025 \
+    --hash=sha256:c0f5f2d6d3b58e44146860c049f3c082207a4005588b8926d51bf937ab66773c \
+    --hash=sha256:c6b28b928c5f2dbf47dffa12dce9c8e36fe6ac1c1358bc326499c0736263b66f \
+    --hash=sha256:f3fc7d15cba4174373df2496070faa4a927fe3ed772130d281808120aec7b61c
+    # via webauthn
 certifi==2026.7.22 \
     --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775 \
     --hash=sha256:741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55
@@ -233,8 +252,10 @@ cryptography==50.0.0 \
     #   authlib
     #   joserfc
     #   pyjwt
+    #   pyopenssl
     #   resume-cv-mcp-api
     #   secretstorage
+    #   webauthn
 cyclopts==4.23.2 \
     --hash=sha256:1c9de7f245394d3ef9344fc6c976fc373fe1f2ce929b27f08ad4ea8499c13461 \
     --hash=sha256:eb95b6f221ec8e62ba64f879beb27dff779408a320db730fc184427c463a3695
@@ -485,6 +506,16 @@ py-key-value-aio==0.4.5 \
     --hash=sha256:ab862adbcb8c72547d1c57821f22cbbb71ab86509039c96f36e914e0336c8dd7 \
     --hash=sha256:c6563a2c6abe5da5e20f4f9e875c2a9b425a2244a54fadbf46cf140a9eea45d7
     # via fastmcp-slim
+pyasn1==0.6.4 \
+    --hash=sha256:9c447d8431c947fe4c8febc4ed9e760bc29011a5b01e5c74b67025bd9fb8ce81 \
+    --hash=sha256:deda9277cfd454080ec40b207fb6df82206a3a2688735233cdcd8d3d565f088b
+    # via
+    #   pyasn1-modules
+    #   webauthn
+pyasn1-modules==0.4.2 \
+    --hash=sha256:29253a9207ce32b64c3ac6600edc75368f98473906e8fd1043bd6b5b1de2c14a \
+    --hash=sha256:677091de870a80aae844b1ca6134f54652fa2c8c5a52aa396440ac3106e941e6
+    # via webauthn
 pycparser==3.0 ; implementation_name != 'PyPy' \
     --hash=sha256:600f49d217304a5902ac3c37e1281c9fe94e4d0489de643a9504c5cdfdfc6b29 \
     --hash=sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
@@ -551,6 +582,10 @@ pyjwt==2.13.0 \
     # via
     #   mcp
     #   resume-cv-mcp-api
+pyopenssl==26.4.0 \
+    --hash=sha256:28dfcce0162b9211413e26dfbfdf1d24317fbeba18fc93c12400a1856b2a0bc7 \
+    --hash=sha256:f0eb0cb2d581d3ad2b9c489468485e7f2ab6727d08401bcf9d824c3caddf3c1c
+    # via webauthn
 pyotp==2.10.0 \
     --hash=sha256:1df2f6a1bcc3bb0716172a5215ddc2f8c7c7fd26a13df9927d52e1746934836c \
     --hash=sha256:d01e9703443616b03c57c700b5cbffd56a1f929c1b0f8f03131bc78c1fca9d3f
@@ -812,6 +847,10 @@ watchfiles==1.2.0 \
     --hash=sha256:ecb47f183a8025b2aa18b546725c3657e542112ae9c0613a2af79b4fa8d04ad7 \
     --hash=sha256:f88af53d6ddaf72179ef613ddc905e6f4785f712b49b80b3bef9f3525e6194b4
     # via fastmcp-slim
+webauthn==3.0.0 \
+    --hash=sha256:324e54e1f6eeef486623b5d90df6fcd74ae04ff0c137d2b818a8f709b6ca3ab8 \
+    --hash=sha256:b5d0c02b6efa16be683f8a75abd2073f5e59a15f42623cc22c31f27600259e64
+    # via resume-cv-mcp-api
 websockets==17.0.1 \
     --hash=sha256:10b1587c599fa0f2c89154587c80e0fda98ade6c9fa8c0260a2823fb1800b685 \
     --hash=sha256:17ac37716c0244e82c9e384c41653c090b1864c6610224ca3857e7f7b58fce10 \

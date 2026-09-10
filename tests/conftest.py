@@ -49,6 +49,12 @@ os.environ["BOOTSTRAP_ADMIN_EMAIL"] = ""
 # their own .env, and unpinned the suite reads whatever they happen to be.
 os.environ["CLIENT_ALLOWED_ORIGINS"] = ""
 os.environ["CLIENT_HTML_PATH"] = ""
+# On by default so the passkey suite exercises the real HTTP surface rather
+# than a feature-flagged-off stub. `testserver` matches PUBLIC_BASE_URL above,
+# which is what httpx's ASGITransport sends as Host and Origin.
+os.environ["WEBAUTHN_RP_ID"] = "testserver"
+os.environ["WEBAUTHN_RP_NAME"] = "resume-cv-mcp-api tests"
+os.environ["WEBAUTHN_ALLOWED_ORIGINS"] = "http://testserver"
 os.environ.pop("SECRETS_DIR", None)
 
 import pyotp

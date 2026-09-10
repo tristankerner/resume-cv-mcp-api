@@ -627,7 +627,12 @@ class TestDocsLoginSharesTheCounter:
 
     @pytest.fixture
     def production(self, reconfigure):
-        reconfigure(ENVIRONMENT="production")
+        # WEBAUTHN_RP_ID/ALLOWED_ORIGINS off: conftest's pinned origin is
+        # plain-http, which production's WebAuthn settings validator refuses
+        # on its own, unrelated to what this test is about.
+        reconfigure(
+            ENVIRONMENT="production", WEBAUTHN_RP_ID="", WEBAUTHN_ALLOWED_ORIGINS=""
+        )
 
     @staticmethod
     async def _docs_login(client, username: str, password: str):

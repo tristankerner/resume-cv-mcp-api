@@ -144,12 +144,19 @@ class TestSettingsValidation:
     def test_refuses_to_build_in_production_with_no_key(self, monkeypatch):
         monkeypatch.setenv("ENVIRONMENT", "production")
         monkeypatch.setenv("MFA_ENCRYPTION_KEYS", "")
+        # Off, not the pinned plain-http origin from conftest: that origin
+        # fails production's separate https-only WebAuthn check, which is not
+        # what this test is about.
+        monkeypatch.setenv("WEBAUTHN_RP_ID", "")
+        monkeypatch.setenv("WEBAUTHN_ALLOWED_ORIGINS", "")
         with pytest.raises(ValueError, match="MFA_ENCRYPTION_KEYS"):
             ConfigServiceModel()
 
     def test_production_is_fine_with_a_key_configured(self, monkeypatch):
         monkeypatch.setenv("ENVIRONMENT", "production")
         monkeypatch.setenv("MFA_ENCRYPTION_KEYS", Fernet.generate_key().decode())
+        monkeypatch.setenv("WEBAUTHN_RP_ID", "")
+        monkeypatch.setenv("WEBAUTHN_ALLOWED_ORIGINS", "")
         assert ConfigServiceModel().is_production is True
 
 

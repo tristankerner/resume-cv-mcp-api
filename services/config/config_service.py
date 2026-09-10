@@ -1,6 +1,7 @@
 import os
 from enum import StrEnum, auto
 from typing import Annotated, Any, ClassVar
+from urllib.parse import urlsplit
 
 from cryptography.fernet import Fernet
 from pydantic import (
@@ -199,6 +200,53 @@ class ConfigServiceModel(BaseSettings):
     # than a credential lifetime.
     docs_session_minutes: int = Field(default=60, ge=1, alias="DOCS_SESSION_MINUTES")
 
+    # --- Passkeys (WebAuthn) ------------------------------------------------
+    # Off unless WEBAUTHN_RP_ID is set. A passkey is bound to the *page's*
+    # origin, not to this API's, and the two are routinely different here — the
+    # browser client is a single-file build that can be served from anywhere,
+    # including a static host and file://. There is nothing in a request this
+    # service can safely derive an RP ID from, so it is configuration, for the
+    # same reason PUBLIC_BASE_URL is.
+    webauthn_rp_id: str | None = Field(default=None, alias="WEBAUTHN_RP_ID")
+
+    # What the authenticator shows the user when it asks them to confirm.
+    webauthn_rp_name: str = Field(default="resume-cv-mcp-api", alias="WEBAUTHN_RP_NAME")
+
+    # Comma-separated page origins a ceremony may come from. Every entry must
+    # be an origin whose host is `webauthn_rp_id` or a subdomain of it — that
+    # is the browser's own rule, and an entry that breaks it would produce a
+    # credential this service could never verify. NoDecode: see
+    # oauth_allowed_redirect_hosts above.
+    webauthn_allowed_origins: Annotated[frozenset[str], NoDecode] = Field(
+        default=frozenset(), alias="WEBAUTHN_ALLOWED_ORIGINS"
+    )
+
+    # How long a registration or authentication challenge stays redeemable.
+    # Shorter than the MFA challenge by default: nothing is typed here, so the
+    # window only has to cover a fingerprint or a PIN.
+    webauthn_challenge_ttl_minutes: int = Field(
+        default=5, ge=1, alias="WEBAUTHN_CHALLENGE_TTL_MINUTES"
+    )
+
+    @field_validator("webauthn_rp_id", mode="before")
+    @classmethod
+    def _normalise_webauthn_rp_id(cls, value: Any) -> Any:
+        """An empty string is what pydantic-settings hands back for a
+        variable set and then cleared (a test turning the feature off, or a
+        compose file with a blank override) — treated as unset, matching
+        every other optional setting the `is None` checks in this class
+        assume."""
+        return None if value == "" else value
+
+    @field_validator("webauthn_allowed_origins", mode="before")
+    @classmethod
+    def _parse_webauthn_allowed_origins(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        return frozenset(
+            origin.strip().rstrip("/") for origin in value.split(",") if origin.strip()
+        )
+
     @field_validator("oauth_allowed_redirect_hosts", mode="before")
     @classmethod
     def _parse_oauth_allowed_redirect_hosts(cls, value: Any) -> Any:
@@ -272,6 +320,64 @@ class ConfigServiceModel(BaseSettings):
         from the mount — see the RemoteAuthProvider construction in main.py.
         """
         return f"{self.public_base_url_str}/resume/mcp"
+
+    @property
+    def passkeys_enabled(self) -> bool:
+        return self.webauthn_rp_id is not None
+
+    @model_validator(mode="after")
+    def _validate_webauthn_origins(self) -> ConfigServiceModel:
+        """Reject an RP ID and origin set the browser would refuse, at settings
+        load.
+
+        Every one of these is otherwise a ceremony that starts fine in the UI
+        and fails at the last step with a `SecurityError` the user cannot act
+        on — the worst place to discover a typo.
+        """
+        if self.webauthn_rp_id is None:
+            if self.webauthn_allowed_origins:
+                raise ValueError(
+                    "WEBAUTHN_ALLOWED_ORIGINS is set but WEBAUTHN_RP_ID is not. "
+                    "Passkeys are off without an RP ID, so the origins would "
+                    "do nothing."
+                )
+            return self
+
+        if not self.webauthn_allowed_origins:
+            raise ValueError(
+                "WEBAUTHN_RP_ID is set but WEBAUTHN_ALLOWED_ORIGINS is empty. "
+                "Name every origin the sign-in page is served from, e.g. "
+                f"https://{self.webauthn_rp_id}"
+            )
+
+        for origin in sorted(self.webauthn_allowed_origins):
+            parsed = urlsplit(origin)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                raise ValueError(
+                    f"WEBAUTHN_ALLOWED_ORIGINS entry {origin!r} is not an "
+                    "origin. Expected scheme://host[:port]."
+                )
+            # WebAuthn only runs in a secure context. Plain http is permitted
+            # for localhost by every browser, and here for any host outside
+            # production so the test suite and a local run work — the same
+            # development affordance the docs cookie's `secure` flag takes.
+            if parsed.scheme == "http" and self.is_production:
+                raise ValueError(
+                    f"WEBAUTHN_ALLOWED_ORIGINS entry {origin!r} is not https. "
+                    "A browser will not run a WebAuthn ceremony on an insecure "
+                    "origin."
+                )
+            host = parsed.hostname
+            if host != self.webauthn_rp_id and not host.endswith(
+                f".{self.webauthn_rp_id}"
+            ):
+                raise ValueError(
+                    f"WEBAUTHN_ALLOWED_ORIGINS entry {origin!r} is not the RP "
+                    f"ID {self.webauthn_rp_id!r} or a subdomain of it. A "
+                    "browser refuses a ceremony whose page origin does not sit "
+                    "under the RP ID."
+                )
+        return self
 
     @model_validator(mode="after")
     def _require_public_base_url_in_production(self) -> ConfigServiceModel:
