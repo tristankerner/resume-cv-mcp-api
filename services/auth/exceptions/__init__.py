@@ -177,3 +177,52 @@ class MfaErrors:
             status_code=status.HTTP_409_CONFLICT,
             detail="You already have the maximum number of MFA methods.",
         )
+
+
+class PasskeyErrors:
+    """WebAuthn refusals. See AuthErrors for the style."""
+
+    @staticmethod
+    def not_configured() -> HTTPException:
+        """404, not 501 or 403: with no WEBAUTHN_RP_ID this deployment has no
+        passkey surface at all, the same way a closed
+        OAUTH_REGISTRATION_ENABLED makes /oauth/register not exist."""
+        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+
+    @staticmethod
+    def rejected() -> HTTPException:
+        """401, used for every assertion failure without distinction — an
+        unknown credential, a bad signature, a challenge minted for another
+        account, a replayed counter. Telling them apart would tell an
+        unauthenticated caller which credential ids exist."""
+        return HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate the passkey.",
+        )
+
+    @staticmethod
+    def challenge_expired() -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="The login attempt expired. Start again.",
+        )
+
+    @staticmethod
+    def not_found() -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Passkey not found"
+        )
+
+    @staticmethod
+    def already_registered() -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="That passkey is already registered.",
+        )
+
+    @staticmethod
+    def too_many_credentials() -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You already have the maximum number of passkeys.",
+        )

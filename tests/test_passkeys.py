@@ -3,14 +3,22 @@ the ceremony wrapper, the challenge tokens and the sign-count claim. Mirrors
 tests/test_mfa.py's class-per-concern layout.
 """
 
-import pytest
-from cryptography.fernet import Fernet
+import secrets
 
-from persistence.base import Clock
+import pytest
+import webauthn
+from cryptography.fernet import Fernet
+from fastapi import HTTPException
+
+from persistence.base import Base64Url, Clock
 from persistence.passkey_credential import PasskeyCredential
 from persistence.user import User
+from services.auth.passkeys import ceremony as ceremony_module
+from services.auth.passkeys.ceremony import PasskeyCeremony
+from services.auth.passkeys.relying_party import RelyingParty
 from services.config.config_service import ConfigService
 from services.database.database_service import DatabaseService
+from tests.support.webauthn_authenticator import SoftwareAuthenticator
 
 
 def settings():
@@ -64,6 +72,75 @@ def reconfigure(monkeypatch):
         ConfigService.reset()
 
     return apply
+
+
+class TestSoftwareAuthenticatorSanity:
+    """The load-bearing check for the whole plan: until this passes, nothing
+    downstream can. Options come from the real `PasskeyCeremony`; the
+    response comes from `SoftwareAuthenticator`; verification calls
+    `webauthn.verify_registration_response` directly rather than through
+    `PasskeyCeremony.verify_registration`, so a bug in our own wrapper cannot
+    hide a bug in the authenticator double, or vice versa.
+    """
+
+    def test_a_registration_response_it_produces_verifies(self):
+        relying_party = RelyingParty(settings())
+        ceremony = PasskeyCeremony(relying_party)
+        user = User(id=1, username="sanity-check", roles=[])
+
+        options, challenge = ceremony.registration_options(user, b"handle", [])
+
+        authenticator = SoftwareAuthenticator(
+            rp_id=relying_party.rp_id, origin=relying_party.origins[0]
+        )
+        response = authenticator.register(options)
+
+        verified = webauthn.verify_registration_response(
+            credential=response,
+            expected_challenge=challenge,
+            expected_rp_id=relying_party.rp_id,
+            expected_origin=relying_party.origins,
+            require_user_verification=True,
+        )
+        assert verified.credential_id == authenticator.credential_id
+        assert verified.credential_device_type.value == "multi_device"
+        assert verified.credential_backed_up is True
+
+    def test_an_authentication_response_it_produces_verifies(self):
+        relying_party = RelyingParty(settings())
+        ceremony = PasskeyCeremony(relying_party)
+        user = User(id=1, username="sanity-check-auth", roles=[])
+        user_handle = b"handle"
+
+        registration_options, reg_challenge = ceremony.registration_options(
+            user, user_handle, []
+        )
+        authenticator = SoftwareAuthenticator(
+            rp_id=relying_party.rp_id, origin=relying_party.origins[0]
+        )
+        registration_response = authenticator.register(registration_options)
+        registered = webauthn.verify_registration_response(
+            credential=registration_response,
+            expected_challenge=reg_challenge,
+            expected_rp_id=relying_party.rp_id,
+            expected_origin=relying_party.origins,
+            require_user_verification=True,
+        )
+
+        auth_options, auth_challenge = ceremony.authentication_options([])
+        assertion = authenticator.authenticate(auth_options, user_handle=user_handle)
+
+        verified = webauthn.verify_authentication_response(
+            credential=assertion,
+            expected_challenge=auth_challenge,
+            expected_rp_id=relying_party.rp_id,
+            expected_origin=relying_party.origins,
+            credential_public_key=registered.credential_public_key,
+            credential_current_sign_count=registered.sign_count,
+            require_user_verification=True,
+        )
+        assert verified.credential_id == authenticator.credential_id
+        assert verified.new_sign_count == 0
 
 
 class TestWebauthnSettings:
@@ -141,6 +218,157 @@ class TestWebauthnSettings:
         mid-run relies on."""
         reconfigure(WEBAUTHN_RP_ID="", WEBAUTHN_ALLOWED_ORIGINS=None)
         assert settings().passkeys_enabled is False
+
+
+class TestRelyingParty:
+    def test_enabled_reflects_the_settings(self, reconfigure):
+        reconfigure(WEBAUTHN_RP_ID=None, WEBAUTHN_ALLOWED_ORIGINS=None)
+        assert RelyingParty(settings()).enabled is False
+
+        reconfigure(
+            WEBAUTHN_RP_ID="example.com", WEBAUTHN_ALLOWED_ORIGINS="https://example.com"
+        )
+        assert RelyingParty(settings()).enabled is True
+
+    def test_require_enabled_raises_when_off(self, reconfigure):
+        reconfigure(WEBAUTHN_RP_ID=None, WEBAUTHN_ALLOWED_ORIGINS=None)
+        with pytest.raises(HTTPException) as excinfo:
+            RelyingParty(settings()).require_enabled()
+        assert excinfo.value.status_code == 404
+
+    def test_rp_id_raises_when_off(self, reconfigure):
+        reconfigure(WEBAUTHN_RP_ID=None, WEBAUTHN_ALLOWED_ORIGINS=None)
+        with pytest.raises(HTTPException):
+            _ = RelyingParty(settings()).rp_id
+
+    def test_origins_are_sorted(self, reconfigure):
+        reconfigure(
+            WEBAUTHN_RP_ID="example.com",
+            WEBAUTHN_ALLOWED_ORIGINS="https://z.example.com,https://a.example.com",
+        )
+        assert RelyingParty(settings()).origins == [
+            "https://a.example.com",
+            "https://z.example.com",
+        ]
+
+    def test_serves_origin(self, reconfigure):
+        reconfigure(
+            WEBAUTHN_RP_ID="example.com",
+            WEBAUTHN_ALLOWED_ORIGINS="https://example.com",
+        )
+        relying_party = RelyingParty(settings())
+        assert relying_party.serves_origin("https://example.com") is True
+        assert relying_party.serves_origin("https://other.example.com") is False
+
+    def test_serves_origin_is_false_when_disabled(self, reconfigure):
+        reconfigure(WEBAUTHN_RP_ID=None, WEBAUTHN_ALLOWED_ORIGINS=None)
+        assert RelyingParty(settings()).serves_origin("https://example.com") is False
+
+
+class TestPasskeyCeremony:
+    def test_registration_options_demand_resident_key_and_user_verification(self):
+        ceremony = PasskeyCeremony(RelyingParty(settings()))
+        user = User(id=1, username="ceremony-options", roles=[])
+        options, _challenge = ceremony.registration_options(user, b"handle", [])
+        assert options["authenticatorSelection"]["residentKey"] == "required"
+        assert options["authenticatorSelection"]["userVerification"] == "required"
+
+    async def test_exclude_credentials_lists_what_the_user_holds(self):
+        user_row = await make_user("ceremony-exclude")
+        # A real base64url id, not an arbitrary label: `registration_options`
+        # round-trips it through `Base64Url.decode` on the way in and
+        # py_webauthn's own base64url encoder on the way out, and only bytes
+        # actually produced by `Base64Url.encode` survive that intact.
+        raw_id = secrets.token_bytes(16)
+        credential = await make_credential(
+            user_row.id, Base64Url.encode(raw_id), transports=["internal"]
+        )
+
+        ceremony = PasskeyCeremony(RelyingParty(settings()))
+        user = User(id=user_row.id, username=user_row.username, roles=[])
+        options, _challenge = ceremony.registration_options(
+            user, b"handle", [credential]
+        )
+        excluded_ids = {entry["id"] for entry in options["excludeCredentials"]}
+        assert credential.credential_id in excluded_ids
+
+    def test_a_registration_for_the_wrong_origin_does_not_verify(self):
+        relying_party = RelyingParty(settings())
+        ceremony = PasskeyCeremony(relying_party)
+        user = User(id=1, username="ceremony-wrong-origin", roles=[])
+        options, challenge = ceremony.registration_options(user, b"handle", [])
+
+        authenticator = SoftwareAuthenticator(
+            rp_id=relying_party.rp_id, origin="http://not-the-configured-origin"
+        )
+        response = authenticator.register(options)
+
+        with pytest.raises(ceremony_module.RegistrationFailure):
+            ceremony.verify_registration(response, challenge)
+
+    def test_a_registration_for_the_wrong_rp_id_does_not_verify(self):
+        relying_party = RelyingParty(settings())
+        ceremony = PasskeyCeremony(relying_party)
+        user = User(id=1, username="ceremony-wrong-rp", roles=[])
+        options, challenge = ceremony.registration_options(user, b"handle", [])
+
+        authenticator = SoftwareAuthenticator(
+            rp_id="not-the-configured-rp-id", origin=relying_party.origins[0]
+        )
+        response = authenticator.register(options)
+
+        with pytest.raises(ceremony_module.RegistrationFailure):
+            ceremony.verify_registration(response, challenge)
+
+    def test_a_well_formed_registration_verifies_through_the_wrapper(self):
+        relying_party = RelyingParty(settings())
+        ceremony = PasskeyCeremony(relying_party)
+        user = User(id=1, username="ceremony-good", roles=[])
+        options, challenge = ceremony.registration_options(user, b"handle", [])
+
+        authenticator = SoftwareAuthenticator(
+            rp_id=relying_party.rp_id, origin=relying_party.origins[0]
+        )
+        response = authenticator.register(options)
+        verified = ceremony.verify_registration(response, challenge)
+        assert verified.credential_id == authenticator.credential_id
+
+    def test_authentication_options_omit_allow_credentials_when_empty(self):
+        ceremony = PasskeyCeremony(RelyingParty(settings()))
+        options, _challenge = ceremony.authentication_options([])
+        assert not options.get("allowCredentials")
+
+    def test_a_well_formed_authentication_verifies_through_the_wrapper(self):
+        relying_party = RelyingParty(settings())
+        ceremony = PasskeyCeremony(relying_party)
+        user = User(id=1, username="ceremony-auth-good", roles=[])
+        user_handle = b"handle"
+        reg_options, reg_challenge = ceremony.registration_options(
+            user, user_handle, []
+        )
+        authenticator = SoftwareAuthenticator(
+            rp_id=relying_party.rp_id, origin=relying_party.origins[0]
+        )
+        reg_response = authenticator.register(reg_options)
+        verified_registration = ceremony.verify_registration(
+            reg_response, reg_challenge
+        )
+
+        stored = PasskeyCredential(
+            user_id=1,
+            credential_id=Base64Url.encode(verified_registration.credential_id),
+            public_key=Base64Url.encode(verified_registration.credential_public_key),
+            sign_count=verified_registration.sign_count,
+            transports=[],
+            device_type=verified_registration.credential_device_type.value,
+            backed_up=verified_registration.credential_backed_up,
+            label="Test",
+        )
+
+        auth_options, auth_challenge = ceremony.authentication_options([stored])
+        assertion = authenticator.authenticate(auth_options, user_handle=user_handle)
+        verified = ceremony.verify_authentication(assertion, auth_challenge, stored)
+        assert verified.new_sign_count == 0
 
 
 class TestWebauthnUserHandle:
