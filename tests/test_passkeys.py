@@ -5,6 +5,7 @@ tests/test_mfa.py's class-per-concern layout.
 
 import secrets
 
+import jwt
 import pytest
 import webauthn
 from cryptography.fernet import Fernet
@@ -13,8 +14,14 @@ from fastapi import HTTPException
 from persistence.base import Base64Url, Clock
 from persistence.passkey_credential import PasskeyCredential
 from persistence.user import User
+from services.auth.auth_service import AuthService
 from services.auth.passkeys import ceremony as ceremony_module
 from services.auth.passkeys.ceremony import PasskeyCeremony
+from services.auth.passkeys.challenge import (
+    PasskeyAuthenticationChallenge,
+    PasskeyContext,
+    PasskeyRegistrationChallenge,
+)
 from services.auth.passkeys.relying_party import RelyingParty
 from services.config.config_service import ConfigService
 from services.database.database_service import DatabaseService
@@ -369,6 +376,120 @@ class TestPasskeyCeremony:
         assertion = authenticator.authenticate(auth_options, user_handle=user_handle)
         verified = ceremony.verify_authentication(assertion, auth_challenge, stored)
         assert verified.new_sign_count == 0
+
+
+class TestPasskeyChallenge:
+    """`PasskeyRegistrationChallenge` and `PasskeyAuthenticationChallenge`,
+    independent of any particular caller — same approach as
+    tests/test_mfa.py's TestMfaChallengeToken."""
+
+    async def test_registration_challenge_round_trips(self):
+        user = await make_user("challenge-reg-roundtrip")
+        token, expires_in = PasskeyRegistrationChallenge.mint(
+            settings(), user, b"a-challenge"
+        )
+        assert expires_in > 0
+        assert (
+            PasskeyRegistrationChallenge.redeem(settings(), token, user)
+            == b"a-challenge"
+        )
+
+    async def test_registration_challenge_is_refused_after_the_password_changes(self):
+        user = await make_user("challenge-reg-pwb")
+        token, _expires_in = PasskeyRegistrationChallenge.mint(
+            settings(), user, b"a-challenge"
+        )
+        user.password = "a-different-hash"
+        assert PasskeyRegistrationChallenge.redeem(settings(), token, user) is None
+
+    async def test_registration_challenge_is_refused_for_another_account(self):
+        user = await make_user("challenge-reg-account-a")
+        other = await make_user("challenge-reg-account-b")
+        token, _expires_in = PasskeyRegistrationChallenge.mint(
+            settings(), user, b"a-challenge"
+        )
+        assert PasskeyRegistrationChallenge.redeem(settings(), token, other) is None
+
+    def test_authentication_challenge_round_trips(self):
+        token, expires_in = PasskeyAuthenticationChallenge.mint(
+            settings(), b"a-challenge", 7, PasskeyContext.TOKEN
+        )
+        assert expires_in > 0
+        assert PasskeyAuthenticationChallenge.redeem(
+            settings(), token, PasskeyContext.TOKEN
+        ) == (b"a-challenge", 7)
+
+    def test_authentication_challenge_carries_no_subject_for_the_usernameless_flow(
+        self,
+    ):
+        token, _expires_in = PasskeyAuthenticationChallenge.mint(
+            settings(), b"a-challenge", None, PasskeyContext.TOKEN
+        )
+        assert PasskeyAuthenticationChallenge.redeem(
+            settings(), token, PasskeyContext.TOKEN
+        ) == (b"a-challenge", None)
+
+    def test_a_token_context_token_is_refused_for_docs(self):
+        token, _expires_in = PasskeyAuthenticationChallenge.mint(
+            settings(), b"a-challenge", None, PasskeyContext.TOKEN
+        )
+        assert (
+            PasskeyAuthenticationChallenge.redeem(
+                settings(), token, PasskeyContext.DOCS
+            )
+            is None
+        )
+
+    def test_an_oauth_token_bound_to_one_client_id_is_refused_for_another(self):
+        token, _expires_in = PasskeyAuthenticationChallenge.mint(
+            settings(),
+            b"a-challenge",
+            None,
+            PasskeyContext.OAUTH,
+            binding="client-a",
+        )
+        assert (
+            PasskeyAuthenticationChallenge.redeem(
+                settings(), token, PasskeyContext.OAUTH, binding="client-b"
+            )
+            is None
+        )
+        assert PasskeyAuthenticationChallenge.redeem(
+            settings(), token, PasskeyContext.OAUTH, binding="client-a"
+        ) == (b"a-challenge", None)
+
+    def test_an_expired_authentication_challenge_is_refused(self):
+        token, _expires_in = PasskeyAuthenticationChallenge.mint(
+            settings(), b"a-challenge", None, PasskeyContext.TOKEN
+        )
+        decoded = jwt.decode(
+            token,
+            settings().auth_secret_key.get_secret_value(),
+            algorithms=[settings().auth_algorithm],
+        )
+        decoded["exp"] = decoded["iat"] - 1
+        expired = jwt.encode(
+            decoded,
+            settings().auth_secret_key.get_secret_value(),
+            algorithm=settings().auth_algorithm,
+        )
+        assert (
+            PasskeyAuthenticationChallenge.redeem(
+                settings(), expired, PasskeyContext.TOKEN
+            )
+            is None
+        )
+
+    async def test_a_passkey_auth_token_does_not_authenticate_as_a_bearer_token(self):
+        """The `token_use` guard in `AuthService._authenticate_jwt` is the
+        reason `SignedToken` exists at all — assert it explicitly rather than
+        trusting the generic coverage in tests/test_auth.py."""
+        token, _expires_in = PasskeyAuthenticationChallenge.mint(
+            settings(), b"a-challenge", None, PasskeyContext.TOKEN
+        )
+        async with DatabaseService.session() as db:
+            service = AuthService(db, token, ConfigService.get_without_deps())
+            assert await service.authenticate() is None
 
 
 class TestWebauthnUserHandle:
