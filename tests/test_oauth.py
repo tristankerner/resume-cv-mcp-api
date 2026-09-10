@@ -5,6 +5,7 @@ and backwards compatibility with every credential that worked before this.
 
 import base64
 import hashlib
+import json
 import secrets
 import urllib.parse
 from dataclasses import dataclass
@@ -1263,3 +1264,138 @@ class TestMfaChallengeBinding:
         assert response.status_code == 401
         assert 'name="password"' in response.text
         assert response.status_code != 303
+
+
+async def register_passkey_for(client, actor, password, authenticator):
+    """A passkey for `actor`, enrolled through the real HTTP routes — see
+    conftest's `passkey_actor`, which this mirrors for an actor that needs a
+    role with a grantable scope rather than the roleless one that fixture
+    builds."""
+    options = await client.post(
+        "/users/me/passkeys/options",
+        headers=actor.headers,
+        json={"current_password": password},
+    )
+    assert options.status_code == 200, options.text
+    device = authenticator()
+    credential = device.register(options.json()["options"])
+    registered = await client.post(
+        "/users/me/passkeys",
+        headers=actor.headers,
+        json={
+            "registration_token": options.json()["registration_token"],
+            "label": "OAuth passkey",
+            "credential": credential,
+        },
+    )
+    assert registered.status_code == 200, registered.text
+    return device
+
+
+async def authorize_with_passkey(
+    client,
+    device,
+    *,
+    client_id,
+    username,
+    redirect_uri=REDIRECT_URI,
+    scope="resume:read metadata:read",
+    state="s1",
+    decision="approve",
+    passkey_client_id=None,
+):
+    """Like `authorize`, but assembling a passkey assertion instead of a
+    username/password pair. `passkey_client_id` lets a test mint the options
+    challenge against one client while submitting the form for another."""
+    verifier, challenge = pkce_pair()
+    options_response = await client.post(
+        "/oauth/authorize/passkey/options",
+        json={"username": username, "client_id": passkey_client_id or client_id},
+    )
+    assert options_response.status_code == 200, options_response.text
+    body = options_response.json()
+    login_token = body["login_token"]
+    assertion = device.authenticate(body["options"])
+    data = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "scope": scope,
+        "state": state,
+        "login_token": login_token,
+        "passkey_response": json.dumps(assertion),
+        "decision": decision,
+    }
+    response = await client.post("/oauth/authorize", data=data, follow_redirects=False)
+    return response, verifier
+
+
+class TestPasskeyAuthorize:
+    """POST /oauth/authorize/passkey/options and the hidden-field submission
+    §9.3 of the plan describes — the consent decision has to survive the
+    ceremony, so this surface fills in hidden fields rather than fetching and
+    redirecting the way the docs login does.
+    """
+
+    async def test_the_page_renders_the_hidden_fields_and_the_button(self, client):
+        client_id = await pre_register()
+        response = await client.get(
+            "/oauth/authorize",
+            params={
+                "client_id": client_id,
+                "redirect_uri": REDIRECT_URI,
+                "code_challenge": pkce_pair()[1],
+                "code_challenge_method": "S256",
+                "scope": "resume:read",
+            },
+        )
+        assert response.status_code == 200
+        assert 'id="passkey"' in response.text
+        assert 'name="login_token"' in response.text
+        assert 'name="passkey_response"' in response.text
+
+    async def test_approving_with_a_passkey_redirects_with_a_code(
+        self, client, admin, password, authenticator
+    ):
+        device = await register_passkey_for(client, admin, password, authenticator)
+        client_id = await pre_register()
+
+        response, _verifier = await authorize_with_passkey(
+            client, device, client_id=client_id, username=admin.username
+        )
+        assert response.status_code == 303, response.text
+        assert "code" in query_of(response)
+
+    async def test_denying_with_a_passkey_does_not_issue_a_code(
+        self, client, admin, password, authenticator
+    ):
+        device = await register_passkey_for(client, admin, password, authenticator)
+        client_id = await pre_register()
+
+        response, _verifier = await authorize_with_passkey(
+            client,
+            device,
+            client_id=client_id,
+            username=admin.username,
+            decision="deny",
+        )
+        assert response.status_code == 302
+        assert query_of(response)["error"] == "access_denied"
+
+    async def test_a_challenge_bound_to_one_client_is_refused_authorizing_another(
+        self, client, admin, password, authenticator
+    ):
+        device = await register_passkey_for(client, admin, password, authenticator)
+        client_a = await pre_register()
+        client_b = await pre_register()
+
+        response, _verifier = await authorize_with_passkey(
+            client,
+            device,
+            client_id=client_b,
+            username=admin.username,
+            passkey_client_id=client_a,
+        )
+        assert response.status_code == 401

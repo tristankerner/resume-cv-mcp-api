@@ -13,13 +13,16 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.config.config_service import ConfigService
+from services.auth.passkeys.dtos.passkey import PasskeyAuthenticationOptionsResponse
+from services.auth.passkeys.relying_party import RelyingParty
+from services.config.config_service import ConfigService, ConfigServiceModel
 from services.database.database_service import DatabaseService
 from services.oauth.authorize_page import AuthorizePageRenderer
 from services.oauth.dtos import (
     AuthorizationServerMetadata,
     ClientRegistrationRequest,
     ClientRegistrationResponse,
+    OAuthPasskeyOptionsRequest,
     TokenResponse,
 )
 from services.oauth.exceptions import (
@@ -56,8 +59,17 @@ class OAuthRouter:
         self.router.post(
             "/oauth/authorize", include_in_schema=False, response_model=None
         )(self.authorize_submit)
+        self.router.post("/oauth/authorize/passkey/options", include_in_schema=False)(
+            self.passkey_options
+        )
         self.router.post("/oauth/token", response_model=None)(self.token_endpoint)
         self.router.post("/oauth/revoke", response_model=None)(self.revoke_endpoint)
+
+    @staticmethod
+    def _passkeys_available(settings: ConfigServiceModel) -> bool:
+        """This page is served from the API's own origin, same as the docs
+        login — see DocsRouter._passkeys_available for the reasoning."""
+        return RelyingParty(settings).serves_origin(settings.public_base_url_str)
 
     @staticmethod
     def _error_response(exc: OAuthError) -> JSONResponse:
@@ -159,8 +171,17 @@ class OAuthRouter:
             scope=scope or "",
             state=state,
             resource=resource,
+            passkeys_enabled=self._passkeys_available(config_service.settings),
         )
         return HTMLResponse(html)
+
+    async def passkey_options(
+        self,
+        db: DbSession,
+        config_service: Settings,
+        request: OAuthPasskeyOptionsRequest,
+    ) -> PasskeyAuthenticationOptionsResponse:
+        return await OAuthService(db, config_service).passkey_options(request)
 
     async def authorize_submit(
         self,
@@ -184,6 +205,8 @@ class OAuthRouter:
         password: Annotated[str, Form()] = "",
         mfa_token: Annotated[str, Form()] = "",
         code: Annotated[str, Form()] = "",
+        login_token: Annotated[str, Form()] = "",
+        passkey_response: Annotated[str, Form()] = "",
         decision: Annotated[str, Form()] = "deny",
     ) -> HTMLResponse | RedirectResponse:
         oauth = OAuthService(db, config_service)
@@ -203,6 +226,8 @@ class OAuthRouter:
                 approved=(decision == "approve"),
                 mfa_token=mfa_token or None,
                 code=code or None,
+                login_token=login_token or None,
+                passkey_response=passkey_response or None,
             )
         except AuthorizeFatalError as exc:
             self.LOG.warning("Rejected /oauth/authorize: %s", exc.detail)
@@ -263,6 +288,7 @@ class OAuthRouter:
                 scope=scope,
                 state=state or None,
                 resource=resource or None,
+                passkeys_enabled=self._passkeys_available(config_service.settings),
                 error=exc.detail,
             )
             return HTMLResponse(html, status_code=401)

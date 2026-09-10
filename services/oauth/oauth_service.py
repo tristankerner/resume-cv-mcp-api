@@ -3,6 +3,7 @@ turning the exceptions in `services.oauth.exceptions` into a response."""
 
 from __future__ import annotations
 
+import json
 from typing import Annotated
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
@@ -14,6 +15,9 @@ from persistence.user import User
 from services.auth.auth_service import AuthService
 from services.auth.mfa.challenge import MfaChallengeContext, MfaChallengeToken
 from services.auth.mfa.verifier import MfaVerifier
+from services.auth.passkeys.challenge import PasskeyContext
+from services.auth.passkeys.dtos.passkey import PasskeyAuthenticationOptionsResponse
+from services.auth.passkeys.login import PasskeyLogin
 from services.auth.scopes import ScopeResolver, Scopes
 from services.config.config_service import ConfigService, ConfigServiceModel
 from services.database.database_service import DatabaseService
@@ -23,6 +27,7 @@ from services.oauth.dtos import (
     AuthorizationServerMetadata,
     ClientRegistrationRequest,
     ClientRegistrationResponse,
+    OAuthPasskeyOptionsRequest,
     TokenResponse,
 )
 from services.oauth.exceptions import (
@@ -187,6 +192,17 @@ class OAuthService(ServiceProviderInterface):
         )
         return client, requested
 
+    async def passkey_options(
+        self, request: OAuthPasskeyOptionsRequest
+    ) -> PasskeyAuthenticationOptionsResponse:
+        """`client_id` is not validated against the client registry here: an
+        unknown one only means the challenge binds to a value no submission
+        can ever match, which is the same refusal an unknown one gets at
+        `complete_authorize` regardless."""
+        return await PasskeyLogin(self.db, self.settings).options(
+            request.username, PasskeyContext.OAUTH, binding=request.client_id
+        )
+
     async def _resolve_user(
         self,
         auth_service: AuthService,
@@ -195,9 +211,11 @@ class OAuthService(ServiceProviderInterface):
         username: str,
         password: str,
         client_id: str,
+        login_token: str | None = None,
+        passkey_response: str | None = None,
     ) -> User:
-        """The password step, or the second-factor step redeeming its
-        challenge — whichever this submission is.
+        """The passkey assertion, the password step, or the second-factor
+        step redeeming its challenge — whichever this submission is.
 
         Raises `AuthorizeMfaRequired` with `detail=None` the first time an
         enrolled account's password is accepted (render the code form), and
@@ -208,8 +226,24 @@ class OAuthService(ServiceProviderInterface):
         escapes as a plain 429 rather than a rendered page.
 
         Every challenge is bound to `client_id`: consent shown on the first
-        page is not consent to whatever a second page asked for.
+        page is not consent to whatever a second page asked for. The passkey
+        assertion carries the same binding, via `PasskeyContext.OAUTH`.
         """
+        if login_token and passkey_response:
+            try:
+                credential = json.loads(passkey_response)
+            except json.JSONDecodeError as error:
+                raise AuthorizeLoginFailed(
+                    "That passkey response was malformed. Try again."
+                ) from error
+            return await PasskeyLogin(self.db, self.settings).authenticate(
+                auth_service,
+                login_token,
+                credential,
+                PasskeyContext.OAUTH,
+                binding=client_id,
+            )
+
         verifier = MfaVerifier(self.db, self.settings)
 
         if mfa_token:
@@ -257,6 +291,8 @@ class OAuthService(ServiceProviderInterface):
         approved: bool,
         mfa_token: str | None = None,
         code: str | None = None,
+        login_token: str | None = None,
+        passkey_response: str | None = None,
     ) -> str:
         """The POST handler's whole body. Returns the redirect URL on success.
 
@@ -286,7 +322,14 @@ class OAuthService(ServiceProviderInterface):
 
         auth_service = AuthService(self.db, None, self.config_service, request)
         user = await self._resolve_user(
-            auth_service, mfa_token, code, username, password, client.client_id
+            auth_service,
+            mfa_token,
+            code,
+            username,
+            password,
+            client.client_id,
+            login_token,
+            passkey_response,
         )
 
         # Requested scopes are intersected with the user's role scopes before

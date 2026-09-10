@@ -84,6 +84,16 @@ class TokenResponse(BaseModel):
     scope: str
 
 
+class OAuthPasskeyOptionsRequest(BaseModel):
+    """`client_id` is not optional here, unlike the other two `.../passkey/
+    options` request bodies: the challenge it mints must be bound to it, or
+    consent given on one client's authorize page would redeem on another's —
+    see MfaChallengeToken.mint's docstring for the same argument."""
+
+    username: str | None = None
+    client_id: str
+
+
 # --- Admin client management -------------------------------------------
 #
 # The shapes for /oauth-clients, which is not part of the RFC 6749/7591
