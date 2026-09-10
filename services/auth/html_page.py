@@ -28,10 +28,10 @@ class HtmlPage:
   .error {{ color: #b00020; margin-top: 0.75rem; }}
 </style>
 </head>
-<body>{body}</body>
+<body>{body}{script}</body>
 </html>
 """
 
     @classmethod
-    def render(cls, *, title: str, body: str) -> str:
-        return cls._TEMPLATE.format(title=title, body=body)
+    def render(cls, *, title: str, body: str, script: str = "") -> str:
+        return cls._TEMPLATE.format(title=title, body=body, script=script)

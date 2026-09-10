@@ -6,7 +6,15 @@ import pytest
 from persistence.base import Clock
 from persistence.user import User
 from services.auth.docs_session import DocsSessionToken
-from services.config.config_service import ConfigServiceModel, Environment
+from services.auth.passkeys.challenge import (
+    PasskeyAuthenticationChallenge,
+    PasskeyContext,
+)
+from services.config.config_service import (
+    ConfigService,
+    ConfigServiceModel,
+    Environment,
+)
 from services.database.database_service import DatabaseService
 
 DOC_PATHS = ["/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"]
@@ -398,3 +406,95 @@ class TestProductionMfaLockRecheck:
         )
         assert response.status_code == 401
         assert "docs_session" not in response.headers.get("set-cookie", "")
+
+
+class TestPasskeyLoginPage:
+    """The passkey button on the docs login page, and its own guard —
+    `_passkeys_available` — for a deployment that has not allowlisted this
+    API's own origin."""
+
+    async def test_the_button_appears_when_the_docs_origin_is_allowlisted(self, client):
+        response = await client.get("/docs/login")
+        assert response.status_code == 200
+        assert 'id="passkey"' in response.text
+
+    async def test_the_button_is_absent_when_the_docs_origin_is_not_allowlisted(
+        self, client, monkeypatch
+    ):
+        # Still a valid, RP-ID-matching origin — just not the one
+        # PUBLIC_BASE_URL names, which is what _passkeys_available checks.
+        monkeypatch.setenv("WEBAUTHN_ALLOWED_ORIGINS", "http://spa.testserver")
+        ConfigService.reset()
+
+        response = await client.get("/docs/login")
+        assert response.status_code == 200
+        assert 'id="passkey"' not in response.text
+
+    async def test_the_button_is_absent_when_passkeys_are_off_entirely(
+        self, client, monkeypatch
+    ):
+        monkeypatch.setenv("WEBAUTHN_RP_ID", "")
+        monkeypatch.setenv("WEBAUTHN_ALLOWED_ORIGINS", "")
+        ConfigService.reset()
+
+        response = await client.get("/docs/login")
+        assert response.status_code == 200
+        assert 'id="passkey"' not in response.text
+
+
+class TestPasskeyDocsLogin:
+    """POST /docs/login/passkey — the fetch-and-cookie surface, not the
+    redirect `docs_login` helper uses for the password form."""
+
+    async def test_a_successful_login_sets_the_cookie_and_returns_204(
+        self, client, passkey_actor
+    ):
+        options_response = await client.post(
+            "/docs/login/passkey/options",
+            json={"username": passkey_actor.actor.username},
+        )
+        assert options_response.status_code == 200
+        body = options_response.json()
+        credential = passkey_actor.authenticator.authenticate(
+            body["options"], user_handle=passkey_actor.user_handle
+        )
+
+        response = await client.post(
+            "/docs/login/passkey",
+            json={"login_token": body["login_token"], "credential": credential},
+        )
+        assert response.status_code == 204
+        assert "docs_session" in response.cookies
+
+        docs = await client.get("/docs", headers=cookie_headers(response))
+        assert docs.status_code == 200
+
+    async def test_a_docs_context_token_is_refused_at_slash_token_slash_passkey(
+        self, client
+    ):
+        token, _expires_in = PasskeyAuthenticationChallenge.mint(
+            ConfigService.get_without_deps().settings,
+            b"irrelevant-challenge",
+            None,
+            PasskeyContext.DOCS,
+        )
+        response = await client.post(
+            "/token/passkey",
+            json={"login_token": token, "credential": {}},
+        )
+        assert response.status_code == 401
+
+    async def test_a_token_context_token_is_refused_at_slash_docs_slash_login_slash_passkey(
+        self, client
+    ):
+        token, _expires_in = PasskeyAuthenticationChallenge.mint(
+            ConfigService.get_without_deps().settings,
+            b"irrelevant-challenge",
+            None,
+            PasskeyContext.TOKEN,
+        )
+        response = await client.post(
+            "/docs/login/passkey",
+            json={"login_token": token, "credential": {}},
+        )
+        assert response.status_code == 401

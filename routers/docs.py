@@ -17,7 +17,7 @@ one surface in the service that takes a cookie at all.
 
 from typing import Annotated, ClassVar
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, Form, Request, Response
 from fastapi.openapi.docs import (
     get_redoc_html,
     get_swagger_ui_html,
@@ -32,6 +32,14 @@ from services.auth.docs_login_page import DocsLoginPageRenderer
 from services.auth.docs_session import DocsAccessGuard, DocsSessionToken
 from services.auth.mfa.challenge import MfaChallengeContext, MfaChallengeToken
 from services.auth.mfa.verifier import MfaVerifier
+from services.auth.passkeys.challenge import PasskeyContext
+from services.auth.passkeys.dtos.passkey import (
+    PasskeyAuthenticationOptionsRequest,
+    PasskeyAuthenticationOptionsResponse,
+    PasskeyAuthenticationRequest,
+)
+from services.auth.passkeys.login import PasskeyLogin
+from services.auth.passkeys.relying_party import RelyingParty
 from services.config.config_service import ConfigService, ConfigServiceModel
 from services.database.database_service import DatabaseService
 
@@ -66,6 +74,8 @@ class DocsRouter:
         self.router.get(self.REDOC_URL)(self.redoc)
         self.router.get(self.LOGIN_URL, response_model=None)(self.login_page)
         self.router.post(self.LOGIN_URL, response_model=None)(self.login_submit)
+        self.router.post("/docs/login/passkey/options")(self.passkey_options)
+        self.router.post("/docs/login/passkey", status_code=204)(self.passkey_login)
         self.router.post("/docs/logout")(self.logout)
 
     async def openapi_schema(self, request: Request, _: DocsAccess) -> JSONResponse:
@@ -112,7 +122,10 @@ class DocsRouter:
             if user is not None:
                 return RedirectResponse(next_path, status_code=303)
         return HTMLResponse(
-            DocsLoginPageRenderer.render_login_form(next_path=next_path)
+            DocsLoginPageRenderer.render_login_form(
+                next_path=next_path,
+                passkeys_enabled=self._passkeys_available(config_service.settings),
+            )
         )
 
     async def login_submit(
@@ -133,6 +146,7 @@ class DocsRouter:
         settings = config_service.settings
         auth_service = AuthService(db, None, config_service, request)
         verifier = MfaVerifier(db, settings)
+        passkeys_enabled = self._passkeys_available(settings)
 
         if mfa_token:
             user = await verifier.user_from_challenge(
@@ -141,6 +155,7 @@ class DocsRouter:
             if user is None:
                 html = DocsLoginPageRenderer.render_login_form(
                     next_path=next_path,
+                    passkeys_enabled=passkeys_enabled,
                     error="The login attempt expired. Start again.",
                 )
                 return HTMLResponse(html, status_code=401)
@@ -164,7 +179,9 @@ class DocsRouter:
         user = await auth_service.authenticate_user(username, password)
         if not user:
             html = DocsLoginPageRenderer.render_login_form(
-                next_path=next_path, error="Incorrect username or password."
+                next_path=next_path,
+                passkeys_enabled=passkeys_enabled,
+                error="Incorrect username or password.",
             )
             return HTMLResponse(html, status_code=401)
 
@@ -179,6 +196,37 @@ class DocsRouter:
 
         return self._issue_cookie(user, next_path, settings)
 
+    async def passkey_options(
+        self,
+        db: DbSession,
+        config_service: Settings,
+        request: PasskeyAuthenticationOptionsRequest,
+    ) -> PasskeyAuthenticationOptionsResponse:
+        return await PasskeyLogin(db, config_service.settings).options(
+            request.username, PasskeyContext.DOCS
+        )
+
+    async def passkey_login(
+        self,
+        db: DbSession,
+        config_service: Settings,
+        request: Request,
+        body: PasskeyAuthenticationRequest,
+    ) -> Response:
+        """204, not the 303 `login_submit` returns: a same-origin `fetch`
+        cannot follow a redirect into a navigation, so the page's own JS does
+        `location.assign(next)` once it sees this succeed — `Set-Cookie` on
+        the `fetch` response is honoured, and the subsequent navigation
+        carries the session."""
+        settings = config_service.settings
+        auth_service = AuthService(db, None, config_service, request)
+        user = await PasskeyLogin(db, settings).authenticate(
+            auth_service, body.login_token, body.credential, PasskeyContext.DOCS
+        )
+        response = Response(status_code=204)
+        self._set_session_cookie(response, user, settings)
+        return response
+
     async def logout(self) -> RedirectResponse:
         response = RedirectResponse(self.LOGIN_URL, status_code=303)
         response.delete_cookie(DocsSessionToken.COOKIE_NAME, path="/")
@@ -189,11 +237,26 @@ class DocsRouter:
         return next_path if next_path in cls.NEXT_ALLOWLIST else cls.DOCS_URL
 
     @staticmethod
-    def _issue_cookie(
-        user: User, next_path: str, settings: ConfigServiceModel
-    ) -> RedirectResponse:
-        token, expires_in = DocsSessionToken.mint(settings, user)
-        response = RedirectResponse(next_path, status_code=303)
+    def _passkeys_available(settings: ConfigServiceModel) -> bool:
+        """Passkeys are on *and* this page's own origin is one a ceremony may
+        come from. A deployment that allowlists only the SPA's origin gets no
+        button here, rather than one that fails at the last step."""
+        return RelyingParty(settings).serves_origin(settings.public_base_url_str)
+
+    @staticmethod
+    def _session_cookie_kwargs(
+        user: User, settings: ConfigServiceModel
+    ) -> tuple[str, int]:
+        """The token and its `max_age`, minted fresh — the two pieces that
+        vary between an issued cookie. The rest of `set_cookie`'s arguments
+        are the same at every call site and stay inline there."""
+        return DocsSessionToken.mint(settings, user)
+
+    @classmethod
+    def _set_session_cookie(
+        cls, response: Response, user: User, settings: ConfigServiceModel
+    ) -> None:
+        token, expires_in = cls._session_cookie_kwargs(user, settings)
         # Path=/ rather than /docs: /openapi.json and /redoc are outside a
         # /docs prefix. Secure only in production — a local run over plain HTTP
         # would never see the cookie come back.
@@ -206,4 +269,11 @@ class DocsRouter:
             path="/",
             secure=settings.is_production,
         )
+
+    @classmethod
+    def _issue_cookie(
+        cls, user: User, next_path: str, settings: ConfigServiceModel
+    ) -> RedirectResponse:
+        response = RedirectResponse(next_path, status_code=303)
+        cls._set_session_cookie(response, user, settings)
         return response
