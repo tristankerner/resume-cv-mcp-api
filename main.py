@@ -22,9 +22,11 @@ from alembic import command
 from middleware.client_cors import ClientCorsMiddleware
 from middleware.public_cors import PublicCorsMiddleware
 from persistence.auth_failure import AuthFailure
+from persistence.auth_refresh_token import AuthRefreshToken
 from persistence.mfa_credential import MfaCredential
 from persistence.oauth_authorization_code import OAuthAuthorizationCode
 from persistence.oauth_refresh_token import OAuthRefreshToken
+from persistence.pending_write import PendingWrite
 from routers.api_keys import ApiKeysRouter
 from routers.applications import ApplicationsRouter
 from routers.audit import AuditRouter
@@ -124,22 +126,35 @@ class StartupTasks:
             )
 
     async def prune_oauth_grants(self) -> None:
-        """Drop authorization codes and refresh tokens past their TTL.
+        """Drop authorization codes and refresh tokens past their TTL, for
+        both the OAuth connector chain and the interactive session chain.
 
         Same startup-sweep placement as `prune_auth_failures`. A
-        revoked-but-unexpired refresh token is kept — see
+        revoked-but-unexpired refresh token is kept in both cases — see
         `OAuthRefreshToken.prune` — since presenting it again is the reuse
         signal the rotation chain depends on.
         """
         async with DatabaseService.session() as db:
             codes_removed = await OAuthAuthorizationCode.prune(db)
-            tokens_removed = await OAuthRefreshToken.prune(db)
+            oauth_tokens_removed = await OAuthRefreshToken.prune(db)
+            session_tokens_removed = await AuthRefreshToken.prune(db)
+            pending_writes_removed = await PendingWrite.prune(db)
         if codes_removed:
             self.LOG.info(
                 "Pruned %d expired OAuth authorization code(s).", codes_removed
             )
-        if tokens_removed:
-            self.LOG.info("Pruned %d expired OAuth refresh token(s).", tokens_removed)
+        if oauth_tokens_removed:
+            self.LOG.info(
+                "Pruned %d expired OAuth refresh token(s).", oauth_tokens_removed
+            )
+        if session_tokens_removed:
+            self.LOG.info(
+                "Pruned %d expired session refresh token(s).", session_tokens_removed
+            )
+        if pending_writes_removed:
+            self.LOG.info(
+                "Pruned %d expired pending MCP write(s).", pending_writes_removed
+            )
 
     async def prune_auth_failures(self) -> None:
         """Drop login-failure rows that no longer decide anything.

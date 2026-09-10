@@ -2,7 +2,7 @@
   "name": "resume.skill.example.json",
   "revision_note": "Initial example tailoring skill.",
   "data": {
-    "schema_version": "2.2.0",
+    "schema_version": "2.3.0",
     "generated_at": "2026-09-07",
     "name": "tailor-resume",
     "title": "Tailor a resume to a job posting",
@@ -91,6 +91,17 @@
           "Record it exactly as written; matching ignores case and separators, so there is no need to tidy it up.",
           "Leave it unset rather than inventing one when the posting does not give one."
         ]
+      },
+      {
+        "name": "write_confirmation",
+        "why": "Every MCP write is a two-phase preview/confirm token; nothing is written to the resume or the tracking data without the user's explicit yes in this conversation.",
+        "resolve_from": null,
+        "confirm_with_user": true,
+        "prompt": "Here is exactly what I would write: {preview}. Should I go ahead?",
+        "rules": [
+          "Show the preview payload verbatim, not a summary of it.",
+          "Silence is not consent, and neither is the user having approved a different write earlier in the same run."
+        ]
       }
     ],
     "procedure": [
@@ -143,14 +154,26 @@
         "blocking": false
       },
       {
-        "id": "record-application",
-        "title": "Record the application once the documents are written",
+        "id": "offer-resume-updates",
+        "title": "Offer to record any new fact the user stated, permanently",
         "instructions": [
-          "Call record_application with the company (id if one was found, name otherwise), job title, posting url, the full job description text, the prompt text that started this run, and the document name and revision id of each of the three documents that were actually used.",
-          "Pass job_code whenever the posting or the recruiter names a requisition code. It is what ties the same job together when it arrives through two different recruiters, and it is usually the only field that does.",
-          "Set manually_modified only if the user says they edited the files after they were produced, and put what they changed in modification_note.",
-          "Never create a company or an application without having searched first in the earlier step; if a create is refused as a duplicate, use the id it returns rather than forcing a second row.",
-          "Report the application id back to the user."
+          "When the user states a fact about themselves that the resume does not contain — a skill they have used, a level that has changed, a project, a travel or logistics preference — do not silently use it for this document only. Say what you would add, and ask whether to add it permanently.",
+          "Call describe_resume_schema before proposing anything, so that what you propose is expressible. Never propose a change the operation set cannot make.",
+          "Call preview_resume_patch and show the user its `preview` verbatim. Then ask. Only call confirm_resume_patch after the user says yes in this conversation.",
+          "One confirmation covers one preview. If the user amends what should be added, preview again — do not commit the first token.",
+          "If the user says no, or does not answer, use the fact for this document and do not ask again in this run."
+        ],
+        "reads": [],
+        "blocking": false
+      },
+      {
+        "id": "offer-application-record",
+        "title": "Assemble everything that would be recorded and confirm before writing any of it",
+        "instructions": [
+          "When the tailoring is complete, assemble everything that would be saved — company, application, events, contacts, attachments — and show it to the user as one summary before writing any of it.",
+          "Call the preview_* tool for each thing that would be created. Show the previews together. The user may correct any field, or decline any part, before anything is committed.",
+          "Commit only what the user confirms, in dependency order: company, then company relationships, then contacts, then the application, then events, then attachments. If the user declines the company, everything under it is declined with it — say so rather than committing orphans.",
+          "Report every id that was created, and every item the user declined."
         ],
         "reads": [],
         "blocking": false
@@ -285,6 +308,41 @@
         "rule": "Never create a contact from a guess \u2014 a name, an email pattern, or a title inferred from the company.",
         "instead": "Only record a contact the user names, or one the posting states outright.",
         "rationale": "An invented recruiter address is both useless and a thing that could get sent to a real person."
+      },
+      {
+        "id": "never-write-without-confirmation",
+        "severity": "never",
+        "rule": "Never call a confirm_* tool without having shown the user the matching preview_* output and received an explicit yes in this conversation.",
+        "instead": "Call the matching preview_* tool, show its output verbatim, and wait for the user to say yes before calling confirm_*.",
+        "rationale": "Silence is not consent, and neither is the user having approved a different write earlier in the same run."
+      },
+      {
+        "id": "preview-is-shown-verbatim",
+        "severity": "always",
+        "rule": "Show the preview payload as the tool returned it. Do not summarise away a field, and do not add a field it did not contain.",
+        "instead": null,
+        "rationale": "A summarised preview is a preview of what I chose to mention, not of what will be written."
+      },
+      {
+        "id": "one-token-one-confirmation",
+        "severity": "always",
+        "rule": "A confirm_token authorizes exactly the preview that produced it. If anything changes, preview again.",
+        "instead": "Call the preview_* tool again rather than reusing an earlier confirm_token for a changed request.",
+        "rationale": "The token is bound to the exact payload the preview resolved; reusing it for something else would write something the user never saw."
+      },
+      {
+        "id": "resume-writes-are-additive",
+        "severity": "never",
+        "rule": "Never propose a resume change that removes or rewrites existing content.",
+        "instead": "The write-back operations can only add or extend the document \u2014 tell the user so rather than implying a rename, delete, or rewrite is possible.",
+        "rationale": "The tools cannot do it; do not tell the user they can."
+      },
+      {
+        "id": "bounded-employer-research",
+        "severity": "prefer",
+        "rule": "When previewing a new company, a web search may be used to fill in factual, verifiable identifiers the user has not supplied \u2014 the primary company URL above all.",
+        "instead": "Do not research the company's tech stack, its corporate relationships, its funding, or its reputation. Those belong in the record only when the user or the posting states them.",
+        "rationale": "A URL is a verifiable fact; an inferred stack or reputation is a guess wearing the record's authority."
       }
     ],
     "escalations": [
@@ -301,6 +359,21 @@
       {
         "condition": "An application with the same job code already exists.",
         "action": "Say which application it is, and who it came through, before recording another. The same requisition reaching the user twice is worth knowing about rather than filing twice.",
+        "blocking": true
+      },
+      {
+        "condition": "A confirm_* call is refused because the token expired.",
+        "action": "Say so, re-run the preview, and ask again. Never treat an expired token as permission already granted.",
+        "blocking": true
+      },
+      {
+        "condition": "The user's stated fact cannot be expressed by any operation in describe_resume_schema.",
+        "action": "Say what cannot be recorded and why, and offer to note it for this document only. Do not approximate it into a different field.",
+        "blocking": false
+      },
+      {
+        "condition": "A preview shows a near-match the user did not mention — an existing company, contact, or application.",
+        "action": "Show the match and ask which to use before committing anything.",
         "blocking": true
       }
     ],
@@ -345,7 +418,8 @@
     "report_back": [
       "Which highlights were selected and why.",
       "Any qualification the posting asked for that the resume could not support.",
-      "The application id that was recorded, and the company id it was recorded against."
+      "The application id that was recorded, and the company id it was recorded against.",
+      "What was written, what was declined, and anything offered that the user did not answer."
     ]
   }
 }

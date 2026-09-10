@@ -218,10 +218,11 @@ each one, with résumé/metadata/skill document references, attachments, and an
 audit trail of every change. `applications:*`, `companies:*` and `contacts:*`
 scopes, per entity, plus `audit:read`.
 
-The `record_application` MCP tool is meant to run at the end of a tailoring
-session: search for the company first, tailor the résumé, then log the
-application with the documents actually used — see
-`examples/resume.skill.example.json`'s `record-application` step.
+The `preview_record_application`/`confirm_record_application` MCP tool pair
+is meant to run at the end of a tailoring session: search for the company
+first, tailor the résumé, then preview and confirm the application with the
+documents actually used — see `examples/resume.skill.example.json`'s
+`offer-application-record` step.
 
 **→ [API Reference](docs/api.md#application-tracking)** — every endpoint;
 **→ [Security](docs/security.md#audit-log)** — what the audit log records.
@@ -249,7 +250,7 @@ troubleshooting.
 
 | Credential | Lifetime | For |
 | --- | --- | --- |
-| **JWT** (`POST /token`) | short | People, and anything managing credentials |
+| **JWT** (`POST /token`) | short, refreshable via `POST /token/refresh` | People, and anything managing credentials |
 | **API key** (`rsm_…`) | long | Machine clients, scoped below their owner |
 | **OAuth 2.1** | refreshable | MCP connectors that speak it |
 

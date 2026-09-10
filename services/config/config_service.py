@@ -52,6 +52,12 @@ class ConfigServiceModel(BaseSettings):
     auth_access_token_expire_minutes: int = Field(
         alias="AUTH_ACCESS_TOKEN_EXPIRE_MINUTES"
     )
+    # How long a session refresh token (`/token/refresh`) stays redeemable.
+    # Shorter than OAuthRefreshToken's fixed 30 days by default — see
+    # AuthRefreshToken.TTL for why an interactive session gets its own value.
+    auth_refresh_token_expire_days: int = Field(
+        default=14, ge=1, alias="AUTH_REFRESH_TOKEN_EXPIRE_DAYS"
+    )
 
     # --- Login throttling -------------------------------------------------
     # Off is for the test suite, not for a deployment.

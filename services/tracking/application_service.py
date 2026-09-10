@@ -428,13 +428,12 @@ class ApplicationService(TrackingServiceBase):
             application, company_name, events, attachments, related
         )
 
-    async def create_application(
+    async def resolve_application(
         self, request: CreateApplicationRequest
-    ) -> ApplicationSummary:
-        self._require(Scopes.APPLICATIONS_WRITE)
-        await self._begin_write()
-        owner = self._owner()
-
+    ) -> list[DuplicateCandidate]:
+        """The read-only half of `create_application`'s checks: company and
+        document references, then job-code and fuzzy-title duplicate
+        detection - without writing anything."""
         await self._validate_company(request.company_id)
         await self._validate_document_refs(
             {
@@ -449,16 +448,34 @@ class ApplicationService(TrackingServiceBase):
             },
         )
 
-        if not request.confirm_create_duplicate:
-            # Job code first: it is an exact identifier, so when it matches
-            # there is no point reporting a fuzzy title match as well.
-            candidates = await self._job_code_candidates(request.job_code, None)
-            if candidates:
-                self._refuse_if_duplicate(candidates, by_job_code=True)
-            candidates = await self._candidates(
-                request.company_id, request.job_title, request.date_submitted, None
-            )
-            self._refuse_if_duplicate(candidates)
+        if request.confirm_create_duplicate:
+            return []
+        # Job code first: it is an exact identifier, so when it matches
+        # there is no point reporting a fuzzy title match as well.
+        candidates = await self._job_code_candidates(request.job_code, None)
+        if candidates:
+            self._refuse_if_duplicate(candidates, by_job_code=True)
+        candidates = await self._candidates(
+            request.company_id, request.job_title, request.date_submitted, None
+        )
+        self._refuse_if_duplicate(candidates)
+        return candidates
+
+    async def preview_application_creation(
+        self, request: CreateApplicationRequest
+    ) -> list[DuplicateCandidate]:
+        self._require(Scopes.APPLICATIONS_READ)
+        self._require(Scopes.APPLICATIONS_WRITE)
+        return await self.resolve_application(request)
+
+    async def create_application(
+        self, request: CreateApplicationRequest
+    ) -> ApplicationSummary:
+        self._require(Scopes.APPLICATIONS_WRITE)
+        await self._begin_write()
+        owner = self._owner()
+
+        await self.resolve_application(request)
 
         application = Application(
             user_id=owner,
@@ -612,20 +629,36 @@ class ApplicationService(TrackingServiceBase):
             application_status_changed_at=application.status_changed_at,
         )
 
+    async def resolve_event(
+        self, application_id: int, request: CreateApplicationEventRequest
+    ) -> Application:
+        """The read-only half of `create_event`'s checks: the application
+        reference, the content requirement, and the contact reference -
+        without writing anything. Returns the application the event would be
+        recorded against."""
+        application = await self._require_application(application_id)
+        if not any((request.status, request.description, request.rating)):
+            raise TrackingErrors.event_needs_content()
+        if request.contact_id is not None:
+            contact = await Contact.get(self.db, self._owner(), request.contact_id)
+            if contact is None:
+                raise TrackingErrors.invalid_reference("contact_id", "contact")
+        return application
+
+    async def preview_event_creation(
+        self, application_id: int, request: CreateApplicationEventRequest
+    ) -> Application:
+        self._require(Scopes.APPLICATIONS_READ)
+        self._require(Scopes.APPLICATIONS_WRITE)
+        return await self.resolve_event(application_id, request)
+
     async def create_event(
         self, application_id: int, request: CreateApplicationEventRequest
     ) -> ApplicationEventWriteResponse:
         self._require(Scopes.APPLICATIONS_WRITE)
         await self._begin_write()
         owner = self._owner()
-        application = await self._require_application(application_id)
-
-        if not any((request.status, request.description, request.rating)):
-            raise TrackingErrors.event_needs_content()
-        if request.contact_id is not None:
-            contact = await Contact.get(self.db, owner, request.contact_id)
-            if contact is None:
-                raise TrackingErrors.invalid_reference("contact_id", "contact")
+        application = await self.resolve_event(application_id, request)
 
         event = ApplicationEvent(
             user_id=owner,

@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 from fastmcp.exceptions import ToolError
 from fastmcp.server.auth import AuthCheck
@@ -7,8 +8,10 @@ from fastmcp.tools import ToolResult
 from fastmcp.utilities.authorization import AuthContext
 from mcp.types import TextContent
 
-from services.auth.principal import CredentialKind
+from services.auth.principal import CredentialKind, Principal
 from services.auth.scopes import ScopeResolver, Scopes
+from services.confirmation.confirmation_service import ConfirmationService
+from services.database.database_service import DatabaseService
 
 
 class McpToolBase:
@@ -75,6 +78,54 @@ class McpToolBase:
             )
 
         return check
+
+    @classmethod
+    def principal(cls) -> Principal:
+        """The calling credential, as the services expect it.
+
+        `credential` is read from the token rather than assumed: these tools
+        write, the audit log records how a change was made, and OAuth grants
+        can now carry write scopes — so hardcoding a fixed kind here would
+        file every connector's writes under the wrong credential kind.
+        Shared by every MCP tool class that constructs a service directly
+        (`TrackingTools`, `DocumentPatchTools`), so the two cannot drift on
+        what "the caller" means.
+        """
+        return Principal(
+            user_id=cls.current_user_id(),
+            username="mcp",
+            scopes=cls.current_scopes(),
+            credential=cls.current_credential(),
+        )
+
+    @classmethod
+    async def issue_preview(
+        cls, tool_name: str, payload: dict[str, Any], preview: dict[str, Any]
+    ) -> dict:
+        """The shared shape every `preview_*` tool returns: `{"preview":
+        ..., "confirm_token": ..., "expires_in": ...}`. See
+        `ConfirmationService.issue` — `payload` is what the matching
+        `confirm_*` call will replay, not anything the model can override
+        later."""
+        async with DatabaseService.session() as db:
+            result = await ConfirmationService(db, cls.current_user_id()).issue(
+                tool_name, payload, preview
+            )
+        return {
+            "preview": result.preview,
+            "confirm_token": result.confirm_token,
+            "expires_in": result.expires_in,
+        }
+
+    @classmethod
+    async def redeem_confirmation(cls, tool_name: str, confirm_token: str) -> dict:
+        """The frozen payload a matching `preview_*` call issued
+        `confirm_token` for, or a `ToolError` refusal — see
+        `ConfirmationService.redeem`."""
+        async with DatabaseService.session() as db:
+            return await ConfirmationService(db, cls.current_user_id()).redeem(
+                confirm_token, tool_name
+            )
 
     @staticmethod
     def as_result(payload: dict) -> ToolResult:

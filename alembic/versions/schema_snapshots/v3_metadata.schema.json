@@ -1,0 +1,465 @@
+{
+  "$defs": {
+    "DisclosurePolicy": {
+      "additionalProperties": false,
+      "description": "Which parts of the private payload must never reach a published surface.",
+      "properties": {
+        "never_publish": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Never Publish",
+          "type": "array"
+        },
+        "rationale": {
+          "title": "Rationale",
+          "type": "string"
+        },
+        "rules": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Rules",
+          "type": "array"
+        }
+      },
+      "required": [
+        "never_publish",
+        "rationale"
+      ],
+      "title": "DisclosurePolicy",
+      "type": "object"
+    },
+    "FieldGuide": {
+      "additionalProperties": false,
+      "description": "What one field of the resume payload means and how it may be used.",
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "use": {
+          "enum": [
+            "resume-ready",
+            "compress",
+            "internal",
+            "identifier"
+          ],
+          "title": "Use",
+          "type": "string"
+        },
+        "visibility": {
+          "enum": [
+            "public",
+            "private"
+          ],
+          "title": "Visibility",
+          "type": "string"
+        },
+        "required": {
+          "default": true,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "format": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Format"
+        },
+        "rules": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Rules",
+          "type": "array"
+        },
+        "example": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Example"
+        }
+      },
+      "required": [
+        "path",
+        "type",
+        "description",
+        "use",
+        "visibility"
+      ],
+      "title": "FieldGuide",
+      "type": "object"
+    },
+    "FigurePolicy": {
+      "additionalProperties": false,
+      "description": "How the quantified outcomes under each highlight may be used.",
+      "properties": {
+        "figure_path": {
+          "title": "Figure Path",
+          "type": "string"
+        },
+        "amount_path": {
+          "title": "Amount Path",
+          "type": "string"
+        },
+        "basis_path": {
+          "title": "Basis Path",
+          "type": "string"
+        },
+        "already_in_prose": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Already In Prose",
+          "type": "array"
+        },
+        "rules": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Rules",
+          "type": "array"
+        }
+      },
+      "required": [
+        "figure_path",
+        "amount_path",
+        "basis_path"
+      ],
+      "title": "FigurePolicy",
+      "type": "object"
+    },
+    "JoinRule": {
+      "additionalProperties": false,
+      "description": "How two parts of the payload line up, and what a mismatch means.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "left": {
+          "title": "Left",
+          "type": "string"
+        },
+        "right": {
+          "title": "Right",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "on_unmatched_left": {
+          "title": "On Unmatched Left",
+          "type": "string"
+        },
+        "on_unmatched_right": {
+          "title": "On Unmatched Right",
+          "type": "string"
+        },
+        "failure_mode": {
+          "title": "Failure Mode",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "key",
+        "left",
+        "right",
+        "description",
+        "on_unmatched_left",
+        "on_unmatched_right",
+        "failure_mode"
+      ],
+      "title": "JoinRule",
+      "type": "object"
+    },
+    "RoleFamilyGuide": {
+      "additionalProperties": false,
+      "description": "Which highlights to lead with, given what a posting is actually about.\n\nA starting point rather than a lookup table; a posting that spans two families\nleads with whichever one it spends more words on.",
+      "properties": {
+        "role_family": {
+          "title": "Role Family",
+          "type": "string"
+        },
+        "posting_signals": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Posting Signals",
+          "type": "array"
+        },
+        "lead_highlight_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Lead Highlight Ids",
+          "type": "array"
+        },
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        }
+      },
+      "required": [
+        "role_family",
+        "posting_signals",
+        "lead_highlight_ids"
+      ],
+      "title": "RoleFamilyGuide",
+      "type": "object"
+    },
+    "SectionGuide": {
+      "additionalProperties": false,
+      "description": "A top-level section of the resume, and the fields beneath it.",
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "purpose": {
+          "title": "Purpose",
+          "type": "string"
+        },
+        "ordering": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Ordering"
+        },
+        "selection": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Selection",
+          "type": "array"
+        },
+        "fields": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/FieldGuide"
+          },
+          "title": "Fields",
+          "type": "array"
+        }
+      },
+      "required": [
+        "path",
+        "title",
+        "description",
+        "purpose"
+      ],
+      "title": "SectionGuide",
+      "type": "object"
+    },
+    "Vocabulary": {
+      "additionalProperties": false,
+      "description": "The closed set of values a constrained field accepts.",
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "terms": {
+          "items": {
+            "$ref": "#/$defs/VocabularyTerm"
+          },
+          "title": "Terms",
+          "type": "array"
+        }
+      },
+      "required": [
+        "path",
+        "terms"
+      ],
+      "title": "Vocabulary",
+      "type": "object"
+    },
+    "VocabularyTerm": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "title": "Value",
+          "type": "string"
+        },
+        "meaning": {
+          "title": "Meaning",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "meaning"
+      ],
+      "title": "VocabularyTerm",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Field-level documentation for ResumePrivate, shipped to Claude over MCP.\n\nRead `readme` first: it orients the rest. Everything here describes the resume\npayload; it does not restate the content, and none of it belongs in a finished\ndocument unless a FieldGuide marks the source field resume-ready.",
+  "properties": {
+    "schema_version": {
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "generated_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Generated At"
+    },
+    "describes": {
+      "default": "ResumePrivate",
+      "title": "Describes",
+      "type": "string"
+    },
+    "readme": {
+      "title": "Readme",
+      "type": "string"
+    },
+    "public_feed_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Public Feed Url"
+    },
+    "schema_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Schema Url"
+    },
+    "disclosure": {
+      "$ref": "#/$defs/DisclosurePolicy"
+    },
+    "joins": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/JoinRule"
+      },
+      "title": "Joins",
+      "type": "array"
+    },
+    "sections": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/SectionGuide"
+      },
+      "title": "Sections",
+      "type": "array"
+    },
+    "vocabularies": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/Vocabulary"
+      },
+      "title": "Vocabularies",
+      "type": "array"
+    },
+    "figures": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FigurePolicy"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "role_families": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/RoleFamilyGuide"
+      },
+      "title": "Role Families",
+      "type": "array"
+    },
+    "cautions": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Cautions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "readme",
+    "disclosure"
+  ],
+  "title": "ResumeMetadata",
+  "type": "object"
+}

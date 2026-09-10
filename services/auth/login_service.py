@@ -10,6 +10,7 @@ from services.auth.dtos.mfa import MfaRequiredResponse
 from services.auth.exceptions import AuthErrors
 from services.auth.mfa.challenge import MfaChallengeContext, MfaChallengeToken
 from services.auth.mfa.verifier import MfaVerifier
+from services.auth.refresh_tokens import RefreshTokenIssuer
 from services.auth.token_data import Token
 from services.config.config_service import ConfigService
 from services.database.database_service import DatabaseService
@@ -41,7 +42,7 @@ class LoginService(ServiceProviderInterface):
         verifier = MfaVerifier(self.db, self.settings)
         kinds = await verifier.required_kinds(user)
         if not kinds:
-            return self._issue(user)
+            return await self._issue(user)
 
         token, expires_in = MfaChallengeToken.mint(
             self.settings, user, MfaChallengeContext.TOKEN
@@ -62,16 +63,52 @@ class LoginService(ServiceProviderInterface):
             await self.auth_service.register_mfa_failure(user)
             raise AuthErrors.credentials()
         await self.auth_service.clear_login_failures(user)
-        return self._issue(user)
+        return await self._issue(user)
 
-    def _issue(self, user: User) -> Token:
+    async def refresh(self, refresh_token: str) -> Token:
+        """Exchange a refresh token for a new access token and a new refresh
+        token, without a password or an MFA code — the refresh token is only
+        ever handed out after both have already been satisfied for this
+        session."""
+        user, new_refresh_token = await RefreshTokenIssuer(
+            self.db, self.config_service
+        ).rotate(presented_token=refresh_token)
+        return self._issue_access_token(user, new_refresh_token)
+
+    async def logout(self, refresh_token: str) -> None:
+        """Revoke the whole session chain the presented token belongs to.
+
+        The access token already issued for this session is a stateless JWT
+        and keeps working until its own `exp` — logout only stops the session
+        from being refreshed past that point.
+        """
+        await RefreshTokenIssuer(self.db, self.config_service).logout(
+            presented_token=refresh_token
+        )
+
+    def _issue_access_token(self, user: User, refresh_token: str) -> Token:
         access_token_expires = timedelta(
             minutes=self.settings.auth_access_token_expire_minutes
         )
         access_token = self.auth_service.create_access_token(
             data={"sub": str(user.id)}, expires_delta=access_token_expires
         )
-        return Token(access_token=access_token, token_type="bearer")  # nosec B106
+        return Token(  # nosec B106
+            access_token=access_token,
+            token_type="bearer",
+            refresh_token=refresh_token,
+        )
+
+    async def _issue(self, user: User) -> Token:
+        user_agent = (
+            self.auth_service.request.headers.get("user-agent")
+            if self.auth_service.request
+            else None
+        )
+        refresh_token = await RefreshTokenIssuer(self.db, self.config_service).issue(
+            user_id=user.id, user_agent=user_agent
+        )
+        return self._issue_access_token(user, refresh_token)
 
     @staticmethod
     def get_with_deps(

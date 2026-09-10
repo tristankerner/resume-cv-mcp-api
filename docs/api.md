@@ -13,11 +13,13 @@ JWT · _login_ requires an interactive password JWT and refuses API keys.
 | --- | --- | --- | --- |
 | `POST` | `/token` | none | Password login. Form-encoded `username`, `password`. |
 | `POST` | `/token/mfa` | none | Redeem an MFA challenge. Form-encoded `mfa_token`, `code`. |
+| `POST` | `/token/refresh` | none | Exchange a refresh token for a new access token and a new refresh token. Form-encoded `refresh_token`. |
+| `POST` | `/token/logout` | none | Revoke the whole session chain a refresh token belongs to. Form-encoded `refresh_token`. `204` on success, including for an already-unknown token. |
 
 `POST /token` returns one of two shapes. Without a second factor enrolled:
 
 ```json
-{"access_token": "…", "token_type": "bearer"}
+{"access_token": "…", "token_type": "bearer", "refresh_token": "…"}
 ```
 
 With one, a challenge to redeem at `/token/mfa` — so a script that reads
@@ -27,8 +29,19 @@ With one, a challenge to redeem at `/token/mfa` — so a script that reads
 {"mfa_required": true, "mfa_token": "…", "methods": ["totp"], "expires_in": 300}
 ```
 
-`/token/mfa` returns the first shape. Both paths issue the same kind of token,
-so either satisfies the interactive-login requirements below.
+`/token/mfa` and `/token/refresh` both return the first shape. Every login
+path issues the same kind of token, so any of them satisfies the
+interactive-login requirements below.
+
+`refresh_token` is opaque, hashed at rest, and rotated on every use: each
+`/token/refresh` call returns a new refresh token and the one presented stops
+working. It is single-use in one specific sense — presenting an
+already-rotated token is treated as reuse and revokes every token descended
+from that login, not just the one presented. It expires after
+`AUTH_REFRESH_TOKEN_EXPIRE_DAYS` (14 by default) and carries no scope of its
+own; a refresh always mints an access token scoped to the account's current
+role scopes. MFA is not re-challenged on refresh — the refresh token is only
+ever issued after MFA has already been satisfied for that login.
 
 ## Datetime format
 
@@ -61,6 +74,13 @@ are calendar days, not instants, and are never converted.
 Reads always return `{"data": [ ... ]}`. Writes return
 `{"name", "revision_id", "status"}`, where `status` is `"created"` or
 `"unchanged"`. See [Document Types](document-types.md).
+
+`POST /documents/resume` is whole-document replace and has **no MCP
+equivalent by design**. The MCP write surface (`describe_resume_schema` /
+`preview_resume_patch` / `confirm_resume_patch`, see [MCP](#mcp) below) is a
+closed set of additive patch operations instead — a model never hands over a
+whole document over MCP. `metadata` and `skill` documents have no MCP write
+path at all, HTTP-only, in either shape.
 
 ## Public feed
 
@@ -152,6 +172,30 @@ résumé. Every row is scoped to its owner; a row belonging to someone else is a
 `404`, never a `403`. List endpoints return
 `{"data": [...], "total", "limit", "offset"}`. `PATCH` is partial: an absent
 field is left alone, an explicit `null` clears it.
+
+```mermaid
+erDiagram
+    COMPANY ||--o{ APPLICATION : "applied to"
+    COMPANY ||--o{ CONTACT : employs
+    COMPANY ||--o{ COMPANY_STACK_ITEM : uses
+    COMPANY ||--o{ COMPANY_RELATIONSHIP : "from"
+    COMPANY ||--o{ COMPANY_RELATIONSHIP : "to"
+    APPLICATION ||--o{ APPLICATION_EVENT : "has"
+    APPLICATION ||--o{ APPLICATION_ATTACHMENT : "has"
+    CONTACT ||--o{ APPLICATION_EVENT : "attributed to"
+    APPLICATION }o--|| DOCUMENT : "tailored from"
+```
+
+A `COMPANY_RELATIONSHIP` is directional (`from_company_id` → `to_company_id`
+with a `type` that reads in that direction) and traversed in both directions
+when resolving a contact — `GET /applications/{id}/contact-options` walks it
+outward from the application's own company up to 3 hops either way, not just
+downstream. An `APPLICATION`'s `status` is *derived* from its
+`APPLICATION_EVENT`s rather than set directly — the most recent event's
+status by `occurred_at`, or `submitted` with none. The `DOCUMENT` edge is by
+`(name, revision_id)` rather than a surrogate key, which is why deleting a
+document has to clear those references on every application that names it
+before the document itself can go.
 
 ### Companies
 
@@ -251,19 +295,57 @@ The one place `detail` is an object rather than a string, returned by every
 | --- | --- | --- |
 | `/resume/mcp` | Streamable HTTP | API key or OAuth token |
 
+**Read tools:**
+
 | Tool | Scope | Returns |
 | --- | --- | --- |
 | `list_resume_documents` | any of the three read scopes | Your documents — id, type, public, revision, note, created_at. No content. Only types the credential may read. |
 | `retrieve_resume_data` | `resume:read`, plus `metadata:read` / `skill:read` when those ids are passed | All three documents in one call. A companion that isn't stored comes back `null`. |
-| `search_companies`, `get_company`, `create_company`, `add_company_stack_items` | `companies:read`/`write` | Look up or create a company before recording an application against it; creates are dedup-checked exactly like the HTTP routes. |
-| `search_contacts`, `create_contact` | `contacts:read`/`write` | Never invents a contact — only records one the user names or the posting states. |
-| `search_applications`, `get_application`, `add_application_event` | `applications:read`/`write` | Summary search excludes job description, prompt text and attachments; `get_application` never returns attachment content. |
-| `record_application` | `applications:write` (+ `companies:write` to create a new company) | The composite tool for the end of a tailoring run — one of `company_id`/`company_name`, plus the documents actually used. |
+| `search_companies`, `get_company`, `search_company_relationships` | `companies:read` | Look up an existing company, or its relationships, before writing anything. |
+| `search_contacts` | `contacts:read` | |
+| `search_applications`, `get_application` | `applications:read` | Summary search excludes job description, prompt text and attachments; `get_application` never returns attachment content. |
+| `describe_resume_schema` | `resume:read` | What the resume write-back operations are, their arguments, worked examples, and what is not changeable. Call before proposing any resume change. |
+
+**Write tools — every one is a `preview_*` / `confirm_*` pair:**
+
+| Tool pair | Scope (`preview_*` / `confirm_*`) | Writes |
+| --- | --- | --- |
+| `preview_resume_patch` / `confirm_resume_patch` | `resume:read`+`resume:write` / `resume:write` | A closed set of additive patch operations against the resume's latest revision — see `describe_resume_schema`. |
+| `preview_create_company` / `confirm_create_company` | `companies:read`+`companies:write` / `companies:write` | A company. Dedup-checked exactly like `POST /companies`. |
+| `preview_add_company_stack_items` / `confirm_add_company_stack_items` | `companies:read`+`companies:write` / `companies:write` | One or more stack items in a batch; each is deduplicated on its own, a near-duplicate is listed as skipped rather than failing the batch. |
+| `preview_create_company_relationship` / `confirm_create_company_relationship` | `companies:read`+`companies:write` / `companies:write` | A directed edge between two companies. Same duplicate/inverse-duplicate rule as `POST /companies/{id}/relationships`. |
+| `preview_create_contact` / `confirm_create_contact` | `contacts:read`+`contacts:write` / `contacts:write` | A contact. Never invents one — only records one the user names or the posting states. |
+| `preview_record_application` / `confirm_record_application` | `applications:read`+`applications:write` (+`companies:read`+`companies:write` to preview a new company) / `applications:write` | The composite pair for the end of a tailoring run — one of `company_id`/`company_name`, plus the documents actually used. |
+| `preview_add_application_event` / `confirm_add_application_event` | `applications:read`+`applications:write` / `applications:write` | A status change, a note, a rating, or any combination. |
+| `preview_add_attachment` / `confirm_add_attachment` | `applications:read`+`applications:write` / `applications:write` | A file on an application. Content-type, size, and magic-byte checks all run at preview time. |
 
 Every tool returns a single text content block with no `structuredContent`
-mirror, which halves the token cost of a call. A blocked duplicate create
-raises a `ToolError` listing the near-matches by id, so the model can reuse
-one or confirm deliberately.
+mirror, which halves the token cost of a call.
+
+**This is a breaking change from the previous MCP tool surface**: `create_company`,
+`create_contact`, `record_application`, `add_application_event` and
+`add_company_stack_items` used to write directly. They are now the
+`confirm_*` half of a pair; there is no deprecation window.
+
+### The preview/confirm pattern
+
+Every write tool is two calls. `preview_*` resolves the request against the
+current data — dedup checks, reference checks, document validation — and
+returns exactly what would be written plus a `confirm_token`. Nothing is
+written yet. `confirm_*` takes that token, and nothing else, and performs the
+write it authorizes.
+
+```json
+{"preview": { /* what would be written */ }, "confirm_token": "…", "expires_in": 600}
+```
+
+Three facts a client author needs: the token is **single-use** — a second
+`confirm_*` call with the same token is refused, and nothing is written the
+second time; it **expires** after `expires_in` seconds (600 by default); and
+it is **bound to the tool that issued it** — redeeming it through any other
+tool is refused. A blocked duplicate at preview time raises a `ToolError`
+listing the near-matches by id, so the model can reuse one or preview again
+with `confirm_create_duplicate: true`.
 
 ## Other
 
@@ -280,7 +362,7 @@ one or confirm deliberately.
 | `401` | No credential, a bad one, or a permanently locked account |
 | `403` | Authenticated, but the scope is missing |
 | `404` | Not found — also what a private document returns anonymously |
-| `409` | A write whose type disagrees with the stored document's type, a duplicate row, or a company delete blocked by its applications |
+| `409` | A write whose type disagrees with the stored document's type, a duplicate row, a company delete blocked by its applications, or (over MCP) a confirmation token that was already consumed |
 | `413` | An attachment's decoded content exceeds the 10 MiB cap. A body whose base64 is longer than 10 MiB could ever encode to is a `422` instead — refused at validation, before anything is decoded |
 | `415` | An attachment's content type is unsupported, or its bytes don't match the declared type |
 | `422` | Payload failed validation, a document name that can't appear in a URL path, or an invalid cross-entity reference |

@@ -364,3 +364,73 @@ class TestSentinelLeak:
         dumped = public.model_dump()
         assert "publish" not in Keys.of(dumped)
         assert "expert" not in json.dumps(dumped)  # keyword.level, a value not a key
+
+
+class TestProjectHighlights:
+    """`Project.highlights` is `list[Highlight]` (v3) and is served
+    anonymously — §5.2.3 of MCP_WRITEBACK_PLAN.md. A withheld project
+    highlight must vanish from the feed the same way a withheld work
+    highlight does, and its `story`/`metrics`/`tech` must never reach a
+    highlight that *is* published.
+    """
+
+    def _payload(self) -> dict:
+        return {
+            "basics": {"name": "Sentinel Test"},
+            "projects": [
+                {
+                    "name": "Public project",
+                    "publish": True,
+                    "highlights": [
+                        {
+                            "id": "proj-highlight-shown",
+                            "summary": "A published highlight",
+                            "publish": True,
+                        },
+                        {
+                            "id": "proj-highlight-hidden",
+                            "summary": "SENTINEL-project-highlight-summary",
+                            "publish": False,
+                            "story": "SENTINEL-project-highlight-story",
+                            "tech": ["SENTINEL-project-highlight-tech"],
+                            "metrics": [
+                                {
+                                    "figure": "SENTINEL-project-metric-figure",
+                                    "amount": "SENTINEL-project-metric-amount",
+                                    "basis": "SENTINEL-project-metric-basis",
+                                }
+                            ],
+                        },
+                    ],
+                }
+            ],
+        }
+
+    def test_a_withheld_highlight_and_its_private_fields_are_both_absent(self):
+        private = ResumePrivate.model_validate(self._payload())
+        public = PublicProjection.of(private)
+
+        assert len(public.projects) == 1
+        highlight_ids = [highlight.id for highlight in public.projects[0].highlights]
+        assert highlight_ids == ["proj-highlight-shown"]
+
+        body = json.dumps(public.model_dump())
+        assert "SENTINEL-project-highlight-summary" not in body
+        assert "SENTINEL-project-highlight-story" not in body
+        assert "SENTINEL-project-highlight-tech" not in body
+        assert "SENTINEL-project-metric-figure" not in body
+
+    def test_a_published_highlights_own_story_and_metrics_are_absent(self):
+        """The published highlight itself carries no `story`/`tech`/`metrics`
+        in the payload above, so this asserts the redaction spec strips
+        those fields from a kept highlight too - not just that a withheld
+        highlight disappears entirely."""
+        payload = self._payload()
+        payload["projects"][0]["highlights"][0]["story"] = "SENTINEL-shown-story"
+        payload["projects"][0]["highlights"][0]["tech"] = ["SENTINEL-shown-tech"]
+        private = ResumePrivate.model_validate(payload)
+        public = PublicProjection.of(private)
+
+        body = json.dumps(public.model_dump())
+        assert "SENTINEL-shown-story" not in body
+        assert "SENTINEL-shown-tech" not in body

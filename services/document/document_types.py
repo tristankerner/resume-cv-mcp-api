@@ -75,9 +75,9 @@ class DocumentTypeRegistry:
     # the catalogue directly instead of using this map, because it also needs
     # the row's `example` content, not just its version number.
     CURRENT_SCHEMA_VERSION_BY_TYPE: ClassVar[dict[DocumentType, int]] = {
-        DocumentType.RESUME: 2,
-        DocumentType.METADATA: 2,
-        DocumentType.SKILL: 2,
+        DocumentType.RESUME: 3,
+        DocumentType.METADATA: 3,
+        DocumentType.SKILL: 3,
     }
 
     @classmethod

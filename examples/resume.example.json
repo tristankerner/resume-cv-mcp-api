@@ -188,7 +188,41 @@
         "name": "example-webhook-relay",
         "url": "https://github.com/example-alex/example-webhook-relay",
         "description": "A small open-source relay for replaying webhooks during local development.",
-        "publish": false
+        "publish": false,
+        "highlights": [
+          {
+            "id": "proj-webhook-relay-1",
+            "summary": "Built a local relay that replays production webhooks against a dev server",
+            "specifics": [
+              {
+                "detail": "Implemented signature verification matching the upstream provider's HMAC scheme",
+                "tech": ["Python"]
+              }
+            ],
+            "tech": ["Python", "SQLite"],
+            "metrics": [
+              {
+                "figure": "webhook debugging time",
+                "amount": "cut from about 30 minutes to under a minute",
+                "basis": "informal team survey after adoption"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "example-status-page",
+        "url": "https://github.com/example-alex/example-status-page",
+        "description": "A minimal static status-page generator, published as a starter template.",
+        "publish": true,
+        "highlights": [
+          {
+            "id": "proj-status-page-1",
+            "summary": "Published a starter template for a static status page with zero runtime dependencies",
+            "publish": false,
+            "story": "Wrote this after maintaining a heavier status-page tool at a previous job; kept this one deliberately boring."
+          }
+        ]
       }
     ],
     "fineTuningData": {
@@ -207,7 +241,8 @@
         "salaryExpectation": "Market rate for senior backend, negotiable",
         "availability": "Two weeks notice",
         "relocation": "Not relocating; open to hybrid in Austin",
-        "onSite": "Up to two days a week"
+        "onSite": "Up to two days a week",
+        "travel": "Up to 25% for on-sites and team offsites; more for a role that is otherwise remote."
       }
     }
   }

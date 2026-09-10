@@ -27,6 +27,7 @@ from alembic.config import Config
 from alembic import command
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+SNAPSHOTS_DIR = REPO_ROOT / "alembic" / "versions" / "schema_snapshots"
 
 PHASE_1 = "cb6cd1ae433b"  # add document_schema table + v1 rows
 PHASE_2 = "51d8d252662f"  # add documents.schema_version
@@ -37,6 +38,10 @@ BEFORE_ALL = "f3106ced7318"  # head immediately before this plan's work
 
 USER_TIMEZONE = "cecabf408169"  # add users.timezone + rebuild SQLite audit triggers
 BEFORE_USER_TIMEZONE = "c0d3b18e4a52"  # head immediately before that revision
+
+V3_CATALOGUE_ROWS = "6ec9cebeb712"  # add v3 document_schema rows
+V3_RESUME_CONVERSION = "d980e94de5a2"  # convert resume documents to v3
+BEFORE_V3 = "9fd383ecfc98"  # head immediately before the v3 catalogue rows land
 
 
 @pytest.fixture
@@ -236,14 +241,18 @@ class TestPhase3V2CatalogueRows:
             (2, "skill"),
         ]
 
-        from services.document.dtos.resume_object import ResumePrivate
-
+        # Compared against the frozen v2 snapshot, not the live model: this
+        # test pins the database to a fixed historical migration point
+        # (PHASE_3), and `ResumePrivate` has since moved on to v3 — see
+        # `test_catalogue_examples.py`'s `TestResumeSchemaMatchesModel` for
+        # the assertion that stays pinned to whichever version is *current*.
         schema = json.loads(
             conn.execute(
                 "SELECT json_schema FROM document_schema WHERE version=2 AND document_type='resume'"
             ).fetchone()[0]
         )
-        assert schema == ResumePrivate.model_json_schema()
+        frozen = json.loads((SNAPSHOTS_DIR / "v2_resume.schema.json").read_text())
+        assert schema == frozen
         conn.close()
 
         command.downgrade(cfg, PHASE_2)
@@ -604,3 +613,214 @@ class TestAddUserTimezone:
         ).fetchone()[0]
         conn.close()
         assert json.loads(changed) == ["failed_login_count"]
+
+
+class TestV3CatalogueRows:
+    """`6ec9cebeb712` - the v3 `document_schema` rows, same shape as
+    `TestPhase3V2CatalogueRows` for v1 -> v2."""
+
+    def test_nine_rows_total_and_round_trips(self, migration_db):
+        connect, cfg = migration_db
+        command.upgrade(cfg, V3_CATALOGUE_ROWS)
+
+        conn = connect()
+        rows = conn.execute(
+            "SELECT version, document_type FROM document_schema "
+            "ORDER BY version, document_type"
+        ).fetchall()
+        assert rows == [
+            (1, "metadata"),
+            (1, "resume"),
+            (1, "skill"),
+            (2, "metadata"),
+            (2, "resume"),
+            (2, "skill"),
+            (3, "metadata"),
+            (3, "resume"),
+            (3, "skill"),
+        ]
+
+        from services.document.dtos.resume_object import ResumePrivate
+
+        schema = json.loads(
+            conn.execute(
+                "SELECT json_schema FROM document_schema "
+                "WHERE version=3 AND document_type='resume'"
+            ).fetchone()[0]
+        )
+        assert schema == ResumePrivate.model_json_schema()
+        conn.close()
+
+        command.downgrade(cfg, BEFORE_V3)
+        conn = connect()
+        count = conn.execute("SELECT COUNT(*) FROM document_schema").fetchone()[0]
+        assert count == 6
+        conn.close()
+
+
+FICTIONAL_V2_RESUME = {
+    "basics": {"name": "Fictional Person", "email": "fictional@example.invalid"},
+    "work": [
+        {
+            "name": "Fictional Co",
+            "highlights": [
+                {
+                    "id": "h1",
+                    "summary": "Did a fictional thing",
+                    "specifics": [],
+                    "tech": [],
+                    "metrics": [],
+                    "publish": True,
+                }
+            ],
+            "publish": True,
+        }
+    ],
+    "projects": [
+        {
+            "name": "Fictional Relay",
+            "highlights": ["Built a thing", "  ", "Shipped another thing"],
+            "publish": True,
+        },
+        {
+            # Collides with the slug "Fictional Relay" would generate for its
+            # first highlight (proj-fictional-relay-1) once normalized, to
+            # exercise the id-collision suffix.
+            "name": "Fictional  Relay",
+            "highlights": ["Did a third thing"],
+            "publish": True,
+        },
+    ],
+}
+
+
+class TestV3ResumeConversion:
+    """`d980e94de5a2` - converts `projects[].highlights[]` from strings to
+    objects, same shape as `TestPhase4ResumeConversion` for v1 -> v2."""
+
+    def test_converts_audits_and_downgrades(self, migration_db):
+        connect, cfg = migration_db
+        command.upgrade(cfg, V3_CATALOGUE_ROWS)
+        conn = connect()
+        owner = _insert_user(conn)
+        _insert_document(
+            conn,
+            created_by=owner,
+            name="resume.json",
+            revision_id=1,
+            doc_type="resume",
+            data=FICTIONAL_V2_RESUME,
+            schema_version=2,
+            public=True,
+        )
+        conn.close()
+
+        command.upgrade(cfg, V3_RESUME_CONVERSION)
+        conn = connect()
+        rows = conn.execute(
+            "SELECT revision_id, schema_version, data FROM documents "
+            "WHERE name='resume.json' ORDER BY revision_id"
+        ).fetchall()
+        assert [r[0:2] for r in rows] == [(1, 2), (2, 3)]
+        converted = json.loads(rows[1][2])
+
+        first_project_highlights = converted["projects"][0]["highlights"]
+        # The empty-string highlight was dropped, not kept as an empty bullet.
+        assert len(first_project_highlights) == 2
+        assert first_project_highlights[0]["summary"] == "Built a thing"
+        assert first_project_highlights[0]["id"] == "proj-fictional-relay-1"
+        assert first_project_highlights[0]["publish"] is True
+        assert first_project_highlights[1]["summary"] == "Shipped another thing"
+        # Index 2 in the original array (the dropped empty string at index 1
+        # keeps its slot in the index-derived slug) rather than a renumbering
+        # of the survivors.
+        assert first_project_highlights[1]["id"] == "proj-fictional-relay-3"
+
+        # The second project's slug collides with the first project's and is
+        # suffixed rather than silently overwriting it.
+        second_project_highlight = converted["projects"][1]["highlights"][0]
+        assert second_project_highlight["id"] == "proj-fictional-relay-1-2"
+
+        # The work highlight, already object-shaped, is untouched.
+        assert converted["work"][0]["highlights"][0]["id"] == "h1"
+        conn.close()
+
+        command.downgrade(cfg, V3_CATALOGUE_ROWS)
+        conn = connect()
+        remaining = conn.execute(
+            "SELECT revision_id FROM documents WHERE name='resume.json'"
+        ).fetchall()
+        assert remaining == [(1,)]
+        conn.close()
+
+    def test_already_object_shaped_projects_are_skipped(self, migration_db):
+        connect, cfg = migration_db
+        command.upgrade(cfg, V3_CATALOGUE_ROWS)
+        conn = connect()
+        owner = _insert_user(conn)
+        already_v3 = {
+            "basics": {"name": "Fictional Person"},
+            "projects": [
+                {
+                    "name": "Already Converted",
+                    "highlights": [
+                        {
+                            "id": "proj-1",
+                            "summary": "Already an object",
+                            "publish": True,
+                        }
+                    ],
+                    "publish": True,
+                }
+            ],
+        }
+        _insert_document(
+            conn,
+            created_by=owner,
+            name="resume.json",
+            revision_id=1,
+            doc_type="resume",
+            data=already_v3,
+            schema_version=3,
+        )
+        conn.close()
+
+        command.upgrade(cfg, V3_RESUME_CONVERSION)
+        conn = connect()
+        rows = conn.execute(
+            "SELECT revision_id FROM documents WHERE name='resume.json'"
+        ).fetchall()
+        assert rows == [(1,)]
+        conn.close()
+
+    def test_downgrade_refuses_above_a_newer_revision(self, migration_db):
+        connect, cfg = migration_db
+        command.upgrade(cfg, V3_CATALOGUE_ROWS)
+        conn = connect()
+        owner = _insert_user(conn)
+        _insert_document(
+            conn,
+            created_by=owner,
+            name="resume.json",
+            revision_id=1,
+            doc_type="resume",
+            data=FICTIONAL_V2_RESUME,
+            schema_version=2,
+        )
+        conn.close()
+        command.upgrade(cfg, V3_RESUME_CONVERSION)
+
+        conn = connect()
+        _insert_document(
+            conn,
+            created_by=owner,
+            name="resume.json",
+            revision_id=3,
+            doc_type="resume",
+            data={"basics": {"name": "Edited later"}},
+            schema_version=3,
+        )
+        conn.close()
+
+        with pytest.raises(Exception, match="newer revision"):
+            command.downgrade(cfg, V3_CATALOGUE_ROWS)

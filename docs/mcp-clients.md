@@ -73,23 +73,29 @@ rather than a refusal.
 
 ### Application tracking tools
 
-`search_companies`, `create_company`, `add_company_stack_items`,
-`search_contacts`, `create_contact`, `search_applications`,
-`get_application`, `record_application` and `add_application_event` need
+`search_companies`, `preview_create_company`/`confirm_create_company`,
+`preview_add_company_stack_items`/`confirm_add_company_stack_items`,
+`search_contacts`, `preview_create_contact`/`confirm_create_contact`,
+`search_applications`, `get_application`,
+`preview_record_application`/`confirm_record_application`, and
+`preview_add_application_event`/`confirm_add_application_event` need
 `applications:read`/`write` and `companies:read`/`write` (plus
-`contacts:read`/`write` if the client records contacts). Add them to the same
-key or OAuth grant as the document scopes:
+`contacts:read`/`write` if the client records contacts) — every `preview_*`
+needs **both** the read and write scope for the type it previews, since it
+reads existing rows to resolve duplicates as well as writing. Add them to the
+same key or OAuth grant as the document scopes:
 
 ```bash
 curl -s -X POST https://mcp.example.com/api-keys -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"name":"mcp-client","scopes":["resume:read","metadata:read","skill:read","applications:read","applications:write","companies:read","companies:write","contacts:read","contacts:write"]}' | jq -r .key
 ```
 
-`record_application` takes an optional `job_code`, and `search_applications`
-filters on one. Passing it is worth the trouble: it is what identifies the
-same requisition arriving through two different recruiters, and matching folds
-away case and separators, so a code the client records verbatim still matches
-one spelled differently elsewhere. A code already on file is refused as a
-duplicate, with the existing application's id in the error.
+`preview_record_application` takes an optional `job_code`, and
+`search_applications` filters on one. Passing it is worth the trouble: it is
+what identifies the same requisition arriving through two different
+recruiters, and matching folds away case and separators, so a code the client
+records verbatim still matches one spelled differently elsewhere. A code
+already on file is refused as a duplicate, with the existing application's id
+in the error, at preview time.
 
 Tracking `*:delete`, `audit:read`, every document write scope and
 `users:admin` are never issuable over OAuth — see
@@ -108,6 +114,84 @@ curl -sS -X POST https://mcp.example.com/resume/mcp -H "Authorization: Bearer $M
 
 A JSON-RPC result means the server and key are good. If this fails, no client
 config will help.
+
+## Worked example: a resume write
+
+The preview/commit dance isn't guessable from the tool list, so here it is as
+raw JSON-RPC, credential and formatting aside — a real client wraps each of
+these in a `tools/call` request the way `initialize` above does.
+
+**1. Check what's expressible**, before proposing anything:
+
+```json
+{"method": "tools/call", "params": {"name": "describe_resume_schema", "arguments": {}}}
+```
+
+```json
+{
+  "operations": [
+    {
+      "op": "append_narrative",
+      "arguments": {"field": "…", "text": "str — appended, never replaces the existing value"},
+      "example": {"op": "append_narrative", "field": "looking_for", "text": "Open to platform roles, not just backend."}
+    }
+  ],
+  "vocabularies": {"skill_level": ["expert", "familiar", "working"]},
+  "not_changeable": "…"
+}
+```
+
+**2. Preview** the change against the caller's own latest revision. Nothing is
+written yet:
+
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "preview_resume_patch",
+    "arguments": {
+      "document_name": "resume.json",
+      "ops": [{"op": "append_narrative", "field": "looking_for", "text": "Open to platform roles, not just backend."}]
+    }
+  }
+}
+```
+
+```json
+{
+  "preview": {
+    "document_name": "resume.json",
+    "touched": [
+      {
+        "path": "fineTuningData.narrative.looking_for",
+        "before": null,
+        "after": "Open to platform roles, not just backend."
+      }
+    ]
+  },
+  "confirm_token": "kx7f…",
+  "expires_in": 600
+}
+```
+
+Show `preview` to the user verbatim and get an explicit yes before the next
+call — see the guardrails in `resume_skill.guardrails`.
+
+**3. Confirm**, with the token and nothing else:
+
+```json
+{"method": "tools/call", "params": {"name": "confirm_resume_patch", "arguments": {"confirm_token": "kx7f…"}}}
+```
+
+```json
+{"name": "resume.json", "revision_id": 4, "status": "created"}
+```
+
+`confirm_token` is single-use and expires in `expires_in` seconds; a second
+`confirm_resume_patch` call with the same token is refused, and nothing is
+written the second time. Every other write tool (`preview_create_company`,
+`preview_record_application`, …) follows this exact same three-call shape —
+see [`docs/api.md`](api.md#mcp) for the full tool table.
 
 ## Client support
 

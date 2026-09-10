@@ -1,0 +1,537 @@
+{
+  "schema_version": "3.0.0",
+  "generated_at": "2026-01-15",
+  "describes": "ResumePrivate",
+  "readme": "This document explains what each field of the resume payload means, which parts are ready to paste into a finished resume as-is, and which are background material only. Read this before reading the resume itself. The resume is a JSON Resume 1.0 document (https://jsonresume.org/schema), extended with a few private fields; see disclosure.never_publish for what the public feed withholds. Nothing here restates resume content \u2014 where a rule needs to name a piece of the payload it carries a path instead, e.g. resume.work[].highlights[].summary. Sections with no content in this document (volunteer, awards, publications, languages, interests, references) are omitted rather than documented empty; add a section here if the resume ever gains one.",
+  "public_feed_url": "https://example.com/public/alex/resume/resume.json",
+  "schema_url": "https://raw.githubusercontent.com/jsonresume/resume-schema/master/schema.json",
+  "disclosure": {
+    "never_publish": [
+      "resume.basics.email",
+      "resume.basics.phone",
+      "resume.basics.location.publish",
+      "resume.basics.additionalLocations[].publish",
+      "resume.basics.profiles[].publish",
+      "resume.work[].publish",
+      "resume.work[].highlights[].publish",
+      "resume.work[].highlights[].tech",
+      "resume.work[].highlights[].metrics",
+      "resume.work[].highlights[].story",
+      "resume.work[].highlights[].specifics[].tech",
+      "resume.volunteer[].publish",
+      "resume.volunteer[].highlights[].publish",
+      "resume.volunteer[].highlights[].tech",
+      "resume.volunteer[].highlights[].metrics",
+      "resume.volunteer[].highlights[].story",
+      "resume.volunteer[].highlights[].specifics[].tech",
+      "resume.skills[].publish",
+      "resume.skills[].keywords[].level",
+      "resume.skills[].keywords[].lastUsed",
+      "resume.skills[].keywords[].publish",
+      "resume.education[].publish",
+      "resume.awards[].publish",
+      "resume.certificates[].publish",
+      "resume.publications[].publish",
+      "resume.languages[].publish",
+      "resume.interests[].publish",
+      "resume.references[].publish",
+      "resume.projects[].publish",
+      "resume.projects[].highlights[].publish",
+      "resume.projects[].highlights[].tech",
+      "resume.projects[].highlights[].metrics",
+      "resume.projects[].highlights[].story",
+      "resume.projects[].highlights[].specifics[].tech",
+      "resume.fineTuningData"
+    ],
+    "rationale": "These fields exist for tailoring and outreach, not for a public feed. The public projection (PublicProjection.NEVER_PUBLISHED) redacts them structurally through a second model tree, ResumePublic, that has no field for them to land in \u2014 but a document generated from this data should never include them either.",
+    "rules": [
+      "Never print an email address or phone number in a generated document unless the user explicitly asks for one to be included.",
+      "An entry with `publish: false` is withheld from the public website feed only. It is not a signal to omit that entry from a tailored resume or cover letter \u2014 treat every entry in this document as eligible material regardless of its `publish` value."
+    ]
+  },
+  "joins": [
+    {
+      "name": "highlight-to-lead-selection",
+      "key": "id",
+      "left": "resume.work[].highlights[]",
+      "right": "resume_metadata.role_families[].lead_highlight_ids",
+      "description": "A role family names highlights to lead with by id; join on that id to find the actual highlight content. `left` names resume.work[].highlights[] but the same join applies to resume.volunteer[].highlights[] and resume.projects[].highlights[] \u2014 all three share the Highlight model and one id namespace, so a lead_highlight_ids entry may resolve against any of them.",
+      "on_unmatched_left": "A highlight with no role family referencing it is still eligible \u2014 role families are a starting point, not a filter.",
+      "on_unmatched_right": "An id in lead_highlight_ids with no matching highlight is a data error \u2014 stop and say so rather than guessing which highlight was meant.",
+      "failure_mode": "Matching on summary text instead of id silently pairs the wrong highlight after any wording edit."
+    }
+  ],
+  "sections": [
+    {
+      "path": "resume.basics",
+      "title": "Basics",
+      "description": "Identity, contact details, and the summary that opens the document.",
+      "purpose": "Who the candidate is and how to reach them; the summary sets the frame for everything after it.",
+      "ordering": null,
+      "selection": [],
+      "fields": [
+        {
+          "path": "resume.basics.summary",
+          "type": "string",
+          "description": "Free-text summary, rewritten per posting.",
+          "use": "compress",
+          "visibility": "public",
+          "required": true,
+          "format": null,
+          "rules": [
+            "Keep to three sentences or fewer."
+          ],
+          "example": "Backend engineer with six years building API services."
+        },
+        {
+          "path": "resume.basics.tagline",
+          "type": "string | null",
+          "description": "A short line under the name, e.g. for a header or a public bio.",
+          "use": "resume-ready",
+          "visibility": "public",
+          "required": false
+        },
+        {
+          "path": "resume.basics.email",
+          "type": "string | null",
+          "description": "Contact email. Never on the public feed.",
+          "use": "identifier",
+          "visibility": "private",
+          "required": false,
+          "rules": [
+            "Never print unless the user explicitly asks for it to be included."
+          ]
+        },
+        {
+          "path": "resume.basics.phone",
+          "type": "string | null",
+          "description": "Contact phone number. Never on the public feed.",
+          "use": "identifier",
+          "visibility": "private",
+          "required": false,
+          "rules": [
+            "Never print unless the user explicitly asks for it to be included."
+          ]
+        }
+      ]
+    },
+    {
+      "path": "resume.work[]",
+      "title": "Work",
+      "description": "Employment records, one per engagement rather than one per title.",
+      "purpose": "The spine of the resume: who the candidate worked for, as what, and when. A gap here is the first thing a reader looks for.",
+      "ordering": "Most recent first. Order is meaningful and must not be rearranged for relevance \u2014 reorder highlights within an entry instead.",
+      "selection": [
+        "Every entry belongs on the resume unless the whole history does not fit; trim highlights before trimming an entry, since a dropped entry reads as a gap."
+      ],
+      "fields": [
+        {
+          "path": "resume.work[].name",
+          "type": "string",
+          "description": "The employer, as it should be printed.",
+          "use": "resume-ready",
+          "visibility": "public",
+          "required": true
+        },
+        {
+          "path": "resume.work[].position",
+          "type": "string | null",
+          "description": "The headline title for the entry. Restates roles[0].title so a theme that knows nothing about roles still prints the current one.",
+          "use": "resume-ready",
+          "visibility": "public",
+          "required": false,
+          "rules": [
+            "If this disagrees with roles[0].title, trust roles[0] and say so \u2014 position is the copy, not the source."
+          ]
+        },
+        {
+          "path": "resume.work[].roles[].title",
+          "type": "string",
+          "description": "One title held within this engagement, most-recent first. Two or more is a promotion, which is the progression a reader is looking for.",
+          "use": "resume-ready",
+          "visibility": "public",
+          "required": true,
+          "example": "Backend Engineer (Contract)"
+        },
+        {
+          "path": "resume.work[].startDate",
+          "type": "string | null",
+          "description": "Start of the engagement, which may predate direct employment where viaEmployer is set.",
+          "use": "resume-ready",
+          "visibility": "public",
+          "required": false,
+          "format": "YYYY-MM"
+        },
+        {
+          "path": "resume.work[].endDate",
+          "type": "string | null",
+          "description": "End of the engagement. Absent means currently employed.",
+          "use": "resume-ready",
+          "visibility": "public",
+          "required": false,
+          "format": "YYYY-MM"
+        },
+        {
+          "path": "resume.work[].roleLocation",
+          "type": "string | null",
+          "description": "How the work was done. See vocabularies for the closed set of values.",
+          "use": "resume-ready",
+          "visibility": "public",
+          "required": false
+        },
+        {
+          "path": "resume.work[].viaEmployer.name",
+          "type": "string",
+          "description": "Legal employer of record for an agency-staffed window at the start of the engagement. Present only when the engagement did not begin as direct employment.",
+          "use": "internal",
+          "visibility": "public",
+          "required": false,
+          "rules": [
+            "Employment verification checks dates against the employer of record, so never print the engagement's start date beside the client's name without accounting for this window."
+          ]
+        },
+        {
+          "path": "resume.work[].location",
+          "type": "string | null",
+          "description": "Where the employer is, not where the work was done \u2014 see roleLocation for that.",
+          "use": "resume-ready",
+          "visibility": "public",
+          "required": false
+        },
+        {
+          "path": "resume.work[].description",
+          "type": "string | null",
+          "description": "What the company does. Context for a reader who does not recognise the name; never a description of the job.",
+          "use": "compress",
+          "visibility": "public",
+          "required": false
+        }
+      ]
+    },
+    {
+      "path": "resume.work[].highlights[]",
+      "title": "Highlights",
+      "description": "Per-employer accomplishment bullets.",
+      "purpose": "The evidence a tailored resume selects from.",
+      "ordering": "Most relevant to the target posting first, not chronological.",
+      "selection": [
+        "Prefer highlights whose tech list overlaps the posting's stack.",
+        "Prefer a specific's own tech list over the highlight's broader one when judging relevance to a narrow requirement."
+      ],
+      "fields": [
+        {
+          "path": "resume.work[].highlights[].summary",
+          "type": "string",
+          "description": "The bullet's headline claim.",
+          "use": "resume-ready",
+          "visibility": "public",
+          "required": true,
+          "rules": [],
+          "example": "Cut route-recalculation latency by adding a bounded cache."
+        },
+        {
+          "path": "resume.work[].highlights[].specifics[].detail",
+          "type": "string",
+          "description": "One piece of evidence under a highlight.",
+          "use": "compress",
+          "visibility": "public",
+          "required": false
+        },
+        {
+          "path": "resume.work[].highlights[].specifics[].tech",
+          "type": "list[string]",
+          "description": "The tech a single specific used, narrower than the highlight's own tech list. Supporting material only \u2014 never on the public feed.",
+          "use": "internal",
+          "visibility": "private",
+          "required": false
+        },
+        {
+          "path": "resume.work[].highlights[].story",
+          "type": "string | null",
+          "description": "First-person material for a cover letter only.",
+          "use": "internal",
+          "visibility": "private",
+          "required": false,
+          "rules": [
+            "Never appears on a resume, only in a cover letter, and only when it fits the posting."
+          ]
+        },
+        {
+          "path": "resume.work[].highlights[].publish",
+          "type": "boolean",
+          "description": "Withholds this one highlight from the public website feed only. The same flag, with the same meaning, exists at every withholdable level of the resume \u2014 work entries, highlights, skills, keywords, certificates, education, projects, locations and profiles. It has no bearing on a tailored resume or cover letter: an entry withheld from a published website is often exactly the one to lead with in an application.",
+          "use": "internal",
+          "visibility": "private",
+          "required": false,
+          "rules": [
+            "Never treat `publish: false` as an instruction to omit the entry from a tailored resume or cover letter \u2014 it governs the public website feed only, not what Claude may draw on."
+          ]
+        }
+      ]
+    },
+    {
+      "path": "resume.education[]",
+      "title": "Education",
+      "description": "Institutions attended and credentials earned.",
+      "purpose": "Background credentials; rarely the deciding factor but often required by an ATS field.",
+      "ordering": "Most recent first.",
+      "selection": [],
+      "fields": [
+        {
+          "path": "resume.education[].studyType",
+          "type": "string | null",
+          "description": "The credential earned, e.g. \"B.S.\".",
+          "use": "resume-ready",
+          "visibility": "public",
+          "required": false
+        }
+      ]
+    },
+    {
+      "path": "resume.certificates[]",
+      "title": "Certificates",
+      "description": "Issued credentials, e.g. cloud certifications.",
+      "purpose": "Signals a posting's ATS may filter on directly.",
+      "ordering": null,
+      "selection": [],
+      "fields": [
+        {
+          "path": "resume.certificates[].identifier",
+          "type": "string | null",
+          "description": "The issuer's credential number, where the credential is numbered.",
+          "use": "resume-ready",
+          "visibility": "public",
+          "required": false
+        }
+      ]
+    },
+    {
+      "path": "resume.skills[]",
+      "title": "Skills",
+      "description": "Named groups of skills, each with individually rated keywords.",
+      "purpose": "The inventory a posting's keyword match draws on.",
+      "ordering": null,
+      "selection": [
+        "Prefer keywords the posting names explicitly over adjacent ones."
+      ],
+      "fields": [
+        {
+          "path": "resume.skills[].level",
+          "type": "string | null",
+          "description": "The group's overall level. Public, unlike the per-keyword level below \u2014 a group rated as a whole reads as a claim, where a keyword rated individually reads as a disclaimer.",
+          "use": "resume-ready",
+          "visibility": "public",
+          "required": false
+        },
+        {
+          "path": "resume.skills[].keywords[].name",
+          "type": "string",
+          "description": "One skill.",
+          "use": "resume-ready",
+          "visibility": "public",
+          "required": true
+        },
+        {
+          "path": "resume.skills[].keywords[].level",
+          "type": "string | null",
+          "description": "A candid self-assessment. Never on the public feed \u2014 see vocabularies for the closed set of values.",
+          "use": "internal",
+          "visibility": "private",
+          "required": false
+        },
+        {
+          "path": "resume.skills[].keywords[].lastUsed",
+          "type": "string | null",
+          "description": "The year this skill was last used. Never on the public feed.",
+          "use": "internal",
+          "visibility": "private",
+          "required": false
+        }
+      ]
+    },
+    {
+      "path": "resume.projects[]",
+      "title": "Projects",
+      "description": "Personal or open-source projects, separate from paid employment.",
+      "purpose": "Supplementary evidence, most useful when the employment history alone underrepresents a skill. A project highlight is eligible to lead a role family's summary the same as a work or volunteer highlight \u2014 it carries the same kind of id that resume_metadata.role_families[].lead_highlight_ids points at.",
+      "ordering": null,
+      "selection": [],
+      "fields": [
+        {
+          "path": "resume.projects[].description",
+          "type": "string | null",
+          "description": "What the project is and why it exists.",
+          "use": "resume-ready",
+          "visibility": "public",
+          "required": false
+        },
+        {
+          "path": "resume.projects[].highlights[].summary",
+          "type": "string",
+          "description": "The bullet's headline claim for this project, mirroring resume.work[].highlights[].summary.",
+          "use": "resume-ready",
+          "visibility": "public",
+          "required": true,
+          "rules": [],
+          "example": "Built a local relay that replays production webhooks against a dev server."
+        },
+        {
+          "path": "resume.projects[].highlights[].specifics[].detail",
+          "type": "string",
+          "description": "One piece of evidence under a project highlight, mirroring resume.work[].highlights[].specifics[].detail.",
+          "use": "compress",
+          "visibility": "public",
+          "required": false
+        },
+        {
+          "path": "resume.projects[].highlights[].story",
+          "type": "string | null",
+          "description": "First-person material for a cover letter only, mirroring resume.work[].highlights[].story.",
+          "use": "internal",
+          "visibility": "private",
+          "required": false,
+          "rules": [
+            "Never appears on a resume, only in a cover letter, and only when it fits the posting."
+          ]
+        }
+      ]
+    },
+    {
+      "path": "resume.fineTuningData",
+      "title": "Fine-tuning data",
+      "description": "Private material the resume carries for a tailoring run: narrative and logistics.",
+      "purpose": "Shapes selection and wording; never rendered on a resume or cover letter as-is.",
+      "ordering": null,
+      "selection": [],
+      "fields": [
+        {
+          "path": "resume.fineTuningData.narrative.voice",
+          "type": "string | null",
+          "description": "How the candidate writes, when it is their own voice \u2014 used for cover letters.",
+          "use": "internal",
+          "visibility": "private",
+          "required": false
+        },
+        {
+          "path": "resume.fineTuningData.logistics",
+          "type": "Logistics | null",
+          "description": "Salary, availability, relocation, work authorization. Background for judgement only.",
+          "use": "internal",
+          "visibility": "private",
+          "required": false,
+          "rules": [
+            "Never print a logistics value unless the user asks for it to be included."
+          ]
+        },
+        {
+          "path": "resume.fineTuningData.logistics.travel",
+          "type": "string | null",
+          "description": "Willingness to travel for the role itself \u2014 conferences, client visits, a distributed team's in-person weeks. Distinct from onSite, which is about the ordinary commute to a workplace; travel is about everything that is not the commute.",
+          "use": "internal",
+          "visibility": "private",
+          "required": false,
+          "rules": [
+            "Never print a travel value unless the user asks for it to be included."
+          ],
+          "example": "Up to 25% for on-sites and team offsites; more for a role that is otherwise remote."
+        }
+      ]
+    }
+  ],
+  "vocabularies": [
+    {
+      "path": "resume.basics.location.kind",
+      "terms": [
+        {
+          "value": "residence",
+          "meaning": "Where the candidate actually lives."
+        },
+        {
+          "value": "metro",
+          "meaning": "A metro area the candidate can commute to or from."
+        },
+        {
+          "value": "remote",
+          "meaning": "A remote-work window rather than a physical place."
+        }
+      ]
+    },
+    {
+      "path": "resume.work[].roleLocation",
+      "terms": [
+        {
+          "value": "On-site",
+          "meaning": "Physically present, no remote allowance."
+        },
+        {
+          "value": "Hybrid",
+          "meaning": "Mix of on-site and remote days."
+        },
+        {
+          "value": "Remote",
+          "meaning": "No regular on-site expectation."
+        }
+      ]
+    },
+    {
+      "path": "resume.work[].viaEmployer.engagement",
+      "terms": [
+        {
+          "value": "contract-to-hire",
+          "meaning": "Started under a staffing agency, converted to direct employment."
+        },
+        {
+          "value": "contract",
+          "meaning": "Agency-staffed for the entire engagement."
+        }
+      ]
+    },
+    {
+      "path": "resume.skills[].keywords[].level",
+      "terms": [
+        {
+          "value": "expert",
+          "meaning": "Could lead a design review or mentor others on this."
+        },
+        {
+          "value": "working",
+          "meaning": "Productive without help, would look things up for the edge cases."
+        },
+        {
+          "value": "familiar",
+          "meaning": "Has used it, would need ramp-up to be productive again."
+        }
+      ]
+    }
+  ],
+  "figures": {
+    "figure_path": "resume.work[].highlights[].metrics[].figure",
+    "amount_path": "resume.work[].highlights[].metrics[].amount",
+    "basis_path": "resume.work[].highlights[].metrics[].basis",
+    "already_in_prose": [],
+    "rules": [
+      "Never state a figure without its basis available to cite if asked.",
+      "Round to the precision the basis actually supports; do not add false precision."
+    ]
+  },
+  "role_families": [
+    {
+      "role_family": "backend-reliability",
+      "posting_signals": [
+        "on-call",
+        "reliability",
+        "payments",
+        "idempotency"
+      ],
+      "lead_highlight_ids": [
+        "fpc-idempotency-rework"
+      ],
+      "note": "Lead with the payments idempotency work for anything mentioning reliability or on-call ownership."
+    }
+  ],
+  "cautions": [
+    "The two employers in this example are fictional; do not treat their names as real companies when reasoning about the data.",
+    "fineTuningData.logistics is background for judgement only \u2014 never print a salary expectation unless the user asks for one to be included.",
+    "The resume is JSON Resume 1.0 shaped, with two deliberate deviations from the official schema: work[].highlights[] and skills[].keywords[] carry objects (id, specifics, tech, metrics, story / url, level, lastUsed) rather than the plain strings the schema specifies, so tailoring has the supporting detail to judge from."
+  ]
+}

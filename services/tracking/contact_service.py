@@ -145,24 +145,54 @@ class ContactService(TrackingServiceBase):
         contact = await self._require_contact(contact_id)
         return await self._to_dto(contact)
 
+    async def resolve_contact(
+        self,
+        first_name: str | None,
+        last_name: str | None,
+        email: str | None,
+        company_id: int | None,
+        confirm_create_duplicate: bool,
+    ) -> list[DuplicateCandidate]:
+        """The read-only half of `create_contact`'s checks: the identity
+        requirement, the company reference, and the duplicate search -
+        without writing anything."""
+        if not any((first_name, last_name, email)):
+            raise TrackingErrors.contact_needs_identity()
+        await self._company_id_or_404(company_id)
+
+        candidates: list[DuplicateCandidate] = []
+        if not confirm_create_duplicate:
+            candidates = await self._candidates(
+                first_name, last_name, email, company_id, None
+            )
+            self._refuse_if_duplicate(candidates)
+        return candidates
+
+    async def preview_contact_creation(
+        self, request: CreateContactRequest
+    ) -> list[DuplicateCandidate]:
+        self._require(Scopes.CONTACTS_READ)
+        self._require(Scopes.CONTACTS_WRITE)
+        return await self.resolve_contact(
+            request.first_name,
+            request.last_name,
+            request.email,
+            request.company_id,
+            request.confirm_create_duplicate,
+        )
+
     async def create_contact(self, request: CreateContactRequest) -> ContactDto:
         self._require(Scopes.CONTACTS_WRITE)
         await self._begin_write()
         owner = self._owner()
 
-        if not any((request.first_name, request.last_name, request.email)):
-            raise TrackingErrors.contact_needs_identity()
-        await self._company_id_or_404(request.company_id)
-
-        if not request.confirm_create_duplicate:
-            candidates = await self._candidates(
-                request.first_name,
-                request.last_name,
-                request.email,
-                request.company_id,
-                None,
-            )
-            self._refuse_if_duplicate(candidates)
+        await self.resolve_contact(
+            request.first_name,
+            request.last_name,
+            request.email,
+            request.company_id,
+            request.confirm_create_duplicate,
+        )
 
         contact = Contact(
             user_id=owner,

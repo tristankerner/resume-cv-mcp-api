@@ -202,7 +202,7 @@ class Highlight(Withholdable):
     document and how to word it for *this* posting.
     """
 
-    id: str  # stable slug, unique across every work and volunteer entry
+    id: str  # stable slug, unique across every work, volunteer and project entry
     summary: str
     specifics: list[Specific] = []
     tech: list[str] = []  # everything the highlight touched, as a whole
@@ -336,7 +336,11 @@ class Reference(Withholdable):
 class Project(Withholdable):
     name: str | None = None
     description: str | None = None
-    highlights: list[str] = []
+    # v3: object-shaped, matching work[]/volunteer[] highlights - see
+    # Highlight's docstring. `Highlight` is reused as-is rather than
+    # subclassed: a project accomplishment and a work accomplishment are the
+    # same kind of claim, and the `id` uniqueness rule already spans entries.
+    highlights: list[Highlight] = []
     keywords: list[str] = []
     start_date: Iso8601 | None = None
     end_date: Iso8601 | None = None
@@ -372,6 +376,12 @@ class Logistics(Base):
     availability: str | None = None  # notice period, earliest start
     relocation: str | None = None
     on_site: str | None = None  # willingness beyond what basics.location implies
+    # `on_site` is about the commute; `travel` is about everything that is
+    # not the commute - the two are otherwise easily confused on a read.
+    # Free text, matching its five neighbors: the real answers are "up to
+    # 50%", "quarterly on-sites", "none, I have a young family", not a
+    # structured percentage.
+    travel: str | None = None
 
 
 class FineTuningData(Base):
@@ -602,7 +612,7 @@ class PublicReference(Base):
 class PublicProject(Base):
     name: str | None = None
     description: str | None = None
-    highlights: list[str] = []
+    highlights: list[PublicHighlight] = []
     keywords: list[str] = []
     start_date: Iso8601 | None = None
     end_date: Iso8601 | None = None
@@ -824,7 +834,7 @@ class PublicProjection:
         "languages": {"__all__": {"publish"}},
         "interests": {"__all__": {"publish"}},
         "references": {"__all__": {"publish"}},
-        "projects": {"__all__": {"publish"}},
+        "projects": {"__all__": {"publish": True, "highlights": HIGHLIGHT_REDACTION}},
         "fine_tuning_data": True,
     }
     """Every path the feed drops, in one readable block.
@@ -860,7 +870,7 @@ class PublicProjection:
                 "languages": self._published(private.languages),
                 "interests": self._published(private.interests),
                 "references": self._published(private.references),
-                "projects": self._published(private.projects),
+                "projects": self._filter_highlighted(private.projects),
             }
         )
 
@@ -877,10 +887,14 @@ class PublicProjection:
             }
         )
 
-    def _filter_highlighted[T: (Work, Volunteer)](self, entries: list[T]) -> list[T]:
+    def _filter_highlighted[T: (Work, Volunteer, Project)](
+        self, entries: list[T]
+    ) -> list[T]:
         """An entry whose every highlight is withheld is kept, without
         highlights — the employment record is load-bearing, and dropping it
-        would create a silent gap in the timeline."""
+        would create a silent gap in the timeline. A project is kept the same
+        way for consistency, even though it carries no timeline gap to
+        protect."""
         return [
             entry.model_copy(update={"highlights": self._published(entry.highlights)})
             for entry in self._published(entries)

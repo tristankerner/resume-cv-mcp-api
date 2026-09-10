@@ -41,6 +41,29 @@ the résumé is required — a companion that isn't stored comes back as `null`
 rather than failing the retrieval, so the client can say what it's working
 without.
 
+### The write path
+
+Reading is a single call; writing to the resume over MCP is always a
+preview/confirm pair (see [`docs/api.md`](api.md#mcp)) — the same
+`document_type`/`revision` model above, appended to rather than replaced:
+
+```mermaid
+flowchart LR
+    D[describe_resume_schema] --> P[preview_resume_patch]
+    P -->|preview + confirm_token| U{User confirms?}
+    U -->|no| X[Nothing written]
+    U -->|yes| C[confirm_resume_patch]
+    C --> R[New revision appended]
+```
+
+`describe_resume_schema` is stateless and read-only — call it as often as
+needed to check whether a proposed change is expressible before ever calling
+`preview_resume_patch`. Nothing is written until `confirm_resume_patch`
+redeems the token `preview_resume_patch` issued; a preview that is never
+confirmed leaves no trace beyond its own short-lived token. `metadata` and
+`skill` documents have no write path here at all — see
+[`docs/api.md`](api.md#documents).
+
 ## Revisions
 
 Every write appends a revision; nothing is ever rewritten in place. A database
@@ -166,7 +189,21 @@ new revisions rather than rewriting history.
 One consequence if you read document history: a revision written at a version
 this build no longer considers current is served **unvalidated**, as the raw
 stored payload, rather than failing. Reading across the v1→v2 boundary returns
-both shapes side by side.
+both shapes side by side. The same is true across the v2→v3 boundary below.
+
+**What v3 changed:** `resume` gained `fineTuningData.logistics.travel` (free
+text, absent by default — see the MCP schema for the field guide
+distinguishing it from `onSite`) and widened `projects[].highlights[]` from
+plain strings to the same object shape `work[]`/`volunteer[]` highlights
+already use, so a project accomplishment can carry an id, specifics, tech,
+metrics and a cover-letter story — and can lead a role family's summary the
+same as a work highlight. A migration converted every stored resume's project
+highlights in place, generating a slug id per highlight and dropping any
+empty string rather than keeping it as a blank bullet. `metadata` and `skill`
+did not change shape at v3 — only their content did, documenting the new
+field and the write-back procedure — so an existing account's `metadata` and
+`skill` documents were **not** touched; only a new account is seeded with the
+v3 content.
 
 `GET /documents/schemas` serves the current JSON Schema for each type you may
 read — the authoritative reference for writing a client. Note that document

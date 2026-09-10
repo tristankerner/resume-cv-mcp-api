@@ -1,0 +1,258 @@
+{
+  "basics": {
+    "name": "Alex Rivera",
+    "label": "Senior Backend Engineer",
+    "tagline": "Backend systems that stay boring under load",
+    "email": "alex.rivera@example.com",
+    "phone": "+1-512-555-0100",
+    "summary": "Backend engineer with six years building and operating API services for small teams, most recently focused on payment reliability and on-call sanity.",
+    "location": {
+      "label": "Austin, TX",
+      "kind": "residence",
+      "note": "open to hybrid"
+    },
+    "additionalLocations": [
+      {
+        "label": "Remote (US)",
+        "kind": "remote",
+        "note": "US business hours"
+      }
+    ],
+    "profiles": [
+      {
+        "network": "GitHub",
+        "url": "https://github.com/example-alex"
+      },
+      {
+        "network": "LinkedIn",
+        "url": "https://linkedin.com/in/example-alex"
+      }
+    ]
+  },
+  "work": [
+    {
+      "name": "Fictional Payments Co.",
+      "url": "https://example.com/fictional-payments",
+      "location": "Austin, TX",
+      "description": "Payment processing platform for small merchants.",
+      "position": "Senior Backend Engineer",
+      "startDate": "2022-03",
+      "endDate": null,
+      "roleLocation": "Hybrid",
+      "roles": [
+        {
+          "title": "Senior Backend Engineer",
+          "startDate": "2022-03",
+          "endDate": null
+        }
+      ],
+      "highlights": [
+        {
+          "id": "fpc-idempotency-rework",
+          "summary": "Rebuilt the payment-retry path so duplicate submissions could no longer double-charge a merchant",
+          "specifics": [
+            {
+              "detail": "Designed an idempotency-key table with a unique constraint enforced at the database",
+              "tech": [
+                "PostgreSQL"
+              ]
+            },
+            {
+              "detail": "Migrated the existing retry queue over a weekend with no downtime"
+            }
+          ],
+          "tech": [
+            "Python",
+            "FastAPI",
+            "PostgreSQL"
+          ],
+          "metrics": [
+            {
+              "figure": "double-charge incidents",
+              "amount": "zero in 18 months",
+              "basis": "incident tracker, post-migration"
+            }
+          ],
+          "story": "A merchant lost a day's revenue to a double-charge bug the week before I joined; fixing the class of bug, not the instance, was the first thing I asked to own."
+        }
+      ]
+    },
+    {
+      "name": "Example Logistics",
+      "location": "Remote",
+      "description": "Route-planning software for regional delivery fleets.",
+      "position": "Backend Engineer",
+      "startDate": "2019-06",
+      "endDate": "2022-02",
+      "viaEmployer": {
+        "name": "Fictional Staffing Group",
+        "startDate": "2019-06",
+        "endDate": "2019-09",
+        "engagement": "contract-to-hire"
+      },
+      "roleLocation": "Remote",
+      "roles": [
+        {
+          "title": "Backend Engineer",
+          "startDate": "2019-09",
+          "endDate": "2022-02"
+        },
+        {
+          "title": "Backend Engineer (Contract)",
+          "startDate": "2019-06",
+          "endDate": "2019-09"
+        }
+      ],
+      "highlights": [
+        {
+          "id": "el-route-cache",
+          "summary": "Cut route-recalculation latency by adding a bounded cache in front of the routing service",
+          "specifics": [
+            {
+              "detail": "Profiled the recalculation path and found 80% of requests repeated within a five-minute window"
+            },
+            {
+              "detail": "Added a size-bounded LRU cache with a correctness fallback on miss"
+            }
+          ],
+          "tech": [
+            "Go",
+            "Redis"
+          ],
+          "metrics": [
+            {
+              "figure": "p95 recalculation latency",
+              "amount": "from 1.4s to 210ms",
+              "basis": "internal load test, matched to production traffic shape"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "education": [
+    {
+      "institution": "Fictional State University",
+      "studyType": "B.S. Computer Science",
+      "area": "Computer Science",
+      "endDate": "2019",
+      "location": "TX"
+    }
+  ],
+  "certificates": [
+    {
+      "name": "AWS Certified Solutions Architect \u2013 Associate",
+      "identifier": "EX4MPL3",
+      "url": "https://aws.amazon.com/certification/"
+    }
+  ],
+  "skills": [
+    {
+      "name": "Languages & frameworks",
+      "keywords": [
+        {
+          "name": "Python",
+          "level": "expert",
+          "lastUsed": "2026"
+        },
+        {
+          "name": "FastAPI",
+          "level": "expert",
+          "lastUsed": "2026"
+        },
+        {
+          "name": "Go",
+          "level": "working",
+          "lastUsed": "2024"
+        }
+      ]
+    },
+    {
+      "name": "Infrastructure",
+      "keywords": [
+        {
+          "name": "PostgreSQL",
+          "level": "expert",
+          "lastUsed": "2026"
+        },
+        {
+          "name": "Docker",
+          "level": "expert",
+          "lastUsed": "2026"
+        },
+        {
+          "name": "Terraform",
+          "level": "working",
+          "lastUsed": "2025"
+        }
+      ]
+    }
+  ],
+  "projects": [
+    {
+      "name": "example-webhook-relay",
+      "url": "https://github.com/example-alex/example-webhook-relay",
+      "description": "A small open-source relay for replaying webhooks during local development.",
+      "publish": false,
+      "highlights": [
+        {
+          "id": "proj-webhook-relay-1",
+          "summary": "Built a local relay that replays production webhooks against a dev server",
+          "specifics": [
+            {
+              "detail": "Implemented signature verification matching the upstream provider's HMAC scheme",
+              "tech": [
+                "Python"
+              ]
+            }
+          ],
+          "tech": [
+            "Python",
+            "SQLite"
+          ],
+          "metrics": [
+            {
+              "figure": "webhook debugging time",
+              "amount": "cut from about 30 minutes to under a minute",
+              "basis": "informal team survey after adoption"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "example-status-page",
+      "url": "https://github.com/example-alex/example-status-page",
+      "description": "A minimal static status-page generator, published as a starter template.",
+      "publish": true,
+      "highlights": [
+        {
+          "id": "proj-status-page-1",
+          "summary": "Published a starter template for a static status page with zero runtime dependencies",
+          "publish": false,
+          "story": "Wrote this after maintaining a heavier status-page tool at a previous job; kept this one deliberately boring."
+        }
+      ]
+    }
+  ],
+  "fineTuningData": {
+    "narrative": {
+      "careerArc": "Started in general backend work, narrowed toward systems where correctness under retry and failure matters more than feature velocity.",
+      "currentStatus": "Looking for the next role after two years stabilizing a payments platform.",
+      "motivation": "Prefers small teams where one engineer can own a system end to end.",
+      "lookingFor": "Backend or platform roles with real operational ownership.",
+      "avoiding": "Pure feature-factory roles with no on-call ownership.",
+      "workingStyle": "Writes the failure mode down before writing the happy path.",
+      "strengths": "Debugging distributed failures under time pressure.",
+      "voice": "Direct, understated, prefers specifics over adjectives."
+    },
+    "logistics": {
+      "workAuthorization": "US citizen",
+      "salaryExpectation": "Market rate for senior backend, negotiable",
+      "availability": "Two weeks notice",
+      "relocation": "Not relocating; open to hybrid in Austin",
+      "onSite": "Up to two days a week",
+      "travel": "Up to 25% for on-sites and team offsites; more for a role that is otherwise remote."
+    }
+  }
+}

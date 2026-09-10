@@ -1,7 +1,7 @@
 import base64
 import binascii
 import hashlib
-from typing import Annotated, ClassVar
+from typing import Annotated, ClassVar, NamedTuple
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -70,6 +70,16 @@ class AttachmentPolicy:
         return raw, base64.b64encode(raw).decode()
 
 
+class ResolvedAttachment(NamedTuple):
+    """The decoded, sniffed, deduplicated bytes an attachment upload would
+    write - everything `create_attachment` checks, before anything is
+    persisted."""
+
+    raw: bytes
+    content_base64: str
+    sha256: str
+
+
 class AttachmentService(TrackingServiceBase):
     """Attachment upload, listing, fetch and delete - governed by
     `applications:*`, since an attachment is not meaningful without its
@@ -106,11 +116,15 @@ class AttachmentService(TrackingServiceBase):
         data = [self._to_meta(row) for row in rows]
         return ListEnvelope(data=data, total=len(data), limit=len(data), offset=0)
 
-    async def create_attachment(
+    async def resolve_attachment(
         self, application_id: int, request: CreateAttachmentRequest
-    ) -> AttachmentMeta:
-        self._require(Scopes.APPLICATIONS_WRITE)
-        await self._begin_write()
+    ) -> ResolvedAttachment:
+        """The read-only half of `create_attachment`'s checks: the
+        application reference, `AttachmentPolicy`'s content-type/size/magic-
+        byte validation, and the exact-digest duplicate check - without
+        writing anything. All three run here rather than only at write time,
+        since rejecting a 10 MiB upload after the user has already confirmed
+        it is the wrong order."""
         owner = self._owner()
         await self._require_application(application_id)
 
@@ -124,6 +138,22 @@ class AttachmentService(TrackingServiceBase):
         )
         if existing is not None:
             raise TrackingErrors.duplicate_attachment()
+        return ResolvedAttachment(raw, normalized_base64, digest)
+
+    async def preview_attachment_creation(
+        self, application_id: int, request: CreateAttachmentRequest
+    ) -> ResolvedAttachment:
+        self._require(Scopes.APPLICATIONS_READ)
+        self._require(Scopes.APPLICATIONS_WRITE)
+        return await self.resolve_attachment(application_id, request)
+
+    async def create_attachment(
+        self, application_id: int, request: CreateAttachmentRequest
+    ) -> AttachmentMeta:
+        self._require(Scopes.APPLICATIONS_WRITE)
+        await self._begin_write()
+        owner = self._owner()
+        resolved = await self.resolve_attachment(application_id, request)
 
         attachment = ApplicationAttachment(
             user_id=owner,
@@ -131,9 +161,9 @@ class AttachmentService(TrackingServiceBase):
             kind=request.kind,
             filename=request.filename,
             content_type=request.content_type,
-            byte_size=len(raw),
-            sha256=digest,
-            content_base64=normalized_base64,
+            byte_size=len(resolved.raw),
+            sha256=resolved.sha256,
+            content_base64=resolved.content_base64,
         )
         self.db.add(attachment)
         await self.db.commit()

@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import HTTPException
 from fastmcp.exceptions import ToolError
@@ -13,17 +13,25 @@ from services.auth.principal import Principal
 from services.auth.scopes import Scopes
 from services.database.database_service import DatabaseService
 from services.tracking.application_service import ApplicationService
+from services.tracking.attachment_service import AttachmentService
 from services.tracking.company_service import CompanyService
 from services.tracking.contact_service import ContactService
 from services.tracking.dtos.application import CreateApplicationRequest
 from services.tracking.dtos.application_event import CreateApplicationEventRequest
+from services.tracking.dtos.attachment import CreateAttachmentRequest
 from services.tracking.dtos.company import (
+    CreateCompanyRelationshipRequest,
     CreateCompanyRequest,
     CreateCompanyStackItemRequest,
 )
 from services.tracking.dtos.contact import CreateContactRequest
 from services.tracking.duplicates import DuplicateFinder
-from services.tracking.enums import ApplicationStatus
+from services.tracking.enums import (
+    COMPANY_RELATIONSHIP_TYPE_LABELS,
+    ApplicationStatus,
+    AttachmentKind,
+    CompanyRelationshipType,
+)
 from services.tracking.normalization import Normalizer
 
 # Hand-written rather than derived from the StrEnums at import time: `Literal`
@@ -52,6 +60,18 @@ StackItemTypeLiteral = Literal[
     "programming_language", "framework", "infrastructure", "data", "other"
 ]
 
+CompanyRelationshipTypeLiteral = Literal[
+    "child_of",
+    "parent_of",
+    "customer_of",
+    "vendor_of",
+    "staffing_agency_for",
+    "acquired_by",
+    "partner_of",
+]
+
+AttachmentKindLiteral = Literal["resume", "cover_letter", "other"]
+
 
 class StackItemInput(BaseModel):
     """One entry in `add_company_stack_items`' batch."""
@@ -76,19 +96,10 @@ class TrackingTools(McpToolBase):
 
     @classmethod
     def _principal(cls) -> Principal:
-        """The calling credential, as the services expect it.
-
-        `credential` is read from the token rather than assumed: these tools
-        write, the audit log records how a change was made, and OAuth grants
-        can now carry tracking write scopes — so hardcoding API_KEY here would
-        file every connector's writes under the wrong credential kind.
-        """
-        return Principal(
-            user_id=cls.current_user_id(),
-            username="mcp",
-            scopes=cls.current_scopes(),
-            credential=cls.current_credential(),
-        )
+        """See `McpToolBase.principal` — the shared construction, kept as a
+        thin alias here since every method in this class already calls
+        `cls._principal()`."""
+        return cls.principal()
 
     @staticmethod
     def _duplicate_error(entity_label: str, name: str, detail: dict) -> ToolError:
@@ -159,6 +170,53 @@ class TrackingTools(McpToolBase):
         return payload
 
     @classmethod
+    async def preview_create_company(
+        cls,
+        name: str,
+        website: str | None = None,
+        description: str | None = None,
+        personal_note: str | None = None,
+        confirm_create_duplicate: bool = False,
+    ) -> dict:
+        async with DatabaseService.session() as db:
+            service = CompanyService(db, cls._principal())
+            request = CreateCompanyRequest(
+                name=name,
+                website=website,
+                description=description,
+                personal_note=personal_note,
+                confirm_create_duplicate=confirm_create_duplicate,
+            )
+            try:
+                _normalized, candidates = await service.preview_company_creation(
+                    request
+                )
+            except HTTPException as error:
+                raise cls._translate(error, "companies", name) from error
+        preview = {
+            "would_create": {
+                "name": name,
+                "website": website,
+                "description": description,
+                "personal_note": personal_note,
+            },
+            "near_matches": [candidate.model_dump() for candidate in candidates],
+        }
+        payload = {
+            "name": name,
+            "website": website,
+            "description": description,
+            "personal_note": personal_note,
+            "confirm_create_duplicate": confirm_create_duplicate,
+        }
+        return await cls.issue_preview("create_company", payload, preview)
+
+    @classmethod
+    async def confirm_create_company(cls, confirm_token: str) -> dict:
+        payload = await cls.redeem_confirmation("create_company", confirm_token)
+        return await cls.create_company(**payload)
+
+    @classmethod
     async def create_company(
         cls,
         name: str,
@@ -181,6 +239,71 @@ class TrackingTools(McpToolBase):
             except HTTPException as error:
                 raise cls._translate(error, "companies", name) from error
         return summary.model_dump(mode="json")
+
+    @classmethod
+    async def preview_add_company_stack_items(
+        cls,
+        company_id: int,
+        items: list[StackItemInput],
+        confirm_create_duplicate: bool = False,
+    ) -> dict:
+        would_create: list[dict] = []
+        would_skip: list[dict] = []
+        async with DatabaseService.session() as db:
+            service = CompanyService(db, cls._principal())
+            for item in items:
+                try:
+                    candidates = await service.preview_stack_item_creation(
+                        company_id,
+                        CreateCompanyStackItemRequest(
+                            name=item.name,
+                            type=item.type,
+                            description=item.description,
+                            confirm_create_duplicate=confirm_create_duplicate,
+                        ),
+                    )
+                except HTTPException as error:
+                    if error.status_code == 409:
+                        detail = error.detail
+                        reason = (
+                            detail.get("message", str(detail))
+                            if isinstance(detail, dict)
+                            else str(detail)
+                        )
+                        would_skip.append({"name": item.name, "reason": reason})
+                        continue
+                    raise cls._translate(error, "stack items", item.name) from error
+                would_create.append(
+                    {
+                        "name": item.name,
+                        "type": item.type,
+                        "description": item.description,
+                        "near_matches": [
+                            candidate.model_dump() for candidate in candidates
+                        ],
+                    }
+                )
+        preview = {
+            "company_id": company_id,
+            "would_create": would_create,
+            "would_skip": would_skip,
+        }
+        payload = {
+            "company_id": company_id,
+            "items": [item.model_dump() for item in items],
+            "confirm_create_duplicate": confirm_create_duplicate,
+        }
+        return await cls.issue_preview("add_company_stack_items", payload, preview)
+
+    @classmethod
+    async def confirm_add_company_stack_items(cls, confirm_token: str) -> dict:
+        payload = await cls.redeem_confirmation(
+            "add_company_stack_items", confirm_token
+        )
+        items = [StackItemInput(**item) for item in payload["items"]]
+        return await cls.add_company_stack_items(
+            payload["company_id"], items, payload["confirm_create_duplicate"]
+        )
 
     @classmethod
     async def add_company_stack_items(
@@ -217,6 +340,85 @@ class TrackingTools(McpToolBase):
         return {"created": created, "skipped": skipped}
 
     @classmethod
+    async def search_company_relationships(cls, company_id: int) -> dict:
+        async with DatabaseService.session() as db:
+            service = CompanyService(db, cls._principal())
+            try:
+                relationships = await service.list_relationships(company_id)
+            except HTTPException as error:
+                raise cls._translate(error) from error
+        return {
+            "relationships": [
+                relationship.model_dump(mode="json") for relationship in relationships
+            ]
+        }
+
+    @classmethod
+    async def preview_create_company_relationship(
+        cls,
+        company_id: int,
+        to_company_id: int,
+        type: CompanyRelationshipTypeLiteral,
+        note: str | None = None,
+    ) -> dict:
+        async with DatabaseService.session() as db:
+            service = CompanyService(db, cls._principal())
+            request = CreateCompanyRelationshipRequest(
+                to_company_id=to_company_id,
+                type=CompanyRelationshipType(type),
+                note=note,
+            )
+            try:
+                company, target = await service.preview_relationship_creation(
+                    company_id, request
+                )
+            except HTTPException as error:
+                raise cls._translate(error) from error
+        label = COMPANY_RELATIONSHIP_TYPE_LABELS[CompanyRelationshipType(type)].lower()
+        preview = {
+            "from_company": {"id": company.id, "name": company.name},
+            "to_company": {"id": target.id, "name": target.name},
+            "type": type,
+            "note": note,
+            "sentence": f'"{company.name}" is {label} "{target.name}".',
+        }
+        payload = {
+            "company_id": company_id,
+            "to_company_id": to_company_id,
+            "type": type,
+            "note": note,
+        }
+        return await cls.issue_preview("create_company_relationship", payload, preview)
+
+    @classmethod
+    async def confirm_create_company_relationship(cls, confirm_token: str) -> dict:
+        payload = await cls.redeem_confirmation(
+            "create_company_relationship", confirm_token
+        )
+        return await cls.create_company_relationship(**payload)
+
+    @classmethod
+    async def create_company_relationship(
+        cls,
+        company_id: int,
+        to_company_id: int,
+        type: CompanyRelationshipTypeLiteral,
+        note: str | None = None,
+    ) -> dict:
+        async with DatabaseService.session() as db:
+            service = CompanyService(db, cls._principal())
+            request = CreateCompanyRelationshipRequest(
+                to_company_id=to_company_id,
+                type=CompanyRelationshipType(type),
+                note=note,
+            )
+            try:
+                result = await service.create_relationship(company_id, request)
+            except HTTPException as error:
+                raise cls._translate(error) from error
+        return result.model_dump(mode="json")
+
+    @classmethod
     async def search_contacts(
         cls, query: str | None = None, company_id: int | None = None, limit: int = 10
     ) -> dict:
@@ -227,6 +429,71 @@ class TrackingTools(McpToolBase):
             except HTTPException as error:
                 raise cls._translate(error) from error
         return result.model_dump(mode="json")
+
+    @classmethod
+    async def preview_create_contact(
+        cls,
+        company_id: int | None = None,
+        first_name: str | None = None,
+        last_name: str | None = None,
+        email: str | None = None,
+        phone: str | None = None,
+        description: str | None = None,
+        personal_note: str | None = None,
+        rating: int | None = None,
+        confirm_create_duplicate: bool = False,
+    ) -> dict:
+        label = " ".join(part for part in (first_name, last_name) if part) or (
+            email or "(unnamed contact)"
+        )
+        async with DatabaseService.session() as db:
+            service = ContactService(db, cls._principal())
+            try:
+                candidates = await service.preview_contact_creation(
+                    CreateContactRequest(
+                        company_id=company_id,
+                        first_name=first_name,
+                        last_name=last_name,
+                        email=email,
+                        phone=phone,
+                        description=description,
+                        personal_note=personal_note,
+                        rating=rating,
+                        confirm_create_duplicate=confirm_create_duplicate,
+                    )
+                )
+            except HTTPException as error:
+                raise cls._translate(error, "contacts", label) from error
+        preview = {
+            "would_create": {
+                "company_id": company_id,
+                "first_name": first_name,
+                "last_name": last_name,
+                "email": email,
+                "phone": phone,
+                "description": description,
+                "personal_note": personal_note,
+                "rating": rating,
+            },
+            "near_matches": [candidate.model_dump() for candidate in candidates],
+        }
+        payload = {
+            "company_id": company_id,
+            "first_name": first_name,
+            "last_name": last_name,
+            "email": email,
+            "phone": phone,
+            "description": description,
+            "personal_note": personal_note,
+            "rating": rating,
+            "confirm_create_duplicate": confirm_create_duplicate,
+        }
+        return await cls.issue_preview("create_contact", payload, preview)
+
+    @classmethod
+    async def confirm_create_contact(cls, confirm_token: str) -> dict:
+        payload = await cls.redeem_confirmation("create_contact", confirm_token)
+        return await cls.create_contact(**payload)
 
     @classmethod
     async def create_contact(
@@ -308,6 +575,167 @@ class TrackingTools(McpToolBase):
             except HTTPException as error:
                 raise cls._translate(error) from error
         return detail.model_dump(mode="json")
+
+    @classmethod
+    async def preview_record_application(
+        cls,
+        company_id: int | None = None,
+        company_name: str | None = None,
+        job_title: str | None = None,
+        job_code: str | None = None,
+        url: str | None = None,
+        job_description: str | None = None,
+        initial_prompt_text: str | None = None,
+        resume_document_name: str | None = None,
+        resume_revision_id: int | None = None,
+        metadata_document_name: str | None = None,
+        metadata_revision_id: int | None = None,
+        skill_document_name: str | None = None,
+        skill_revision_id: int | None = None,
+        resume_label: str | None = None,
+        date_submitted: str | None = None,
+        manually_modified: bool = False,
+        modification_note: str | None = None,
+        source: str | None = None,
+        system: str | None = None,
+        confirm_create_duplicate: bool = False,
+    ) -> dict:
+        if (company_id is None) == (company_name is None):
+            raise ToolError("Exactly one of company_id or company_name must be given.")
+
+        principal = cls._principal()
+        company_preview: dict[str, Any]
+        resolved_company_id = company_id
+
+        async with DatabaseService.session() as db:
+            if company_name is not None:
+                owner = cls.current_user_id()
+                normalized = Normalizer.company_name(company_name)
+                existing = await Company.get_by_normalized_name(db, owner, normalized)
+                if existing is not None:
+                    resolved_company_id = existing.id
+                    company_preview = {
+                        "action": "reuse_existing",
+                        "id": existing.id,
+                        "name": existing.name,
+                    }
+                else:
+                    if Scopes.COMPANIES_WRITE not in cls.current_scopes():
+                        raise ToolError(
+                            f"Requires scope: {Scopes.COMPANIES_WRITE.value} to "
+                            "create a new company."
+                        )
+                    company_service = CompanyService(db, principal)
+                    try:
+                        _normalized, candidates = await company_service.resolve_company(
+                            company_name, confirm_create_duplicate
+                        )
+                    except HTTPException as error:
+                        raise cls._translate(
+                            error, "companies", company_name
+                        ) from error
+                    company_preview = {
+                        "action": "create",
+                        "name": company_name,
+                        "near_matches": [
+                            candidate.model_dump() for candidate in candidates
+                        ],
+                    }
+            else:
+                # Guaranteed non-None here: the guard above requires exactly
+                # one of company_id or company_name.
+                if company_id is None:
+                    raise RuntimeError(
+                        "company_id was not resolved before previewing the application"
+                    )
+                company = await Company.get(db, cls.current_user_id(), company_id)
+                if company is None:
+                    raise ToolError(f"Company {company_id} not found.")
+                company_preview = {
+                    "action": "use_existing",
+                    "id": company.id,
+                    "name": company.name,
+                }
+
+            application_candidates: list[Any] = []
+            # Duplicate detection needs a real company id to scope the fuzzy
+            # title/date match against - a company that does not exist yet
+            # cannot already have a duplicate application. That check runs at
+            # confirm time instead, once the company is real.
+            if resolved_company_id is not None:
+                application_service = ApplicationService(db, principal)
+                request = CreateApplicationRequest(
+                    company_id=resolved_company_id,
+                    url=url,
+                    job_title=job_title,
+                    job_code=job_code,
+                    resume_document_name=resume_document_name,
+                    resume_revision_id=resume_revision_id,
+                    metadata_document_name=metadata_document_name,
+                    metadata_revision_id=metadata_revision_id,
+                    skill_document_name=skill_document_name,
+                    skill_revision_id=skill_revision_id,
+                    resume_label=resume_label,
+                    initial_prompt_text=initial_prompt_text,
+                    job_description=job_description,
+                    date_submitted=date.fromisoformat(date_submitted)
+                    if date_submitted
+                    else None,
+                    manually_modified=manually_modified,
+                    modification_note=modification_note,
+                    source=source,
+                    system=system,
+                    confirm_create_duplicate=confirm_create_duplicate,
+                )
+                try:
+                    application_candidates = (
+                        await application_service.preview_application_creation(request)
+                    )
+                except HTTPException as error:
+                    raise cls._translate(
+                        error, "applications", job_title or ""
+                    ) from error
+
+        preview = {
+            "company": company_preview,
+            "application": {
+                "job_title": job_title,
+                "job_code": job_code,
+                "url": url,
+                "date_submitted": date_submitted,
+                "near_matches": [
+                    candidate.model_dump() for candidate in application_candidates
+                ],
+            },
+        }
+        payload = {
+            "company_id": company_id,
+            "company_name": company_name,
+            "job_title": job_title,
+            "job_code": job_code,
+            "url": url,
+            "job_description": job_description,
+            "initial_prompt_text": initial_prompt_text,
+            "resume_document_name": resume_document_name,
+            "resume_revision_id": resume_revision_id,
+            "metadata_document_name": metadata_document_name,
+            "metadata_revision_id": metadata_revision_id,
+            "skill_document_name": skill_document_name,
+            "skill_revision_id": skill_revision_id,
+            "resume_label": resume_label,
+            "date_submitted": date_submitted,
+            "manually_modified": manually_modified,
+            "modification_note": modification_note,
+            "source": source,
+            "system": system,
+            "confirm_create_duplicate": confirm_create_duplicate,
+        }
+        return await cls.issue_preview("record_application", payload, preview)
+
+    @classmethod
+    async def confirm_record_application(cls, confirm_token: str) -> dict:
+        payload = await cls.redeem_confirmation("record_application", confirm_token)
+        return await cls.record_application(**payload)
 
     @classmethod
     async def record_application(
@@ -410,6 +838,59 @@ class TrackingTools(McpToolBase):
         }
 
     @classmethod
+    async def preview_add_application_event(
+        cls,
+        application_id: int,
+        status: ApplicationStatusLiteral | None = None,
+        description: str | None = None,
+        rating: int | None = None,
+        contact_id: int | None = None,
+        occurred_at: str | None = None,
+    ) -> dict:
+        async with DatabaseService.session() as db:
+            service = ApplicationService(db, cls._principal())
+            request = CreateApplicationEventRequest(
+                status=ApplicationStatus(status) if status else None,
+                contact_id=contact_id,
+                description=description,
+                rating=rating,
+                occurred_at=datetime.fromisoformat(occurred_at)
+                if occurred_at
+                else None,
+            )
+            try:
+                application = await service.preview_event_creation(
+                    application_id, request
+                )
+            except HTTPException as error:
+                raise cls._translate(error) from error
+        preview = {
+            "application_id": application_id,
+            "current_status": application.status,
+            "would_record": {
+                "status": status,
+                "description": description,
+                "rating": rating,
+                "contact_id": contact_id,
+                "occurred_at": occurred_at,
+            },
+        }
+        payload = {
+            "application_id": application_id,
+            "status": status,
+            "description": description,
+            "rating": rating,
+            "contact_id": contact_id,
+            "occurred_at": occurred_at,
+        }
+        return await cls.issue_preview("add_application_event", payload, preview)
+
+    @classmethod
+    async def confirm_add_application_event(cls, confirm_token: str) -> dict:
+        payload = await cls.redeem_confirmation("add_application_event", confirm_token)
+        return await cls.add_application_event(**payload)
+
+    @classmethod
     async def add_application_event(
         cls,
         application_id: int,
@@ -436,6 +917,74 @@ class TrackingTools(McpToolBase):
                 raise cls._translate(error) from error
         return result.model_dump(mode="json")
 
+    @classmethod
+    async def preview_add_attachment(
+        cls,
+        application_id: int,
+        kind: AttachmentKindLiteral,
+        filename: str,
+        content_type: str,
+        content_base64: str,
+    ) -> dict:
+        async with DatabaseService.session() as db:
+            service = AttachmentService(db, cls._principal())
+            request = CreateAttachmentRequest(
+                kind=AttachmentKind(kind),
+                filename=filename,
+                content_type=content_type,
+                content_base64=content_base64,
+            )
+            try:
+                resolved = await service.preview_attachment_creation(
+                    application_id, request
+                )
+            except HTTPException as error:
+                raise cls._translate(error) from error
+        preview = {
+            "application_id": application_id,
+            "kind": kind,
+            "filename": filename,
+            "content_type": content_type,
+            "byte_size": len(resolved.raw),
+            "sha256": resolved.sha256,
+        }
+        payload = {
+            "application_id": application_id,
+            "kind": kind,
+            "filename": filename,
+            "content_type": content_type,
+            "content_base64": content_base64,
+        }
+        return await cls.issue_preview("add_attachment", payload, preview)
+
+    @classmethod
+    async def confirm_add_attachment(cls, confirm_token: str) -> dict:
+        payload = await cls.redeem_confirmation("add_attachment", confirm_token)
+        return await cls.add_attachment(**payload)
+
+    @classmethod
+    async def add_attachment(
+        cls,
+        application_id: int,
+        kind: AttachmentKindLiteral,
+        filename: str,
+        content_type: str,
+        content_base64: str,
+    ) -> dict:
+        async with DatabaseService.session() as db:
+            service = AttachmentService(db, cls._principal())
+            request = CreateAttachmentRequest(
+                kind=AttachmentKind(kind),
+                filename=filename,
+                content_type=content_type,
+                content_base64=content_base64,
+            )
+            try:
+                meta = await service.create_attachment(application_id, request)
+            except HTTPException as error:
+                raise cls._translate(error) from error
+        return meta.model_dump(mode="json")
+
 
 # Free-standing by necessity, not by choice — see ResumeTools' docstring in
 # routers/mcp.py, which this module follows the same shape as.
@@ -443,8 +992,8 @@ class TrackingTools(McpToolBase):
 async def search_companies(query: str, limit: int = 10) -> ToolResult:
     """Find an existing company before creating one.
 
-    Search first, and pass an existing id to `create_company` or
-    `record_application` when one comes back close enough. Returns id, name,
+    Search first, and pass an existing id to `preview_create_company` or
+    `preview_record_application` when one comes back close enough. Returns id, name,
     website, application count, and the match kind/score for each candidate,
     ranked best match first.
     """
@@ -460,45 +1009,114 @@ async def get_company(company_id: int) -> ToolResult:
     return TrackingTools.as_result(await TrackingTools.get_company(company_id))
 
 
-@tool(auth=require_scopes(Scopes.COMPANIES_WRITE), output_schema=None)
-async def create_company(
+@tool(
+    auth=require_scopes(Scopes.COMPANIES_READ, Scopes.COMPANIES_WRITE),
+    output_schema=None,
+)
+async def preview_create_company(
     name: str,
     website: str | None = None,
     description: str | None = None,
     personal_note: str | None = None,
     confirm_create_duplicate: bool = False,
 ) -> ToolResult:
-    """Create a company. Search first with `search_companies` and pass an
+    """Preview creating a company - the first half of the
+    preview/confirm pair. Search first with `search_companies` and pass an
     existing id elsewhere when one comes back close enough - creating a
     duplicate silently splits the history of everything attached to it.
 
     Blocks with the near-matches when the name looks like one already on
     file; call again with confirm_create_duplicate=true only when this is
-    genuinely a different company.
+    genuinely a different company. Otherwise returns exactly what would be
+    written, plus a `confirm_token` for `confirm_create_company` - nothing is
+    written until that second call.
     """
     return TrackingTools.as_result(
-        await TrackingTools.create_company(
+        await TrackingTools.preview_create_company(
             name, website, description, personal_note, confirm_create_duplicate
         )
     )
 
 
 @tool(auth=require_scopes(Scopes.COMPANIES_WRITE), output_schema=None)
-async def add_company_stack_items(
+async def confirm_create_company(confirm_token: str) -> ToolResult:
+    """Write the company `preview_create_company` previewed. Takes only the
+    token it returned - never call this without having shown the user that
+    preview and gotten an explicit yes."""
+    return TrackingTools.as_result(
+        await TrackingTools.confirm_create_company(confirm_token)
+    )
+
+
+@tool(
+    auth=require_scopes(Scopes.COMPANIES_READ, Scopes.COMPANIES_WRITE),
+    output_schema=None,
+)
+async def preview_add_company_stack_items(
     company_id: int,
     items: list[StackItemInput],
     confirm_create_duplicate: bool = False,
 ) -> ToolResult:
-    """Add one or more technologies to a company's stack, in one call.
+    """Preview adding one or more technologies to a company's stack.
 
     Each item is deduplicated on its own against that company's existing
-    stack; a near-duplicate is skipped rather than failing the whole batch -
-    the response lists what was created and what was skipped, and why.
+    stack; a near-duplicate is listed as would-skip rather than blocking the
+    whole batch. Returns what would be created, what would be skipped and
+    why, and a `confirm_token` for `confirm_add_company_stack_items`.
     """
     return TrackingTools.as_result(
-        await TrackingTools.add_company_stack_items(
+        await TrackingTools.preview_add_company_stack_items(
             company_id, items, confirm_create_duplicate
         )
+    )
+
+
+@tool(auth=require_scopes(Scopes.COMPANIES_WRITE), output_schema=None)
+async def confirm_add_company_stack_items(confirm_token: str) -> ToolResult:
+    """Write the stack items `preview_add_company_stack_items` previewed."""
+    return TrackingTools.as_result(
+        await TrackingTools.confirm_add_company_stack_items(confirm_token)
+    )
+
+
+@tool(auth=require_scopes(Scopes.COMPANIES_READ), output_schema=None)
+async def search_company_relationships(company_id: int) -> ToolResult:
+    """Existing relationships for a company, in both directions - who it is
+    a parent, child, customer, vendor, partner of, or was acquired by."""
+    return TrackingTools.as_result(
+        await TrackingTools.search_company_relationships(company_id)
+    )
+
+
+@tool(
+    auth=require_scopes(Scopes.COMPANIES_READ, Scopes.COMPANIES_WRITE),
+    output_schema=None,
+)
+async def preview_create_company_relationship(
+    company_id: int,
+    to_company_id: int,
+    type: CompanyRelationshipTypeLiteral,
+    note: str | None = None,
+) -> ToolResult:
+    """Preview a relationship between two companies - `company_id` is
+    `type` of `to_company_id` (e.g. `company_id` is `staffing_agency_for`
+    `to_company_id`). Refuses if the pair already exists in either
+    direction; the preview reads the sentence back so a backwards
+    `from`/`to` is caught before it is written.
+    """
+    return TrackingTools.as_result(
+        await TrackingTools.preview_create_company_relationship(
+            company_id, to_company_id, type, note
+        )
+    )
+
+
+@tool(auth=require_scopes(Scopes.COMPANIES_WRITE), output_schema=None)
+async def confirm_create_company_relationship(confirm_token: str) -> ToolResult:
+    """Write the relationship `preview_create_company_relationship`
+    previewed."""
+    return TrackingTools.as_result(
+        await TrackingTools.confirm_create_company_relationship(confirm_token)
     )
 
 
@@ -513,8 +1131,11 @@ async def search_contacts(
     )
 
 
-@tool(auth=require_scopes(Scopes.CONTACTS_WRITE), output_schema=None)
-async def create_contact(
+@tool(
+    auth=require_scopes(Scopes.CONTACTS_READ, Scopes.CONTACTS_WRITE),
+    output_schema=None,
+)
+async def preview_create_contact(
     company_id: int | None = None,
     first_name: str | None = None,
     last_name: str | None = None,
@@ -525,15 +1146,16 @@ async def create_contact(
     rating: int | None = None,
     confirm_create_duplicate: bool = False,
 ) -> ToolResult:
-    """Create a contact. Search first with `search_contacts` and pass an
-    existing id when one comes back close enough.
+    """Preview creating a contact. Search first with `search_contacts` and
+    pass an existing id when one comes back close enough.
 
     Never create a contact from a guess - a name, an email pattern, or a
     title inferred from the company. Only record a contact the user names,
-    or one the posting states outright.
+    or one the posting states outright. Returns what would be written, the
+    near-matches found, and a `confirm_token` for `confirm_create_contact`.
     """
     return TrackingTools.as_result(
-        await TrackingTools.create_contact(
+        await TrackingTools.preview_create_contact(
             company_id,
             first_name,
             last_name,
@@ -544,6 +1166,14 @@ async def create_contact(
             rating,
             confirm_create_duplicate,
         )
+    )
+
+
+@tool(auth=require_scopes(Scopes.CONTACTS_WRITE), output_schema=None)
+async def confirm_create_contact(confirm_token: str) -> ToolResult:
+    """Write the contact `preview_create_contact` previewed."""
+    return TrackingTools.as_result(
+        await TrackingTools.confirm_create_contact(confirm_token)
     )
 
 
@@ -594,8 +1224,11 @@ async def get_application(application_id: int) -> ToolResult:
 # credential holding only companies:write through the door, create the
 # company, and then fail on the application — leaving an orphan company behind
 # from a call that reported failure.
-@tool(auth=require_scopes(Scopes.APPLICATIONS_WRITE), output_schema=None)
-async def record_application(
+@tool(
+    auth=require_scopes(Scopes.APPLICATIONS_READ, Scopes.APPLICATIONS_WRITE),
+    output_schema=None,
+)
+async def preview_record_application(
     company_id: int | None = None,
     company_name: str | None = None,
     job_title: str | None = None,
@@ -617,26 +1250,30 @@ async def record_application(
     system: str | None = None,
     confirm_create_duplicate: bool = False,
 ) -> ToolResult:
-    """Record that an application was submitted - the composite tool for the
-    end of a tailoring run. Call it once the documents actually used are
-    written and their names and revision ids are known.
+    """Preview recording that an application was submitted - the composite
+    preview for the end of a tailoring run. Call it once the documents
+    actually used are written and their names and revision ids are known.
 
     Exactly one of company_id or company_name is required. With
     company_name, an exact normalized match is reused silently; anything
-    else blocks the same way `create_company` does, and creating a new
-    company this way needs companies:write in addition to
-    applications:write. Never create a company or an application without
-    having searched first; if a create is refused as a duplicate, use the id
-    it returns rather than forcing a second row. Dates are `YYYY-MM-DD`.
+    else previews as a new company, and creating one this way needs
+    companies:write in addition to applications:write. Never create a
+    company or an application without having searched first; if the preview
+    shows a near-match, use its id instead of confirming a new row. Dates are
+    `YYYY-MM-DD`.
 
     Pass `job_code` whenever the posting or the recruiter names a requisition
     code. It is what identifies the same job arriving through two different
     recruiters, so it is worth capturing even when everything else about the
     two submissions differs; a code already on file is refused as a duplicate
     with the existing application's id.
+
+    Returns the resolved company action (reuse an existing one, or create a
+    new one), the application fields that would be written, any near-matches
+    found, and a `confirm_token` for `confirm_record_application`.
     """
     return TrackingTools.as_result(
-        await TrackingTools.record_application(
+        await TrackingTools.preview_record_application(
             company_id,
             company_name,
             job_title,
@@ -662,7 +1299,19 @@ async def record_application(
 
 
 @tool(auth=require_scopes(Scopes.APPLICATIONS_WRITE), output_schema=None)
-async def add_application_event(
+async def confirm_record_application(confirm_token: str) -> ToolResult:
+    """Write the company (if any) and the application
+    `preview_record_application` previewed."""
+    return TrackingTools.as_result(
+        await TrackingTools.confirm_record_application(confirm_token)
+    )
+
+
+@tool(
+    auth=require_scopes(Scopes.APPLICATIONS_READ, Scopes.APPLICATIONS_WRITE),
+    output_schema=None,
+)
+async def preview_add_application_event(
     application_id: int,
     status: ApplicationStatusLiteral | None = None,
     description: str | None = None,
@@ -670,14 +1319,60 @@ async def add_application_event(
     contact_id: int | None = None,
     occurred_at: str | None = None,
 ) -> ToolResult:
-    """Record something that happened on an application: a status change, a
-    note, a rating, or any combination - at least one of the three is
-    required. Returns the event and the application's recomputed status.
+    """Preview recording something that happened on an application: a status
+    change, a note, a rating, or any combination - at least one of the three
+    is required. Returns the application's current status, what would be
+    recorded, and a `confirm_token` for `confirm_add_application_event`.
     `occurred_at` defaults to now; pass it as an ISO 8601 timestamp to
     backdate a note.
     """
     return TrackingTools.as_result(
-        await TrackingTools.add_application_event(
+        await TrackingTools.preview_add_application_event(
             application_id, status, description, rating, contact_id, occurred_at
         )
+    )
+
+
+@tool(auth=require_scopes(Scopes.APPLICATIONS_WRITE), output_schema=None)
+async def confirm_add_application_event(confirm_token: str) -> ToolResult:
+    """Record the event `preview_add_application_event` previewed. Returns
+    the event and the application's recomputed status."""
+    return TrackingTools.as_result(
+        await TrackingTools.confirm_add_application_event(confirm_token)
+    )
+
+
+@tool(
+    auth=require_scopes(Scopes.APPLICATIONS_READ, Scopes.APPLICATIONS_WRITE),
+    output_schema=None,
+)
+async def preview_add_attachment(
+    application_id: int,
+    kind: AttachmentKindLiteral,
+    filename: str,
+    content_type: str,
+    content_base64: str,
+) -> ToolResult:
+    """Preview attaching a file to an application. Validates the content
+    type, decodes and size-checks the base64, sniffs the magic bytes against
+    the declared type, and checks for an exact-byte duplicate already on this
+    application - all before anything is written, so a 10 MiB upload is
+    rejected before it is confirmed rather than after.
+
+    Returns the filename, kind, content type, decoded byte size, and sha256 -
+    never the content itself - plus a `confirm_token` for
+    `confirm_add_attachment`.
+    """
+    return TrackingTools.as_result(
+        await TrackingTools.preview_add_attachment(
+            application_id, kind, filename, content_type, content_base64
+        )
+    )
+
+
+@tool(auth=require_scopes(Scopes.APPLICATIONS_WRITE), output_schema=None)
+async def confirm_add_attachment(confirm_token: str) -> ToolResult:
+    """Write the attachment `preview_add_attachment` previewed."""
+    return TrackingTools.as_result(
+        await TrackingTools.confirm_add_attachment(confirm_token)
     )

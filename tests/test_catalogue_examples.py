@@ -89,12 +89,27 @@ class TestCatalogueMatchesExampleFiles:
 
 
 class TestResumeSchemaMatchesModel:
-    """Phase 3 acceptance criterion: the v2 resume row's `json_schema`
-    equals `ResumePrivate.model_json_schema()` as of this commit, so a
-    future model change that forgets a matching migration is caught here
-    rather than discovered from a stale schema served to a client."""
+    """The *current* resume row's `json_schema` equals
+    `ResumePrivate.model_json_schema()` as of this commit, so a future model
+    change that forgets a matching migration is caught here rather than
+    discovered from a stale schema served to a client.
 
-    async def test_v2_resume_schema_matches_current_model(self):
+    Pinned to whichever version is current, not to a fixed number — when the
+    next schema bump moves `CURRENT_SCHEMA_VERSION_BY_TYPE[RESUME]` on, this
+    assertion moves with it. What was version 3's row here is frozen instead:
+    see `test_schema_migrations.py`'s per-phase catalogue tests for the
+    historical record of what a since-superseded version's `json_schema` was
+    when it was current.
+    """
+
+    async def test_current_resume_schema_matches_current_model(self):
         rows = await _all_rows()
-        row = next(r for r in rows if r.document_type == "resume" and r.version == 2)
+        current_version = DocumentTypeRegistry.CURRENT_SCHEMA_VERSION_BY_TYPE[
+            DocumentType.RESUME
+        ]
+        row = next(
+            r
+            for r in rows
+            if r.document_type == "resume" and r.version == current_version
+        )
         assert row.json_schema == ResumePrivate.model_json_schema()

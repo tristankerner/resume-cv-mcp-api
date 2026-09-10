@@ -136,24 +136,26 @@ class CompanyService(TrackingServiceBase):
         ]
         return ListEnvelope(data=data, total=total, limit=limit, offset=offset)
 
-    async def get_company(self, company_id: int) -> CompanyDetail:
-        self._require(Scopes.COMPANIES_READ)
+    async def _relationships_for(
+        self, company: Company
+    ) -> list[CompanyRelationshipDto]:
+        """Every relationship touching `company`, in either direction, with
+        both ends' names resolved. Shared by `get_company` and
+        `list_relationships` so the two cannot drift on what "a company's
+        relationships" means."""
         owner = self._owner()
-        company = await self._require_company(company_id)
-        summary = await self._to_summary(company)
-
-        edges = await CompanyRelationship.list_for_company(self.db, owner, company_id)
+        edges = await CompanyRelationship.list_for_company(self.db, owner, company.id)
         other_ids = list(
             {
                 edge.to_company_id
-                if edge.from_company_id == company_id
+                if edge.from_company_id == company.id
                 else edge.from_company_id
                 for edge in edges
             }
         )
-        names = {company_id: company.name}
+        names = {company.id: company.name}
         names.update(await Company.names_for(self.db, owner, other_ids))
-        relationships = [
+        return [
             CompanyRelationshipDto(
                 id=edge.id,
                 from_company_id=edge.from_company_id,
@@ -166,6 +168,19 @@ class CompanyService(TrackingServiceBase):
             )
             for edge in edges
         ]
+
+    async def list_relationships(self, company_id: int) -> list[CompanyRelationshipDto]:
+        self._require(Scopes.COMPANIES_READ)
+        company = await self._require_company(company_id)
+        return await self._relationships_for(company)
+
+    async def get_company(self, company_id: int) -> CompanyDetail:
+        self._require(Scopes.COMPANIES_READ)
+        owner = self._owner()
+        company = await self._require_company(company_id)
+        summary = await self._to_summary(company)
+
+        relationships = await self._relationships_for(company)
 
         stack_rows = await CompanyStackItem.list_for_company(self.db, owner, company_id)
         stack = [
@@ -216,19 +231,46 @@ class CompanyService(TrackingServiceBase):
             recent_applications=recent_applications,
         )
 
+    async def resolve_company(
+        self, name: str, confirm_create_duplicate: bool, exclude_id: int | None = None
+    ) -> tuple[str, list[DuplicateCandidate]]:
+        """The read-only half of `create_company`/`update_company`'s
+        duplicate check, and what `preview_create_company` (MCP) previews
+        before anything is written. Refuses under exactly the rule
+        `create_company` always enforced; returns the normalized name and
+        the non-blocking candidates otherwise, so a caller that does not
+        refuse can still show what it collided with.
+        """
+        normalized = Normalizer.company_name(name)
+        candidates = await self._candidates(name, normalized, exclude_id)
+        has_exact = any(candidate.match == "exact" for candidate in candidates)
+        if candidates and (has_exact or not confirm_create_duplicate):
+            # An exact normalized-name match is refused unconditionally: the
+            # unique index would reject the insert anyway, so there is
+            # nothing for confirm_create_duplicate to override.
+            self._refuse_if_duplicate(name, candidates)
+        return normalized, candidates
+
+    async def preview_company_creation(
+        self, request: CreateCompanyRequest
+    ) -> tuple[str, list[DuplicateCandidate]]:
+        """Everything `create_company` would check, without writing anything.
+        Requires both the read and write scope: it reads existing rows to
+        resolve duplicates, and it is the read half of a write the caller
+        has not yet committed to."""
+        self._require(Scopes.COMPANIES_READ)
+        self._require(Scopes.COMPANIES_WRITE)
+        return await self.resolve_company(
+            request.name, request.confirm_create_duplicate
+        )
+
     async def create_company(self, request: CreateCompanyRequest) -> CompanySummary:
         self._require(Scopes.COMPANIES_WRITE)
         await self._begin_write()
         owner = self._owner()
-        normalized = Normalizer.company_name(request.name)
-
-        candidates = await self._candidates(request.name, normalized, None)
-        has_exact = any(candidate.match == "exact" for candidate in candidates)
-        if candidates and (has_exact or not request.confirm_create_duplicate):
-            # An exact normalized-name match is refused unconditionally: the
-            # unique index would reject the insert anyway, so there is
-            # nothing for confirm_create_duplicate to override.
-            self._refuse_if_duplicate(request.name, candidates)
+        normalized, _candidates = await self.resolve_company(
+            request.name, request.confirm_create_duplicate
+        )
 
         company = Company(
             user_id=owner,
@@ -253,14 +295,10 @@ class CompanyService(TrackingServiceBase):
         if "name" in fields:
             if request.name is None:
                 raise TrackingErrors.invalid_reference("name", "value")
-            normalized = Normalizer.company_name(request.name)
-            if normalized != company.normalized_name:
-                candidates = await self._candidates(
-                    request.name, normalized, company_id
+            if Normalizer.company_name(request.name) != company.normalized_name:
+                normalized, _candidates = await self.resolve_company(
+                    request.name, request.confirm_create_duplicate, company_id
                 )
-                has_exact = any(candidate.match == "exact" for candidate in candidates)
-                if candidates and (has_exact or not request.confirm_create_duplicate):
-                    self._refuse_if_duplicate(request.name, candidates)
                 company.normalized_name = normalized
             company.name = request.name
 
@@ -302,11 +340,12 @@ class CompanyService(TrackingServiceBase):
         await self.db.delete(company)
         await self.db.commit()
 
-    async def create_relationship(
+    async def resolve_relationship(
         self, company_id: int, request: CreateCompanyRelationshipRequest
-    ) -> CompanyRelationshipDto:
-        self._require(Scopes.COMPANIES_WRITE)
-        await self._begin_write()
+    ) -> tuple[Company, Company]:
+        """The read-only half of `create_relationship`'s checks: resolves
+        both companies and refuses a repeat of the edge in either direction,
+        without writing anything. Returns `(from_company, to_company)`."""
         owner = self._owner()
         company = await self._require_company(company_id)
 
@@ -353,9 +392,24 @@ class CompanyService(TrackingServiceBase):
                 f'That relationship already exists: "{target.name}" is '
                 f'{existing_label} "{company.name}".'
             )
+        return company, target
+
+    async def preview_relationship_creation(
+        self, company_id: int, request: CreateCompanyRelationshipRequest
+    ) -> tuple[Company, Company]:
+        self._require(Scopes.COMPANIES_READ)
+        self._require(Scopes.COMPANIES_WRITE)
+        return await self.resolve_relationship(company_id, request)
+
+    async def create_relationship(
+        self, company_id: int, request: CreateCompanyRelationshipRequest
+    ) -> CompanyRelationshipDto:
+        self._require(Scopes.COMPANIES_WRITE)
+        await self._begin_write()
+        company, target = await self.resolve_relationship(company_id, request)
 
         edge = CompanyRelationship(
-            user_id=owner,
+            user_id=self._owner(),
             from_company_id=company_id,
             to_company_id=request.to_company_id,
             type=request.type,
@@ -433,27 +487,47 @@ class CompanyService(TrackingServiceBase):
         ]
         return ListEnvelope(data=data, total=len(data), limit=len(data), offset=0)
 
-    async def create_stack_item(
-        self, company_id: int, request: CreateCompanyStackItemRequest
-    ) -> CompanyStackItemDto:
-        self._require(Scopes.COMPANIES_WRITE)
-        await self._begin_write()
+    async def resolve_stack_item(
+        self, company_id: int, name: str, confirm_create_duplicate: bool
+    ) -> list[DuplicateCandidate]:
+        """The read-only half of `create_stack_item`'s duplicate check."""
         owner = self._owner()
         await self._require_company(company_id)
-        normalized = Normalizer.stack_item(request.name)
+        normalized = Normalizer.stack_item(name)
 
         haystack = await CompanyStackItem.all_normalized_for_company(
             self.db, owner, company_id
         )
         candidates = DuplicateFinder.rank(normalized, haystack)
         has_exact = any(candidate.match == "exact" for candidate in candidates)
-        if candidates and (has_exact or not request.confirm_create_duplicate):
+        if candidates and (has_exact or not confirm_create_duplicate):
             noun = self._pluralize(len(candidates), "item", "items")
             message = (
-                f'{len(candidates)} stack {noun} already look like "{request.name}". '
+                f'{len(candidates)} stack {noun} already look like "{name}". '
                 "Use one of them, or resend with confirm_create_duplicate: true."
             )
             raise TrackingErrors.duplicate("duplicate_stack_item", message, candidates)
+        return candidates
+
+    async def preview_stack_item_creation(
+        self, company_id: int, request: CreateCompanyStackItemRequest
+    ) -> list[DuplicateCandidate]:
+        self._require(Scopes.COMPANIES_READ)
+        self._require(Scopes.COMPANIES_WRITE)
+        return await self.resolve_stack_item(
+            company_id, request.name, request.confirm_create_duplicate
+        )
+
+    async def create_stack_item(
+        self, company_id: int, request: CreateCompanyStackItemRequest
+    ) -> CompanyStackItemDto:
+        self._require(Scopes.COMPANIES_WRITE)
+        await self._begin_write()
+        owner = self._owner()
+        await self.resolve_stack_item(
+            company_id, request.name, request.confirm_create_duplicate
+        )
+        normalized = Normalizer.stack_item(request.name)
 
         item = CompanyStackItem(
             user_id=owner,
