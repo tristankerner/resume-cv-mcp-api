@@ -269,6 +269,27 @@ class TestThrottling:
             assert user.failed_login_count == 0
 
 
+class TestMalformedCredential:
+    """§5.6 step 2: `credential["id"]` missing or not a string is refused
+    before any database lookup happens."""
+
+    async def test_a_missing_credential_id_is_refused(self, client, passkey_actor):
+        options_response = await passkey_options(client, passkey_actor.actor.username)
+        response = await passkey_login(
+            client, options_response.json()["login_token"], {"response": {}}
+        )
+        assert response.status_code == 401
+
+    async def test_a_non_string_credential_id_is_refused(self, client, passkey_actor):
+        options_response = await passkey_options(client, passkey_actor.actor.username)
+        response = await passkey_login(
+            client,
+            options_response.json()["login_token"],
+            {"id": 12345, "response": {}},
+        )
+        assert response.status_code == 401
+
+
 class TestDisabledDeployment:
     async def test_both_routes_404_and_capabilities_reports_false(
         self, client, monkeypatch

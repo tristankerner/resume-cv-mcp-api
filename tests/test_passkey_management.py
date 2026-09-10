@@ -193,6 +193,62 @@ class TestPasskeyManagementFlow:
         assert response.status_code == 404
 
 
+class TestRegistrationRefusals:
+    async def test_an_expired_or_forged_registration_token_is_401(
+        self, client, roleless
+    ):
+        response = await client.post(
+            "/users/me/passkeys",
+            headers=roleless.headers,
+            json={
+                "registration_token": "not-a-real-token",
+                "label": "Doesn't matter",
+                "credential": {},
+            },
+        )
+        assert response.status_code == 401
+
+    async def test_a_malformed_credential_is_401(self, client, roleless, password):
+        options_response = await request_options(client, roleless, password)
+        response = await client.post(
+            "/users/me/passkeys",
+            headers=roleless.headers,
+            json={
+                "registration_token": options_response.json()["registration_token"],
+                "label": "Doesn't matter",
+                "credential": {"id": "garbage", "response": {}},
+            },
+        )
+        assert response.status_code == 401
+
+    async def test_a_blank_label_is_refused_on_registration(
+        self, client, roleless, password
+    ):
+        options_response = await request_options(client, roleless, password)
+        response = await client.post(
+            "/users/me/passkeys",
+            headers=roleless.headers,
+            json={
+                "registration_token": options_response.json()["registration_token"],
+                "label": "   ",
+                "credential": {},
+            },
+        )
+        assert response.status_code == 422
+
+    async def test_a_blank_label_is_refused_on_rename(self, client, passkey_actor):
+        actor = passkey_actor.actor
+        listed = await client.get("/users/me/passkeys", headers=actor.headers)
+        credential_id = listed.json()["credentials"][0]["id"]
+
+        response = await client.patch(
+            f"/users/me/passkeys/{credential_id}",
+            headers=actor.headers,
+            json={"label": "   "},
+        )
+        assert response.status_code == 422
+
+
 class TestAuthorization:
     async def test_an_api_key_is_refused_on_get(self, client, member):
         headers = await narrowed_api_key(client, member, Scopes.RESUME_READ)

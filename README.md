@@ -260,6 +260,12 @@ own intersected with its owner's, so a key can be narrowed but never widened.
 TOTP and backup codes are available per account; failed password logins are
 throttled per account and per address.
 
+**Passkeys** are a passwordless *first* factor, not a second one — a
+registered passkey signs in on its own, without also demanding a TOTP code.
+They're available at `/token` (the browser client), `/docs/login`, and
+`/oauth/authorize`, and are off entirely unless `WEBAUTHN_RP_ID` and
+`WEBAUTHN_ALLOWED_ORIGINS` are set — see `.env.example`.
+
 **→ [Security](docs/security.md)** — scopes, roles, MFA, throttling and account
 recovery.
 
