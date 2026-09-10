@@ -37,6 +37,9 @@ class UsersRouter:
         )
         self.router.delete("/users/{user_id}/lock", status_code=204)(self.unlock_user)
         self.router.delete("/users/{user_id}/mfa", status_code=204)(self.reset_mfa)
+        self.router.delete("/users/{user_id}/passkeys", status_code=204)(
+            self.reset_passkeys
+        )
 
     async def read_users_me(self, user_service: UserServiceDep) -> UserDto:
         return await user_service.get_current_user()
@@ -105,4 +108,13 @@ class UsersRouter:
         no interactive login to be had.
         """
         await user_service.reset_mfa(user_id)
+        return Response(status_code=204)
+
+    async def reset_passkeys(
+        self, user_id: int, user_service: UserServiceDep
+    ) -> Response:
+        """Strip every passkey from an account. Requires users:admin and an
+        interactive login — see UserService.reset_passkeys.
+        """
+        await user_service.reset_passkeys(user_id)
         return Response(status_code=204)

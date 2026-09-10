@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from persistence.base import Clock
 from persistence.mfa_credential import MfaCredential
+from persistence.passkey_credential import PasskeyCredential
 from persistence.user import User
 from services.auth.auth_service import AuthService
 from services.auth.dtos.user import UserDto
@@ -288,6 +289,26 @@ class UserService(ServiceProviderInterface):
             raise UserErrors.not_found()
 
         await MfaCredential.delete_all_for_user(self.db, user_id)
+        await self.db.commit()
+
+    async def reset_passkeys(self, user_id: int) -> None:
+        """Remove every passkey from an account. Requires users:admin and an
+        interactive login, for the same reason `reset_mfa` does: a key that
+        could strip a first-factor credential owns the account.
+
+        Idempotent: an account with no passkeys returns having done nothing.
+        There is deliberately no `admin_cli` subcommand for this — unlike a
+        broken second factor, a lost passkey still leaves the owner their
+        password, so the HTTP route is enough.
+        """
+        self.principal.require_scope(Scopes.USERS_ADMIN)
+        self.principal.require_interactive()
+
+        user = await User.get_user_by_id(self.db, user_id)
+        if user is None:
+            raise UserErrors.not_found()
+
+        await PasskeyCredential.delete_all_for_user(self.db, user_id)
         await self.db.commit()
 
     @staticmethod

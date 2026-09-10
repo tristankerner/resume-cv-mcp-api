@@ -63,7 +63,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 
 import main
-from persistence.base import SQAlchemyBase
+from persistence.base import Base64Url, SQAlchemyBase
 from persistence.mfa_credential import MfaCredential
 from persistence.user import User
 from services.auth.auth_service import AuthService
@@ -73,6 +73,7 @@ from services.auth.scopes import ScopeResolver
 from services.config.config_service import ConfigService
 from services.database.database_service import DatabaseService
 from tests.support.query_recorder import QueryRecorder
+from tests.support.webauthn_authenticator import SoftwareAuthenticator
 
 
 def pytest_sessionfinish(session, exitstatus):
@@ -300,6 +301,70 @@ async def enrolled(make_actor) -> Enrolled:
 def totp_code():
     """Current code for a secret, as an authenticator app would show it."""
     return lambda secret: pyotp.TOTP(secret).now()
+
+
+@pytest.fixture
+def authenticator():
+    """A fresh SoftwareAuthenticator per test, bound to the pinned RP."""
+    return lambda **kwargs: SoftwareAuthenticator(
+        rp_id="testserver", origin="http://testserver", **kwargs
+    )
+
+
+@dataclass
+class PasskeyActor:
+    """An actor with one registered passkey, plus the authenticator that
+    holds its private key — a test drives a login by calling
+    `authenticator.authenticate(...)` again against fresh options."""
+
+    actor: Actor
+    authenticator: SoftwareAuthenticator
+    credential_id: str
+    user_handle: bytes
+
+
+@pytest.fixture
+async def passkey_actor(client, make_actor, password, authenticator) -> PasskeyActor:
+    """An actor with one registered passkey, enrolled through the real HTTP
+    routes rather than by inserting a row — the registration path is half the
+    feature and a fixture that skipped it would leave it untested by
+    everything downstream."""
+    actor = await make_actor("passkey-actor", [])
+
+    options_response = await client.post(
+        "/users/me/passkeys/options",
+        headers=actor.headers,
+        json={"current_password": password},
+    )
+    assert options_response.status_code == 200, options_response.text
+    body = options_response.json()
+
+    device = authenticator()
+    credential = device.register(body["options"])
+
+    register_response = await client.post(
+        "/users/me/passkeys",
+        headers=actor.headers,
+        json={
+            "registration_token": body["registration_token"],
+            "label": "Test passkey",
+            "credential": credential,
+        },
+    )
+    assert register_response.status_code == 200, register_response.text
+
+    async with DatabaseService.session() as db:
+        user = await User.get_user_by_id(db, actor.user_id)
+        assert user is not None
+        assert user.webauthn_user_handle is not None
+        user_handle = Base64Url.decode(user.webauthn_user_handle)
+
+    return PasskeyActor(
+        actor=actor,
+        authenticator=device,
+        credential_id=credential["id"],
+        user_handle=user_handle,
+    )
 
 
 @pytest.fixture

@@ -38,6 +38,7 @@ from routers.documents import DocumentsRouter
 from routers.mfa import MfaRouter
 from routers.oauth import OAuthRouter
 from routers.oauth_clients import OAuthClientsRouter
+from routers.passkeys import PasskeysRouter
 from routers.tracking_meta import TrackingMetaRouter
 from routers.users import UsersRouter
 from services.auth.mcp_verifier import McpTokenVerifier
@@ -295,6 +296,7 @@ class Application:
             OAuthRouter(),
             OAuthClientsRouter(),
             MfaRouter(),
+            PasskeysRouter(),
             CompaniesRouter(),
             ContactsRouter(),
             ApplicationsRouter(),
