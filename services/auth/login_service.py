@@ -6,10 +6,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from persistence.user import User
 from services.auth.auth_service import AuthService
+from services.auth.dtos.capabilities import AuthCapabilities
 from services.auth.dtos.mfa import MfaRequiredResponse
 from services.auth.exceptions import AuthErrors
 from services.auth.mfa.challenge import MfaChallengeContext, MfaChallengeToken
 from services.auth.mfa.verifier import MfaVerifier
+from services.auth.passkeys.challenge import PasskeyContext
+from services.auth.passkeys.dtos.passkey import (
+    PasskeyAuthenticationOptionsRequest,
+    PasskeyAuthenticationOptionsResponse,
+    PasskeyAuthenticationRequest,
+)
+from services.auth.passkeys.login import PasskeyLogin
 from services.auth.refresh_tokens import RefreshTokenIssuer
 from services.auth.token_data import Token
 from services.config.config_service import ConfigService
@@ -33,6 +41,34 @@ class LoginService(ServiceProviderInterface):
         self.auth_service = auth_service
         self.config_service = config_service
         self.settings = config_service.settings
+
+    def capabilities(self) -> AuthCapabilities:
+        """What this deployment's auth surface supports. Anonymous and cheap
+        — the browser client calls it before login to decide whether to show
+        a passkey button, so it must not itself require one."""
+        return AuthCapabilities(passkeys=self.settings.passkeys_enabled)
+
+    async def passkey_options(
+        self, request: PasskeyAuthenticationOptionsRequest
+    ) -> PasskeyAuthenticationOptionsResponse:
+        return await PasskeyLogin(self.db, self.settings).options(
+            request.username, PasskeyContext.TOKEN
+        )
+
+    async def passkey_login(self, request: PasskeyAuthenticationRequest) -> Token:
+        # No MfaVerifier, no MfaRequiredResponse branch, unlike `login` above:
+        # a passkey already proves possession (the private key) and knowledge
+        # or inherence (the PIN or biometric that unlocked it), so it is a
+        # complete login on its own. Demanding a TOTP code afterwards would
+        # make the stronger credential the more annoying one — see
+        # services/auth/passkeys/login.py's docstring.
+        user = await PasskeyLogin(self.db, self.settings).authenticate(
+            self.auth_service,
+            request.login_token,
+            request.credential,
+            PasskeyContext.TOKEN,
+        )
+        return await self._issue(user)
 
     async def login(self, username: str, password: str) -> Token | MfaRequiredResponse:
         user = await self.auth_service.authenticate_user(username, password)

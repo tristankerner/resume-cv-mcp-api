@@ -293,6 +293,20 @@ class AuthService(ServiceProviderInterface):
         on a correct code."""
         await self._clear_login_failures(user)
 
+    async def register_address_failure(self) -> None:
+        """Charge one failure to the calling address alone, leaving the
+        account's counters untouched.
+
+        For the passkey login path, where the account must not be charged: an
+        assertion is a signature over a server-chosen challenge, so failures
+        buy an attacker nothing, and charging them would let anyone who knows
+        a username lock that account out of its *password* login by posting
+        rubbish. See services/auth/passkeys/login.py.
+        """
+        policy = AddressPolicy.from_settings(self.config_services.settings)
+        address = policy.client_address(self.request)
+        await self._register_address_failure(address, policy, Clock.utcnow())
+
     def create_access_token(
         self, data: dict[str, Any], expires_delta: timedelta | None = None
     ) -> str:
