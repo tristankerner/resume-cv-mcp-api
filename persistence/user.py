@@ -1,3 +1,4 @@
+import secrets
 from datetime import datetime
 from typing import Any
 
@@ -6,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.mutable import MutableList
 from sqlalchemy.orm import InstrumentedAttribute, Mapped, mapped_column
 
-from .base import SQAlchemyBase
+from .base import Base64Url, SQAlchemyBase
 
 
 class User(SQAlchemyBase):
@@ -38,6 +39,14 @@ class User(SQAlchemyBase):
     # doubling, and reset by any successful login.
     lock_count: Mapped[int] = mapped_column(default=0, nullable=False)
     locked_permanently_at: Mapped[datetime | None]
+
+    # A random opaque id an authenticator stores and returns as `userHandle`
+    # in a discoverable-credential assertion. Not the row id and not the
+    # username: WebAuthn L2 §5.4.3 requires a value carrying no personal
+    # information, because it is written to hardware the user may hand on.
+    # NULL until the account registers its first passkey — a column that would
+    # otherwise be filled in for every user who will never use one.
+    webauthn_user_handle: Mapped[str | None] = mapped_column(unique=True)
 
     def __init__(self, **kwargs: Any):
         """Apply the counter defaults at construction, not only at insert.
@@ -86,6 +95,24 @@ class User(SQAlchemyBase):
     async def get_user_by_id(db: AsyncSession, id: int) -> User | None:
         user = (await db.execute(select(User).where(User.id == id))).scalars().first()
         return user
+
+    @staticmethod
+    async def get_by_webauthn_handle(db: AsyncSession, handle: str) -> User | None:
+        return (
+            (await db.execute(select(User).where(User.webauthn_user_handle == handle)))
+            .scalars()
+            .first()
+        )
+
+    @staticmethod
+    def ensure_webauthn_handle(user: User) -> str:
+        """Assign a handle if the account has none. Does not commit — the
+        caller owns the transaction, like every other policy write here."""
+        handle = user.webauthn_user_handle
+        if handle is None:
+            handle = Base64Url.encode(secrets.token_bytes(32))
+            user.webauthn_user_handle = handle
+        return handle
 
     @staticmethod
     async def lock_for_update(db: AsyncSession, id: int) -> User | None:

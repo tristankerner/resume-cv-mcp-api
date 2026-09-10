@@ -1,3 +1,4 @@
+import base64
 from datetime import UTC, datetime
 from typing import Any
 
@@ -44,3 +45,23 @@ class Clock:
         louder than a silent offset.
         """
         return datetime.now(UTC).replace(tzinfo=None)
+
+
+class Base64Url:
+    """Base64url, padding stripped on the way out and restored on the way in.
+
+    Every WebAuthn byte string this package stores or compares — a credential
+    id, a COSE public key, a user handle — travels as one of these rather than
+    raw bytes, so it fits a plain `String` column on both SQLite and Postgres.
+    Kept here rather than in `services/auth/passkeys/`: persistence does not
+    import services anywhere in this repo, and `User.ensure_webauthn_handle`
+    needs it too.
+    """
+
+    @staticmethod
+    def encode(value: bytes) -> str:
+        return base64.urlsafe_b64encode(value).decode().rstrip("=")
+
+    @staticmethod
+    def decode(value: str) -> bytes:
+        return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))

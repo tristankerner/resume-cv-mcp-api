@@ -157,6 +157,7 @@ class AuditColumns:
                 "locked_until",
                 "lock_count",
                 "locked_permanently_at",
+                "webauthn_user_handle",
             ],
         ),
         "api_keys": (

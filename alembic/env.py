@@ -28,6 +28,7 @@ from persistence import (  # noqa: F401
     oauth_authorization_code,
     oauth_client,
     oauth_refresh_token,
+    passkey_credential,
     pending_write,
     role_scope,
     user,

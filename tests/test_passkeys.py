@@ -1,16 +1,48 @@
-"""The passkeys package: settings validation now, the relying party, the
-ceremony wrapper, the challenge tokens and the sign-count claim as later
-steps land. Mirrors tests/test_mfa.py's class-per-concern layout.
+"""The passkeys package: settings validation, persistence, the relying party,
+the ceremony wrapper, the challenge tokens and the sign-count claim. Mirrors
+tests/test_mfa.py's class-per-concern layout.
 """
 
 import pytest
 from cryptography.fernet import Fernet
 
+from persistence.base import Clock
+from persistence.passkey_credential import PasskeyCredential
+from persistence.user import User
 from services.config.config_service import ConfigService
+from services.database.database_service import DatabaseService
 
 
 def settings():
     return ConfigService.get_without_deps().settings
+
+
+async def make_user(username: str) -> User:
+    async with DatabaseService.session() as db:
+        user = User(username=username, password="irrelevant-hash", roles=[])
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+        return user
+
+
+async def make_credential(
+    user_id: int, credential_id: str = "cred-1", **overrides
+) -> PasskeyCredential:
+    async with DatabaseService.session() as db:
+        credential = PasskeyCredential(
+            user_id=user_id,
+            credential_id=credential_id,
+            public_key="pubkey",
+            device_type="multi_device",
+            backed_up=True,
+            label="Test authenticator",
+            **overrides,
+        )
+        db.add(credential)
+        await db.commit()
+        await db.refresh(credential)
+        return credential
 
 
 @pytest.fixture
@@ -109,3 +141,153 @@ class TestWebauthnSettings:
         mid-run relies on."""
         reconfigure(WEBAUTHN_RP_ID="", WEBAUTHN_ALLOWED_ORIGINS=None)
         assert settings().passkeys_enabled is False
+
+
+class TestWebauthnUserHandle:
+    """`User.ensure_webauthn_handle` and `get_by_webauthn_handle`."""
+
+    async def test_a_fresh_user_has_no_handle(self):
+        user = await make_user("handle-fresh")
+        assert user.webauthn_user_handle is None
+
+    async def test_ensure_assigns_a_handle_once(self):
+        user = await make_user("handle-assign")
+        async with DatabaseService.session() as db:
+            user = await User.get_user_by_id(db, user.id)
+            assert user is not None
+            first = User.ensure_webauthn_handle(user)
+            await db.commit()
+        assert first
+
+        async with DatabaseService.session() as db:
+            user = await User.get_user_by_id(db, user.id)
+            assert user is not None
+            second = User.ensure_webauthn_handle(user)
+        assert second == first
+
+    async def test_get_by_webauthn_handle_finds_the_right_user(self):
+        user = await make_user("handle-lookup")
+        async with DatabaseService.session() as db:
+            user = await User.get_user_by_id(db, user.id)
+            assert user is not None
+            handle = User.ensure_webauthn_handle(user)
+            await db.commit()
+
+        async with DatabaseService.session() as db:
+            found = await User.get_by_webauthn_handle(db, handle)
+            assert found is not None
+            assert found.id == user.id
+
+    async def test_an_unknown_handle_finds_nobody(self):
+        async with DatabaseService.session() as db:
+            assert await User.get_by_webauthn_handle(db, "no-such-handle") is None
+
+
+class TestPasskeyCredentialPersistence:
+    async def test_list_for_user_is_ordered_by_creation(self):
+        user = await make_user("cred-list")
+        first = await make_credential(user.id, "cred-list-1")
+        second = await make_credential(user.id, "cred-list-2")
+
+        async with DatabaseService.session() as db:
+            credentials = await PasskeyCredential.list_for_user(db, user.id)
+        assert [c.id for c in credentials] == [first.id, second.id]
+
+    async def test_get_for_user_is_scoped_to_the_owner(self):
+        owner = await make_user("cred-owner")
+        stranger = await make_user("cred-stranger")
+        credential = await make_credential(owner.id, "cred-owner-1")
+
+        async with DatabaseService.session() as db:
+            assert (
+                await PasskeyCredential.get_for_user(db, owner.id, credential.id)
+                is not None
+            )
+            assert (
+                await PasskeyCredential.get_for_user(db, stranger.id, credential.id)
+                is None
+            )
+
+    async def test_get_by_credential_id_is_unscoped(self):
+        user = await make_user("cred-lookup")
+        credential = await make_credential(user.id, "cred-lookup-1")
+
+        async with DatabaseService.session() as db:
+            found = await PasskeyCredential.get_by_credential_id(db, "cred-lookup-1")
+            assert found is not None
+            assert found.id == credential.id
+            assert (
+                await PasskeyCredential.get_by_credential_id(db, "no-such-id") is None
+            )
+
+    async def test_delete_all_for_user_removes_every_row(self):
+        user = await make_user("cred-delete")
+        await make_credential(user.id, "cred-delete-1")
+        await make_credential(user.id, "cred-delete-2")
+
+        async with DatabaseService.session() as db:
+            removed = await PasskeyCredential.delete_all_for_user(db, user.id)
+            await db.commit()
+        assert removed == 2
+
+        async with DatabaseService.session() as db:
+            assert await PasskeyCredential.list_for_user(db, user.id) == []
+
+
+class TestClaimSignCount:
+    async def test_zero_stays_zero_and_still_updates_last_used_at(self):
+        user = await make_user("sign-count-zero")
+        credential = await make_credential(user.id, "sign-count-zero-1")
+        assert credential.last_used_at is None
+
+        now = Clock.utcnow()
+        async with DatabaseService.session() as db:
+            credential = await PasskeyCredential.get_for_user(
+                db, user.id, credential.id
+            )
+            assert credential is not None
+            won = await PasskeyCredential.claim_sign_count(credential, db, 0, now)
+            await db.commit()
+        assert won
+        assert credential.sign_count == 0
+        assert credential.last_used_at == now
+
+    async def test_an_advance_wins(self):
+        user = await make_user("sign-count-advance")
+        credential = await make_credential(user.id, "sign-count-advance-1")
+
+        now = Clock.utcnow()
+        async with DatabaseService.session() as db:
+            credential = await PasskeyCredential.get_for_user(
+                db, user.id, credential.id
+            )
+            assert credential is not None
+            won = await PasskeyCredential.claim_sign_count(credential, db, 5, now)
+            await db.commit()
+        assert won
+        assert credential.sign_count == 5
+
+    async def test_a_repeat_of_the_same_non_zero_count_loses(self):
+        user = await make_user("sign-count-replay")
+        credential = await make_credential(user.id, "sign-count-replay-1")
+
+        now = Clock.utcnow()
+        async with DatabaseService.session() as db:
+            credential = await PasskeyCredential.get_for_user(
+                db, user.id, credential.id
+            )
+            assert credential is not None
+            assert await PasskeyCredential.claim_sign_count(credential, db, 5, now)
+            await db.commit()
+
+        async with DatabaseService.session() as db:
+            credential = await PasskeyCredential.get_for_user(
+                db, user.id, credential.id
+            )
+            assert credential is not None
+            replayed = await PasskeyCredential.claim_sign_count(
+                credential, db, 5, Clock.utcnow()
+            )
+            await db.commit()
+        assert not replayed
+        assert credential.sign_count == 5
