@@ -218,8 +218,8 @@ each one, with résumé/metadata/skill document references, attachments, and an
 audit trail of every change. `applications:*`, `companies:*` and `contacts:*`
 scopes, per entity, plus `audit:read`.
 
-The `preview_record_application`/`confirm_record_application` MCP tool pair
-is meant to run at the end of a tailoring session: search for the company
+The `preview_record_application` MCP tool, committed with `confirm`, is meant
+to run at the end of a tailoring session: search for the company
 first, tailor the résumé, then preview and confirm the application with the
 documents actually used — see `examples/resume.skill.example.json`'s
 `offer-application-record` step.

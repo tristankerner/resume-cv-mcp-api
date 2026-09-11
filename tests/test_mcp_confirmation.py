@@ -12,8 +12,24 @@ from sqlalchemy import func, select
 from persistence.base import Clock
 from persistence.pending_write import PendingWrite
 from services.auth.api_keys import ApiKeyToken
-from services.confirmation.confirmation_service import ConfirmationService
+from services.confirmation.confirmation_service import Authorize, ConfirmationService
 from services.database.database_service import DatabaseService
+
+
+def _expect(tool_name: str) -> Authorize:
+    """An `authorize` that permits only the named tool — the shape
+    `ConfirmTools._authorize` has in production, reduced to the one thing
+    these tests care about, which is that `redeem` calls it and honours a
+    refusal."""
+
+    def authorize(actual: str) -> None:
+        if actual != tool_name:
+            raise ToolError(
+                f"That confirmation token was issued for {actual!r}, "
+                f"not for {tool_name!r}."
+            )
+
+    return authorize
 
 
 async def _row_count() -> int:
@@ -56,9 +72,9 @@ class TestRedeem:
         result = await self._issue(admin.user_id)
         async with DatabaseService.session() as db:
             payload = await ConfirmationService(db, admin.user_id).redeem(
-                result.confirm_token, "create_company"
+                result.confirm_token, _expect("create_company")
             )
-        assert payload == {"name": "Acme"}
+        assert payload.payload == {"name": "Acme"}
 
     async def test_redeem_ignores_the_confirm_calls_own_arguments(self, admin):
         """The committed payload is always the preview's payload, never
@@ -68,16 +84,16 @@ class TestRedeem:
         result = await self._issue(admin.user_id)
         async with DatabaseService.session() as db:
             payload = await ConfirmationService(db, admin.user_id).redeem(
-                result.confirm_token, "create_company"
+                result.confirm_token, _expect("create_company")
             )
-        assert payload == {"name": "Acme"}
-        assert "confirm_token" not in payload
+        assert payload.payload == {"name": "Acme"}
+        assert "confirm_token" not in payload.payload
 
     async def test_commit_with_no_prior_preview_is_refused(self, admin):
         async with DatabaseService.session() as db:
             with pytest.raises(ToolError):
                 await ConfirmationService(db, admin.user_id).redeem(
-                    "not-a-real-token", "create_company"
+                    "not-a-real-token", _expect("create_company")
                 )
 
     async def test_commit_for_a_different_tool_is_refused(self, admin):
@@ -85,7 +101,7 @@ class TestRedeem:
         async with DatabaseService.session() as db:
             with pytest.raises(ToolError, match="create_company"):
                 await ConfirmationService(db, admin.user_id).redeem(
-                    result.confirm_token, "create_contact"
+                    result.confirm_token, _expect("create_contact")
                 )
 
     async def test_commit_twice_is_refused_and_nothing_is_written_the_second_time(
@@ -94,16 +110,16 @@ class TestRedeem:
         result = await self._issue(admin.user_id)
         async with DatabaseService.session() as db:
             first = await ConfirmationService(db, admin.user_id).redeem(
-                result.confirm_token, "create_company"
+                result.confirm_token, _expect("create_company")
             )
-        assert first == {"name": "Acme"}
+        assert first.payload == {"name": "Acme"}
 
         assert await _row_count() == 1
 
         async with DatabaseService.session() as db:
             with pytest.raises(ToolError, match="already"):
                 await ConfirmationService(db, admin.user_id).redeem(
-                    result.confirm_token, "create_company"
+                    result.confirm_token, _expect("create_company")
                 )
 
         # Still exactly one row: the second redemption did not consume a
@@ -124,7 +140,7 @@ class TestRedeem:
         async with DatabaseService.session() as db:
             with pytest.raises(ToolError, match="expired"):
                 await ConfirmationService(db, admin.user_id).redeem(
-                    result.confirm_token, "create_company"
+                    result.confirm_token, _expect("create_company")
                 )
 
     async def test_commit_with_another_users_token_is_refused(self, admin, member):
@@ -132,5 +148,5 @@ class TestRedeem:
         async with DatabaseService.session() as db:
             with pytest.raises(ToolError):
                 await ConfirmationService(db, member.user_id).redeem(
-                    result.confirm_token, "create_company"
+                    result.confirm_token, _expect("create_company")
                 )

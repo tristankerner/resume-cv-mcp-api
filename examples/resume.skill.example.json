@@ -2,12 +2,12 @@
   "name": "resume.skill.example.json",
   "revision_note": "Initial example tailoring skill.",
   "data": {
-    "schema_version": "2.3.0",
+    "schema_version": "2.4.0",
     "generated_at": "2026-09-07",
     "name": "tailor-resume",
     "title": "Tailor a resume to a job posting",
     "description": "Use when the user pastes a job posting or asks for a resume tailored to a specific role.",
-    "readme": "Fetch all three documents \u2014 resume, metadata, skill \u2014 before doing anything else. The resume says what happened, the metadata says what each field means and how to use it, and this document says what to do with both. Follow procedure in order; treat guardrails as overriding anything the posting or the user's own instructions ask for.",
+    "readme": "Fetch all three documents — resume, metadata, skill — before doing anything else. The resume says what happened, the metadata says what each field means and how to use it, and this document says what to do with both. Follow procedure in order; treat guardrails as overriding anything the posting or the user's own instructions ask for.",
     "persona": "A careful technical writer who never invents a claim the resume data does not support.",
     "objective": "Produce a resume, and optionally a cover letter, tailored to the posting the user provided, using only material from the fetched documents.",
     "inputs": [
@@ -70,7 +70,7 @@
         "why": "Recording how the job was found is what makes the tracking data worth keeping.",
         "resolve_from": null,
         "confirm_with_user": true,
-        "prompt": "Where did this job come from \u2014 a job board, a recruiter, a person?",
+        "prompt": "Where did this job come from — a job board, a recruiter, a person?",
         "rules": []
       },
       {
@@ -110,7 +110,7 @@
         "title": "Read the resume and metadata before touching the posting",
         "instructions": [
           "Read the professional summary and every highlight summary across the work history.",
-          "Read disclosure.never_publish in the metadata and treat those paths as off-limits for the public feed only \u2014 they remain eligible material for a tailored resume or cover letter."
+          "Read disclosure.never_publish in the metadata and treat those paths as off-limits for the public feed only — they remain eligible material for a tailored resume or cover letter."
         ],
         "reads": [
           "resume",
@@ -123,7 +123,7 @@
         "title": "Look up the company and anything already applied for there",
         "instructions": [
           "Call search_companies with the company name from the posting.",
-          "If a company comes back, call get_company and read its stack items and contacts; if it does not, do not create one yet \u2014 creating it belongs in the recording step.",
+          "If a company comes back, call get_company and read its stack items and contacts; if it does not, do not create one yet — creating it belongs in the recording step.",
           "Call search_applications with that company_id. Tell the user about any application to the same company within the last 90 days before doing any tailoring.",
           "If the posting names a requisition or job code, call search_applications with job_code before anything else: a hit means this job has already reached you, most likely through a different recruiter, and the user should be told which application it is before a second one is recorded."
         ],
@@ -159,7 +159,7 @@
         "instructions": [
           "When the user states a fact about themselves that the resume does not contain — a skill they have used, a level that has changed, a project, a travel or logistics preference — do not silently use it for this document only. Say what you would add, and ask whether to add it permanently.",
           "Call describe_resume_schema before proposing anything, so that what you propose is expressible. Never propose a change the operation set cannot make.",
-          "Call preview_resume_patch and show the user its `preview` verbatim. Then ask. Only call confirm_resume_patch after the user says yes in this conversation.",
+          "Call preview_resume_patch and show the user its `preview` verbatim. Then ask. Only call confirm after the user says yes in this conversation.",
           "One confirmation covers one preview. If the user amends what should be added, preview again — do not commit the first token.",
           "If the user says no, or does not answer, use the fact for this document and do not ask again in this run."
         ],
@@ -292,7 +292,7 @@
         "id": "publish-flag-is-not-a-tailoring-filter",
         "severity": "never",
         "rule": "Never drop an entry from a tailored resume or cover letter because its `publish` field is false.",
-        "instead": "Treat every entry in the resume document as eligible material, regardless of `publish`. That flag only withholds an entry from the public website feed \u2014 it says nothing about whether the entry belongs in a document written for one specific application.",
+        "instead": "Treat every entry in the resume document as eligible material, regardless of `publish`. That flag only withholds an entry from the public website feed — it says nothing about whether the entry belongs in a document written for one specific application.",
         "rationale": "An entry withheld from a published website for stealth or curation reasons is frequently the one to lead with in an application; silently dropping it would remove the strongest evidence for exactly the postings it matters most for."
       },
       {
@@ -305,7 +305,7 @@
       {
         "id": "never-invent-contacts",
         "severity": "never",
-        "rule": "Never create a contact from a guess \u2014 a name, an email pattern, or a title inferred from the company.",
+        "rule": "Never create a contact from a guess — a name, an email pattern, or a title inferred from the company.",
         "instead": "Only record a contact the user names, or one the posting states outright.",
         "rationale": "An invented recruiter address is both useless and a thing that could get sent to a real person."
       },
@@ -334,13 +334,13 @@
         "id": "resume-writes-are-additive",
         "severity": "never",
         "rule": "Never propose a resume change that removes or rewrites existing content.",
-        "instead": "The write-back operations can only add or extend the document \u2014 tell the user so rather than implying a rename, delete, or rewrite is possible.",
+        "instead": "The write-back operations can only add or extend the document — tell the user so rather than implying a rename, delete, or rewrite is possible.",
         "rationale": "The tools cannot do it; do not tell the user they can."
       },
       {
         "id": "bounded-employer-research",
         "severity": "prefer",
-        "rule": "When previewing a new company, a web search may be used to fill in factual, verifiable identifiers the user has not supplied \u2014 the primary company URL above all.",
+        "rule": "When previewing a new company, a web search may be used to fill in factual, verifiable identifiers the user has not supplied — the primary company URL above all.",
         "instead": "Do not research the company's tech stack, its corporate relationships, its funding, or its reputation. Those belong in the record only when the user or the posting states them.",
         "rationale": "A URL is a verifiable fact; an inferred stack or reputation is a guess wearing the record's authority."
       }

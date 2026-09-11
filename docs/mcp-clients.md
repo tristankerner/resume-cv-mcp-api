@@ -73,12 +73,10 @@ rather than a refusal.
 
 ### Application tracking tools
 
-`search_companies`, `preview_create_company`/`confirm_create_company`,
-`preview_add_company_stack_items`/`confirm_add_company_stack_items`,
-`search_contacts`, `preview_create_contact`/`confirm_create_contact`,
-`search_applications`, `get_application`,
-`preview_record_application`/`confirm_record_application`, and
-`preview_add_application_event`/`confirm_add_application_event` need
+`search_companies`, `search_contacts`, `search_applications`,
+`get_application`, the `preview_*` tools for companies, stack items,
+contacts, applications and events, and the single `confirm` that commits any
+of them, need
 `applications:read`/`write` and `companies:read`/`write` (plus
 `contacts:read`/`write` if the client records contacts) — every `preview_*`
 needs **both** the read and write scope for the type it previews, since it
@@ -180,16 +178,18 @@ call — see the guardrails in `resume_skill.guardrails`.
 **3. Confirm**, with the token and nothing else:
 
 ```json
-{"method": "tools/call", "params": {"name": "confirm_resume_patch", "arguments": {"confirm_token": "kx7f…"}}}
+{"method": "tools/call", "params": {"name": "confirm", "arguments": {"confirm_token": "kx7f…"}}}
 ```
 
 ```json
-{"name": "resume.json", "revision_id": 4, "status": "created"}
+{"confirmed": "resume_patch", "result": {"name": "resume.json", "revision_id": 4, "status": "created"}}
 ```
 
 `confirm_token` is single-use and expires in `expires_in` seconds; a second
-`confirm_resume_patch` call with the same token is refused, and nothing is
-written the second time. Every other write tool (`preview_create_company`,
+`confirm` call with the same token is refused, and nothing is written the
+second time. `confirmed` names the tool the token was issued for — there is
+one `confirm` for every kind of write, and it dispatches on the token rather
+than on what the caller says. Every other write (`preview_create_company`,
 `preview_record_application`, …) follows this exact same three-call shape —
 see [`docs/api.md`](api.md#mcp) for the full tool table.
 

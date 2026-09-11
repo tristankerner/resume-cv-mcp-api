@@ -52,13 +52,13 @@ flowchart LR
     D[describe_resume_schema] --> P[preview_resume_patch]
     P -->|preview + confirm_token| U{User confirms?}
     U -->|no| X[Nothing written]
-    U -->|yes| C[confirm_resume_patch]
+    U -->|yes| C[confirm]
     C --> R[New revision appended]
 ```
 
 `describe_resume_schema` is stateless and read-only — call it as often as
 needed to check whether a proposed change is expressible before ever calling
-`preview_resume_patch`. Nothing is written until `confirm_resume_patch`
+`preview_resume_patch`. Nothing is written until `confirm`
 redeems the token `preview_resume_patch` issued; a preview that is never
 confirmed leaves no trace beyond its own short-lived token. `metadata` and
 `skill` documents have no write path here at all — see

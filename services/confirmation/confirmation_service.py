@@ -12,6 +12,7 @@ is the part of the design that is not advice: a model that never calls
 """
 
 import secrets
+from collections.abc import Callable
 from typing import Any, ClassVar, NamedTuple
 
 from fastmcp.exceptions import ToolError
@@ -21,11 +22,18 @@ from persistence.base import Clock
 from persistence.pending_write import PendingWrite
 from services.auth.api_keys import ApiKeyToken
 
+Authorize = Callable[[str], None]
+
 
 class PreviewResult(NamedTuple):
     preview: dict[str, Any]
     confirm_token: str
     expires_in: int
+
+
+class RedeemedWrite(NamedTuple):
+    tool_name: str
+    payload: dict[str, Any]
 
 
 class ConfirmationService:
@@ -63,12 +71,21 @@ class ConfirmationService:
             expires_in=int(PendingWrite.TTL.total_seconds()),
         )
 
-    async def redeem(self, token: str, tool_name: str) -> dict[str, Any]:
-        """The frozen payload `issue` was given, or a refusal distinct per
-        case: unknown token, expired, already consumed, issued for a
-        different tool, issued to a different user. Distinct messages
-        matter — the model has to be able to tell "you already did this"
-        from "that expired, ask again" and behave differently.
+    async def redeem(self, token: str, authorize: Authorize) -> RedeemedWrite:
+        """Which tool the token was issued for and the frozen payload `issue`
+        was given, or a refusal distinct per case: unknown token, expired,
+        already consumed, not permitted, issued to a different user. Distinct
+        messages matter — the model has to be able to tell "you already did
+        this" from "that expired, ask again" and behave differently.
+
+        `authorize` is handed the tool name the token was issued for and
+        raises to refuse. It runs inside the same locked transaction as the
+        checks below and strictly before `consumed_at` is set, so a caller
+        that is not permitted to make this write cannot burn the token
+        finding that out. There is one confirm tool for every kind of
+        pending write, so the scope a given one needs is only knowable here,
+        after the record is read — a decorator on the tool cannot make this
+        check. See `routers.mcp_confirm.ConfirmTools`.
 
         The row is locked before any of these checks (see
         `PendingWrite.lock_by_hash`), so two concurrent redemptions of the
@@ -85,11 +102,7 @@ class ConfirmationService:
         # DocumentService applies to a document owned by someone else.
         if record is None or record.user_id != self.user_id:
             raise ToolError("No pending write matches that confirmation token.")
-        if record.tool_name != tool_name:
-            raise ToolError(
-                f"That confirmation token was issued for {record.tool_name!r}, "
-                f"not for {tool_name!r}. Call {tool_name}'s preview tool first."
-            )
+        authorize(record.tool_name)
         if record.consumed_at is not None:
             raise ToolError(
                 "That confirmation token has already been used. Nothing was "
@@ -104,4 +117,4 @@ class ConfirmationService:
 
         record.consumed_at = Clock.utcnow()
         await self.db.commit()
-        return record.payload
+        return RedeemedWrite(tool_name=record.tool_name, payload=record.payload)

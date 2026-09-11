@@ -1,5 +1,5 @@
 """`ResumePatchService` and the `describe_resume_schema` /
-`preview_resume_patch` / `confirm_resume_patch` MCP tools — see
+`preview_resume_patch` MCP tool and the unified `confirm` — see
 MCP_WRITEBACK_PLAN.md §4.1-4.4.
 """
 
@@ -12,12 +12,12 @@ from mcp.types import TextContent
 from pydantic import TypeAdapter
 
 from persistence.document import Document
+from routers.mcp_confirm import confirm
 from routers.mcp_documents import (
-    DocumentPatchTools,
-    confirm_resume_patch,
     describe_resume_schema,
     preview_resume_patch,
 )
+from services.auth.mcp_tools import McpToolBase
 from services.auth.principal import CredentialKind, Principal
 from services.auth.scopes import Scopes
 from services.database.database_service import DatabaseService
@@ -416,12 +416,11 @@ class TestMcpToolLayer:
 
     @pytest.fixture
     def as_admin(self, monkeypatch, admin):
-        monkeypatch.setattr(
-            DocumentPatchTools, "current_user_id", lambda: admin.user_id
-        )
-        monkeypatch.setattr(
-            DocumentPatchTools, "current_scopes", lambda: frozenset(Scopes)
-        )
+        # Patched on the base rather than on `DocumentPatchTools`: `confirm`
+        # reads the credential through `ConfirmTools`, a sibling subclass that
+        # would not see an attribute shadowed on this one.
+        monkeypatch.setattr(McpToolBase, "current_user_id", lambda: admin.user_id)
+        monkeypatch.setattr(McpToolBase, "current_scopes", lambda: frozenset(Scopes))
         return admin
 
     async def test_describe_resume_schema_returns_operations(self, as_admin):
@@ -439,8 +438,8 @@ class TestMcpToolLayer:
         preview_body = json.loads(_text(preview_result))
         assert preview_body["preview"]["touched"][0]["after"] == "Debugging."
 
-        confirm_result = await confirm_resume_patch(preview_body["confirm_token"])
-        confirm_body = json.loads(_text(confirm_result))
+        confirm_result = await confirm(preview_body["confirm_token"])
+        confirm_body = json.loads(_text(confirm_result))["result"]
         assert confirm_body["revision_id"] == stored_resume["revision_id"] + 1
 
     async def test_confirming_twice_is_refused(self, as_admin, stored_resume):
@@ -450,9 +449,9 @@ class TestMcpToolLayer:
             [{"op": "append_narrative", "field": "strengths", "text": "x"}],
         )
         preview_body = json.loads(_text(preview_result))
-        await confirm_resume_patch(preview_body["confirm_token"])
+        await confirm(preview_body["confirm_token"])
         with pytest.raises(ToolError):
-            await confirm_resume_patch(preview_body["confirm_token"])
+            await confirm(preview_body["confirm_token"])
 
     async def test_invalid_op_is_refused_before_any_token_is_issued(
         self, as_admin, stored_resume

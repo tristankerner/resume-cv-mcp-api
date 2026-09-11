@@ -212,8 +212,7 @@ class TrackingTools(McpToolBase):
         return await cls.issue_preview("create_company", payload, preview)
 
     @classmethod
-    async def confirm_create_company(cls, confirm_token: str) -> dict:
-        payload = await cls.redeem_confirmation("create_company", confirm_token)
+    async def apply_create_company(cls, payload: dict) -> dict:
         return await cls.create_company(**payload)
 
     @classmethod
@@ -296,10 +295,7 @@ class TrackingTools(McpToolBase):
         return await cls.issue_preview("add_company_stack_items", payload, preview)
 
     @classmethod
-    async def confirm_add_company_stack_items(cls, confirm_token: str) -> dict:
-        payload = await cls.redeem_confirmation(
-            "add_company_stack_items", confirm_token
-        )
+    async def apply_add_company_stack_items(cls, payload: dict) -> dict:
         items = [StackItemInput(**item) for item in payload["items"]]
         return await cls.add_company_stack_items(
             payload["company_id"], items, payload["confirm_create_duplicate"]
@@ -391,10 +387,7 @@ class TrackingTools(McpToolBase):
         return await cls.issue_preview("create_company_relationship", payload, preview)
 
     @classmethod
-    async def confirm_create_company_relationship(cls, confirm_token: str) -> dict:
-        payload = await cls.redeem_confirmation(
-            "create_company_relationship", confirm_token
-        )
+    async def apply_create_company_relationship(cls, payload: dict) -> dict:
         return await cls.create_company_relationship(**payload)
 
     @classmethod
@@ -491,8 +484,7 @@ class TrackingTools(McpToolBase):
         return await cls.issue_preview("create_contact", payload, preview)
 
     @classmethod
-    async def confirm_create_contact(cls, confirm_token: str) -> dict:
-        payload = await cls.redeem_confirmation("create_contact", confirm_token)
+    async def apply_create_contact(cls, payload: dict) -> dict:
         return await cls.create_contact(**payload)
 
     @classmethod
@@ -733,8 +725,7 @@ class TrackingTools(McpToolBase):
         return await cls.issue_preview("record_application", payload, preview)
 
     @classmethod
-    async def confirm_record_application(cls, confirm_token: str) -> dict:
-        payload = await cls.redeem_confirmation("record_application", confirm_token)
+    async def apply_record_application(cls, payload: dict) -> dict:
         return await cls.record_application(**payload)
 
     @classmethod
@@ -886,8 +877,7 @@ class TrackingTools(McpToolBase):
         return await cls.issue_preview("add_application_event", payload, preview)
 
     @classmethod
-    async def confirm_add_application_event(cls, confirm_token: str) -> dict:
-        payload = await cls.redeem_confirmation("add_application_event", confirm_token)
+    async def apply_add_application_event(cls, payload: dict) -> dict:
         return await cls.add_application_event(**payload)
 
     @classmethod
@@ -958,8 +948,7 @@ class TrackingTools(McpToolBase):
         return await cls.issue_preview("add_attachment", payload, preview)
 
     @classmethod
-    async def confirm_add_attachment(cls, confirm_token: str) -> dict:
-        payload = await cls.redeem_confirmation("add_attachment", confirm_token)
+    async def apply_add_attachment(cls, payload: dict) -> dict:
         return await cls.add_attachment(**payload)
 
     @classmethod
@@ -1038,16 +1027,6 @@ async def preview_create_company(
     )
 
 
-@tool(auth=require_scopes(Scopes.COMPANIES_WRITE), output_schema=None)
-async def confirm_create_company(confirm_token: str) -> ToolResult:
-    """Write the company `preview_create_company` previewed. Takes only the
-    token it returned - never call this without having shown the user that
-    preview and gotten an explicit yes."""
-    return TrackingTools.as_result(
-        await TrackingTools.confirm_create_company(confirm_token)
-    )
-
-
 @tool(
     auth=require_scopes(Scopes.COMPANIES_READ, Scopes.COMPANIES_WRITE),
     output_schema=None,
@@ -1068,14 +1047,6 @@ async def preview_add_company_stack_items(
         await TrackingTools.preview_add_company_stack_items(
             company_id, items, confirm_create_duplicate
         )
-    )
-
-
-@tool(auth=require_scopes(Scopes.COMPANIES_WRITE), output_schema=None)
-async def confirm_add_company_stack_items(confirm_token: str) -> ToolResult:
-    """Write the stack items `preview_add_company_stack_items` previewed."""
-    return TrackingTools.as_result(
-        await TrackingTools.confirm_add_company_stack_items(confirm_token)
     )
 
 
@@ -1108,15 +1079,6 @@ async def preview_create_company_relationship(
         await TrackingTools.preview_create_company_relationship(
             company_id, to_company_id, type, note
         )
-    )
-
-
-@tool(auth=require_scopes(Scopes.COMPANIES_WRITE), output_schema=None)
-async def confirm_create_company_relationship(confirm_token: str) -> ToolResult:
-    """Write the relationship `preview_create_company_relationship`
-    previewed."""
-    return TrackingTools.as_result(
-        await TrackingTools.confirm_create_company_relationship(confirm_token)
     )
 
 
@@ -1166,14 +1128,6 @@ async def preview_create_contact(
             rating,
             confirm_create_duplicate,
         )
-    )
-
-
-@tool(auth=require_scopes(Scopes.CONTACTS_WRITE), output_schema=None)
-async def confirm_create_contact(confirm_token: str) -> ToolResult:
-    """Write the contact `preview_create_contact` previewed."""
-    return TrackingTools.as_result(
-        await TrackingTools.confirm_create_contact(confirm_token)
     )
 
 
@@ -1298,15 +1252,6 @@ async def preview_record_application(
     )
 
 
-@tool(auth=require_scopes(Scopes.APPLICATIONS_WRITE), output_schema=None)
-async def confirm_record_application(confirm_token: str) -> ToolResult:
-    """Write the company (if any) and the application
-    `preview_record_application` previewed."""
-    return TrackingTools.as_result(
-        await TrackingTools.confirm_record_application(confirm_token)
-    )
-
-
 @tool(
     auth=require_scopes(Scopes.APPLICATIONS_READ, Scopes.APPLICATIONS_WRITE),
     output_schema=None,
@@ -1330,15 +1275,6 @@ async def preview_add_application_event(
         await TrackingTools.preview_add_application_event(
             application_id, status, description, rating, contact_id, occurred_at
         )
-    )
-
-
-@tool(auth=require_scopes(Scopes.APPLICATIONS_WRITE), output_schema=None)
-async def confirm_add_application_event(confirm_token: str) -> ToolResult:
-    """Record the event `preview_add_application_event` previewed. Returns
-    the event and the application's recomputed status."""
-    return TrackingTools.as_result(
-        await TrackingTools.confirm_add_application_event(confirm_token)
     )
 
 
@@ -1367,12 +1303,4 @@ async def preview_add_attachment(
         await TrackingTools.preview_add_attachment(
             application_id, kind, filename, content_type, content_base64
         )
-    )
-
-
-@tool(auth=require_scopes(Scopes.APPLICATIONS_WRITE), output_schema=None)
-async def confirm_add_attachment(confirm_token: str) -> ToolResult:
-    """Write the attachment `preview_add_attachment` previewed."""
-    return TrackingTools.as_result(
-        await TrackingTools.confirm_add_attachment(confirm_token)
     )

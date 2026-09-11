@@ -77,7 +77,7 @@ Reads always return `{"data": [ ... ]}`. Writes return
 
 `POST /documents/resume` is whole-document replace and has **no MCP
 equivalent by design**. The MCP write surface (`describe_resume_schema` /
-`preview_resume_patch` / `confirm_resume_patch`, see [MCP](#mcp) below) is a
+`preview_resume_patch` / `confirm`, see [MCP](#mcp) below) is a
 closed set of additive patch operations instead — a model never hands over a
 whole document over MCP. `metadata` and `skill` documents have no MCP write
 path at all, HTTP-only, in either shape.
@@ -306,44 +306,51 @@ The one place `detail` is an object rather than a string, returned by every
 | `search_applications`, `get_application` | `applications:read` | Summary search excludes job description, prompt text and attachments; `get_application` never returns attachment content. |
 | `describe_resume_schema` | `resume:read` | What the resume write-back operations are, their arguments, worked examples, and what is not changeable. Call before proposing any resume change. |
 
-**Write tools — every one is a `preview_*` / `confirm_*` pair:**
+**Write tools — every one is a `preview_*` call followed by `confirm`:**
 
-| Tool pair | Scope (`preview_*` / `confirm_*`) | Writes |
+| Tool pair | Scope (`preview_*` / `confirm`) | Writes |
 | --- | --- | --- |
-| `preview_resume_patch` / `confirm_resume_patch` | `resume:read`+`resume:write` / `resume:write` | A closed set of additive patch operations against the resume's latest revision — see `describe_resume_schema`. |
-| `preview_create_company` / `confirm_create_company` | `companies:read`+`companies:write` / `companies:write` | A company. Dedup-checked exactly like `POST /companies`. |
-| `preview_add_company_stack_items` / `confirm_add_company_stack_items` | `companies:read`+`companies:write` / `companies:write` | One or more stack items in a batch; each is deduplicated on its own, a near-duplicate is listed as skipped rather than failing the batch. |
-| `preview_create_company_relationship` / `confirm_create_company_relationship` | `companies:read`+`companies:write` / `companies:write` | A directed edge between two companies. Same duplicate/inverse-duplicate rule as `POST /companies/{id}/relationships`. |
-| `preview_create_contact` / `confirm_create_contact` | `contacts:read`+`contacts:write` / `contacts:write` | A contact. Never invents one — only records one the user names or the posting states. |
-| `preview_record_application` / `confirm_record_application` | `applications:read`+`applications:write` (+`companies:read`+`companies:write` to preview a new company) / `applications:write` | The composite pair for the end of a tailoring run — one of `company_id`/`company_name`, plus the documents actually used. |
-| `preview_add_application_event` / `confirm_add_application_event` | `applications:read`+`applications:write` / `applications:write` | A status change, a note, a rating, or any combination. |
-| `preview_add_attachment` / `confirm_add_attachment` | `applications:read`+`applications:write` / `applications:write` | A file on an application. Content-type, size, and magic-byte checks all run at preview time. |
+| `preview_resume_patch` / `confirm` | `resume:read`+`resume:write` / `resume:write` | A closed set of additive patch operations against the resume's latest revision — see `describe_resume_schema`. |
+| `preview_create_company` / `confirm` | `companies:read`+`companies:write` / `companies:write` | A company. Dedup-checked exactly like `POST /companies`. |
+| `preview_add_company_stack_items` / `confirm` | `companies:read`+`companies:write` / `companies:write` | One or more stack items in a batch; each is deduplicated on its own, a near-duplicate is listed as skipped rather than failing the batch. |
+| `preview_create_company_relationship` / `confirm` | `companies:read`+`companies:write` / `companies:write` | A directed edge between two companies. Same duplicate/inverse-duplicate rule as `POST /companies/{id}/relationships`. |
+| `preview_create_contact` / `confirm` | `contacts:read`+`contacts:write` / `contacts:write` | A contact. Never invents one — only records one the user names or the posting states. |
+| `preview_record_application` / `confirm` | `applications:read`+`applications:write` (+`companies:read`+`companies:write` to preview a new company) / `applications:write` | The composite pair for the end of a tailoring run — one of `company_id`/`company_name`, plus the documents actually used. |
+| `preview_add_application_event` / `confirm` | `applications:read`+`applications:write` / `applications:write` | A status change, a note, a rating, or any combination. |
+| `preview_add_attachment` / `confirm` | `applications:read`+`applications:write` / `applications:write` | A file on an application. Content-type, size, and magic-byte checks all run at preview time. |
 
 Every tool returns a single text content block with no `structuredContent`
 mirror, which halves the token cost of a call.
 
 **This is a breaking change from the previous MCP tool surface**: `create_company`,
 `create_contact`, `record_application`, `add_application_event` and
-`add_company_stack_items` used to write directly. They are now the
-`confirm_*` half of a pair; there is no deprecation window.
+`add_company_stack_items` used to write directly. They are now previewed and
+then committed through `confirm`; there is no deprecation window. The eight
+per-tool `confirm_*` tools that briefly replaced them are gone too — one
+`confirm` commits any preview, since the token already records which one.
 
 ### The preview/confirm pattern
 
-Every write tool is two calls. `preview_*` resolves the request against the
+Every write is two calls. `preview_*` resolves the request against the
 current data — dedup checks, reference checks, document validation — and
 returns exactly what would be written plus a `confirm_token`. Nothing is
-written yet. `confirm_*` takes that token, and nothing else, and performs the
-write it authorizes.
+written yet. `confirm` takes that token, and nothing else, and performs the
+write it authorizes, dispatching on what the token was issued for.
+
+Its result is `{"confirmed": "<tool name>", "result": { /* that tool's own
+result */ }}` — `confirmed` is how a client knows which write it just
+committed without having tracked the token itself.
 
 ```json
 {"preview": { /* what would be written */ }, "confirm_token": "…", "expires_in": 600}
 ```
 
 Three facts a client author needs: the token is **single-use** — a second
-`confirm_*` call with the same token is refused, and nothing is written the
+`confirm` call with the same token is refused, and nothing is written the
 second time; it **expires** after `expires_in` seconds (600 by default); and
-it is **bound to the tool that issued it** — redeeming it through any other
-tool is refused. A blocked duplicate at preview time raises a `ToolError`
+it carries **its own scope requirement** — a credential holding
+`companies:write` alone cannot commit a previewed application, and is refused
+before the token is consumed rather than after. A blocked duplicate at preview time raises a `ToolError`
 listing the near-matches by id, so the model can reuse one or preview again
 with `confirm_create_duplicate: true`.
 

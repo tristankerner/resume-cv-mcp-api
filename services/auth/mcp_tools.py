@@ -10,7 +10,11 @@ from mcp.types import TextContent
 
 from services.auth.principal import CredentialKind, Principal
 from services.auth.scopes import ScopeResolver, Scopes
-from services.confirmation.confirmation_service import ConfirmationService
+from services.confirmation.confirmation_service import (
+    Authorize,
+    ConfirmationService,
+    RedeemedWrite,
+)
 from services.database.database_service import DatabaseService
 
 
@@ -118,13 +122,16 @@ class McpToolBase:
         }
 
     @classmethod
-    async def redeem_confirmation(cls, tool_name: str, confirm_token: str) -> dict:
-        """The frozen payload a matching `preview_*` call issued
-        `confirm_token` for, or a `ToolError` refusal — see
-        `ConfirmationService.redeem`."""
+    async def redeem_confirmation(
+        cls, confirm_token: str, authorize: Authorize
+    ) -> RedeemedWrite:
+        """Which tool a `preview_*` call issued `confirm_token` for and the
+        frozen payload it froze, or a `ToolError` refusal — see
+        `ConfirmationService.redeem`, which also documents why `authorize`
+        rather than an expected tool name."""
         async with DatabaseService.session() as db:
             return await ConfirmationService(db, cls.current_user_id()).redeem(
-                confirm_token, tool_name
+                confirm_token, authorize
             )
 
     @staticmethod

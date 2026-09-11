@@ -53,8 +53,7 @@ class DocumentPatchTools(McpToolBase):
         return await cls.issue_preview("resume_patch", payload, preview)
 
     @classmethod
-    async def confirm_resume_patch(cls, confirm_token: str) -> dict:
-        payload = await cls.redeem_confirmation("resume_patch", confirm_token)
+    async def apply_resume_patch(cls, payload: dict) -> dict:
         parsed = _PATCH_OPS_ADAPTER.validate_python(payload["ops"])
         async with DatabaseService.session() as db:
             service = ResumePatchService(db, cls.principal())
@@ -95,7 +94,7 @@ async def preview_resume_patch(document_name: str, ops: list[dict]) -> ToolResul
 
     Resolves every op against the current document and returns the exact
     before/after of every field it would touch, plus a `confirm_token` for
-    `confirm_resume_patch`. Nothing is written until that second call.
+    `confirm`. Nothing is written until that second call.
     Refused, with no token issued, if any op cannot be resolved — an unknown
     work entry, a duplicate highlight id, a skill keyword that does not
     exist yet — or if the resulting document would not validate.
@@ -106,14 +105,4 @@ async def preview_resume_patch(document_name: str, ops: list[dict]) -> ToolResul
     """
     return DocumentPatchTools.as_result(
         await DocumentPatchTools.preview_resume_patch(document_name, ops)
-    )
-
-
-@tool(auth=require_scopes(Scopes.RESUME_WRITE), output_schema=None)
-async def confirm_resume_patch(confirm_token: str) -> ToolResult:
-    """Write the patch `preview_resume_patch` previewed. Takes only the
-    token it returned — never call this without having shown the user that
-    preview and gotten an explicit yes in this conversation."""
-    return DocumentPatchTools.as_result(
-        await DocumentPatchTools.confirm_resume_patch(confirm_token)
     )
