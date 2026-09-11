@@ -8,7 +8,6 @@ from persistence.user import User
 from services.auth.auth_service import AuthService
 from services.auth.exceptions import AuthErrors, PasskeyErrors
 from services.auth.lockout import AccountPolicy, LockKind
-from services.auth.passkeys import ceremony as ceremony_module
 from services.auth.passkeys.ceremony import PasskeyCeremony
 from services.auth.passkeys.challenge import (
     PasskeyAuthenticationChallenge,
@@ -101,6 +100,13 @@ class PasskeyLogin:
             raise PasskeyErrors.challenge_expired()
         challenge, bound_user_id = redeemed
 
+        # `credential` is a validated dict on the two JSON surfaces, but the
+        # OAuth authorize form carries it as a string that `OAuthService`
+        # json-decodes — and `"null"` or `"[]"` decode to something with no
+        # `.get`, which is an unauthenticated 500 rather than a refusal.
+        if not isinstance(credential, dict):
+            raise PasskeyErrors.rejected()
+
         credential_id = credential.get("id")
         if not isinstance(credential_id, str):
             raise PasskeyErrors.rejected()
@@ -136,7 +142,7 @@ class PasskeyLogin:
             verified = self.ceremony.verify_authentication(
                 credential, challenge, stored
             )
-        except ceremony_module.AuthenticationFailure as error:
+        except PasskeyCeremony.AUTHENTICATION_FAILURE as error:
             await auth_service.register_address_failure()
             raise PasskeyErrors.rejected() from error
 

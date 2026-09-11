@@ -1399,3 +1399,36 @@ class TestPasskeyAuthorize:
             passkey_client_id=client_a,
         )
         assert response.status_code == 401
+
+    async def test_a_passkey_response_that_is_not_an_object_is_refused(self, client):
+        """`passkey_response` arrives as a form *string* here, not as the
+        validated dict the two JSON surfaces get, and `OAuthService`
+        json-decodes it. "null" decodes without error into something that has
+        no `.get` — an unauthenticated 500 rather than a refusal, and the
+        `login_token` it needs comes from a route anyone may call.
+        """
+        client_id = await pre_register()
+        options = await client.post(
+            "/oauth/authorize/passkey/options",
+            json={"username": None, "client_id": client_id},
+        )
+        assert options.status_code == 200
+
+        _verifier, challenge = pkce_pair()
+        response = await client.post(
+            "/oauth/authorize",
+            data={
+                "client_id": client_id,
+                "redirect_uri": REDIRECT_URI,
+                "response_type": "code",
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+                "scope": "resume:read",
+                "state": "s1",
+                "login_token": options.json()["login_token"],
+                "passkey_response": "null",
+                "decision": "approve",
+            },
+            follow_redirects=False,
+        )
+        assert response.status_code == 401

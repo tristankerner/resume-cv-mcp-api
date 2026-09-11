@@ -9,7 +9,6 @@ from persistence.passkey_credential import PasskeyCredential
 from persistence.user import User
 from services.auth.auth_service import AuthService
 from services.auth.exceptions import PasskeyErrors
-from services.auth.passkeys import ceremony as ceremony_module
 from services.auth.passkeys.ceremony import PasskeyCeremony
 from services.auth.passkeys.challenge import PasskeyRegistrationChallenge
 from services.auth.passkeys.dtos.passkey import (
@@ -111,16 +110,19 @@ class PasskeyService(ServiceProviderInterface):
 
         try:
             verified = self.ceremony.verify_registration(request.credential, challenge)
-        except ceremony_module.RegistrationFailure as error:
+        except PasskeyCeremony.REGISTRATION_FAILURE as error:
             raise PasskeyErrors.rejected() from error
 
-        transports = request.credential.get("response", {}).get("transports", [])
+        # Filtered, not stored as sent: see PasskeyCeremony.known_transports.
+        transports = PasskeyCeremony.known_transports(
+            request.credential.get("response", {}).get("transports")
+        )
         credential = PasskeyCredential(
             user_id=user.id,
             credential_id=Base64Url.encode(verified.credential_id),
             public_key=Base64Url.encode(verified.credential_public_key),
             sign_count=verified.sign_count,
-            transports=list(transports),
+            transports=transports,
             aaguid=verified.aaguid,
             device_type=verified.credential_device_type.value,
             backed_up=verified.credential_backed_up,

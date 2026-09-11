@@ -6,6 +6,7 @@ temporary lock let through and a permanent one refused.
 import pyotp
 
 from persistence.base import Base64Url, Clock
+from persistence.passkey_credential import PasskeyCredential
 from persistence.user import User
 from services.config.config_service import ConfigService
 from services.database.database_service import DatabaseService
@@ -288,6 +289,68 @@ class TestMalformedCredential:
             {"id": 12345, "response": {}},
         )
         assert response.status_code == 401
+
+
+class TestTransportsAreFiltered:
+    """The transports array rides beside the attestation rather than inside
+    it, so nothing verifies it and a client may send anything. Left unfiltered
+    it reaches `AuthenticatorTransport(...)` in `authentication_options`,
+    where an unknown string is a ValueError — and since anyone may ask for a
+    username's options, that is an unauthenticated 500 any account holder
+    could arm."""
+
+    async def test_an_unknown_transport_is_not_stored(
+        self, client, roleless, password, authenticator
+    ):
+        device = authenticator()
+        options = (
+            await client.post(
+                "/users/me/passkeys/options",
+                headers=roleless.headers,
+                json={"current_password": password},
+            )
+        ).json()
+        credential = device.register(options["options"])
+        credential["response"]["transports"] = ["internal", "bogus-transport"]
+
+        created = await client.post(
+            "/users/me/passkeys",
+            headers=roleless.headers,
+            json={
+                "registration_token": options["registration_token"],
+                "label": "Poisoned",
+                "credential": credential,
+            },
+        )
+        assert created.status_code == 200, created.text
+
+        async with DatabaseService.session() as db:
+            stored = await PasskeyCredential.list_for_user(db, roleless.user_id)
+        assert stored[0].transports == ["internal"]
+
+    async def test_a_poisoned_row_does_not_break_the_options_route(
+        self, client, roleless
+    ):
+        """The same filter on the read side, for a row written before it
+        existed — or by a build that did not have it."""
+        async with DatabaseService.session() as db:
+            db.add(
+                PasskeyCredential(
+                    user_id=roleless.user_id,
+                    credential_id="legacy-row",
+                    public_key="irrelevant",
+                    transports=["bogus-transport"],
+                    device_type="multi_device",
+                    backed_up=True,
+                    label="Legacy",
+                )
+            )
+            await db.commit()
+
+        response = await client.post(
+            "/token/passkey/options", json={"username": roleless.username}
+        )
+        assert response.status_code == 200, response.text
 
 
 class TestDisabledDeployment:

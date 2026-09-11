@@ -28,12 +28,6 @@ from persistence.passkey_credential import PasskeyCredential
 from persistence.user import User
 from services.auth.passkeys.relying_party import RelyingParty
 
-# The pair of exceptions a malformed or rejected credential dict raises from
-# py_webauthn, for each ceremony — re-exported so callers catch exactly these
-# and let anything else 500 as the real bug it would be.
-RegistrationFailure = (InvalidRegistrationResponse, InvalidJSONStructure)
-AuthenticationFailure = (InvalidAuthenticationResponse, InvalidJSONStructure)
-
 
 class PasskeyCeremony:
     """Generates and verifies the two WebAuthn ceremonies.
@@ -51,8 +45,39 @@ class PasskeyCeremony:
         COSEAlgorithmIdentifier.RSASSA_PKCS1_v1_5_SHA_256,
     ]
 
+    # The exceptions a malformed or rejected credential dict raises from
+    # py_webauthn, one tuple per ceremony, so callers catch exactly these and
+    # let anything else 500 as the real bug it would be.
+    REGISTRATION_FAILURE: ClassVar[tuple[type[Exception], ...]] = (
+        InvalidRegistrationResponse,
+        InvalidJSONStructure,
+    )
+    AUTHENTICATION_FAILURE: ClassVar[tuple[type[Exception], ...]] = (
+        InvalidAuthenticationResponse,
+        InvalidJSONStructure,
+    )
+
     def __init__(self, relying_party: RelyingParty):
         self.relying_party = relying_party
+
+    @staticmethod
+    def known_transports(values: object) -> list[str]:
+        """The subset of `values` py_webauthn's `AuthenticatorTransport` knows.
+
+        Applied on the way in *and* on the way out. The transports array is the
+        one part of a registration response nothing verifies — it rides beside
+        the attestation rather than inside it, so a client may put anything
+        there. Stored unfiltered, the first unknown string turns
+        `authentication_options` into a `ValueError` for that account, and
+        since anyone may ask for a username's options that is an
+        unauthenticated 500. Filtering rather than refusing: a transport this
+        build has not heard of is a hint about which prompt to show, not a
+        credential, and losing it costs nothing.
+        """
+        if not isinstance(values, list):
+            return []
+        known = {transport.value for transport in AuthenticatorTransport}
+        return [value for value in values if value in known]
 
     def registration_options(
         self, user: User, user_handle: bytes, existing: list[PasskeyCredential]
@@ -113,7 +138,10 @@ class PasskeyCeremony:
             allow_credentials=[
                 PublicKeyCredentialDescriptor(
                     id=Base64Url.decode(c.credential_id),
-                    transports=[AuthenticatorTransport(t) for t in c.transports],
+                    transports=[
+                        AuthenticatorTransport(t)
+                        for t in self.known_transports(c.transports)
+                    ],
                 )
                 for c in allow
             ],

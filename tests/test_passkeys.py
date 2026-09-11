@@ -15,7 +15,6 @@ from persistence.base import Base64Url, Clock
 from persistence.passkey_credential import PasskeyCredential
 from persistence.user import User
 from services.auth.auth_service import AuthService
-from services.auth.passkeys import ceremony as ceremony_module
 from services.auth.passkeys.ceremony import PasskeyCeremony
 from services.auth.passkeys.challenge import (
     PasskeyAuthenticationChallenge,
@@ -68,14 +67,19 @@ def reconfigure(monkeypatch):
     clears the cache around the test, but a fixture that only sets environment
     variables would be silently ignored if pytest ordered it after something
     that already built and cached settings.
+
+    `None` clears a setting by writing an empty string, never by deleting the
+    variable — conftest's module docstring spells out why: `ConfigServiceModel`
+    reads `.env`, so a deleted variable falls through to whatever the developer
+    running the suite happens to have configured. Deleting made these tests
+    pass on a clean checkout and fail on any machine with WEBAUTHN_RP_ID in
+    `.env`, which is the exact class of environment-dependent result the
+    pinning in conftest exists to prevent.
     """
 
     def apply(**values):
         for key, value in values.items():
-            if value is None:
-                monkeypatch.delenv(key, raising=False)
-            else:
-                monkeypatch.setenv(key, str(value))
+            monkeypatch.setenv(key, "" if value is None else str(value))
         ConfigService.reset()
 
     return apply
@@ -310,7 +314,7 @@ class TestPasskeyCeremony:
         )
         response = authenticator.register(options)
 
-        with pytest.raises(ceremony_module.RegistrationFailure):
+        with pytest.raises(PasskeyCeremony.REGISTRATION_FAILURE):
             ceremony.verify_registration(response, challenge)
 
     def test_a_registration_for_the_wrong_rp_id_does_not_verify(self):
@@ -324,7 +328,7 @@ class TestPasskeyCeremony:
         )
         response = authenticator.register(options)
 
-        with pytest.raises(ceremony_module.RegistrationFailure):
+        with pytest.raises(PasskeyCeremony.REGISTRATION_FAILURE):
             ceremony.verify_registration(response, challenge)
 
     def test_a_well_formed_registration_verifies_through_the_wrapper(self):
