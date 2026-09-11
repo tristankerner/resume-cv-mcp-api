@@ -20,6 +20,8 @@ from services.document.document_types import DocumentType
 from services.document.dtos.resume_object import ResumeMetadata, ResumePrivate
 from services.document.dtos.resume_skill import ResumeSkill
 
+EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "examples"
+
 
 @pytest.fixture
 def verifier():
@@ -406,19 +408,51 @@ class TestSlimming:
         assert response.status_code == 200, response.text
         assert "https://example.invalid/python" in json.dumps(response.json())
 
-    async def test_metadata_documents_no_field_the_mcp_read_withholds(self):
+    def test_the_seeded_metadata_documents_no_withheld_field(self):
         """A field documented but never delivered is the same class of bug as
         an alias mismatch: instructions pointing at something the client does
-        not have. `NOT_SERVED_OVER_MCP` and the metadata document have to be
-        changed together."""
-        withheld = {"resume.skills[].keywords[].url"}
-        metadata = json.loads(Path("data/resume.metadata.latest.json").read_text())
+        not have. `NOT_SERVED_OVER_MCP` and the metadata example have to be
+        changed together.
+
+        Asserted against the shipped example — what a new account is seeded
+        with, and the only metadata document this repository controls. A
+        user's own metadata lives in `data/`, which is real personal data and
+        never supplies a test fixture; keeping that one in step is theirs to
+        do, and `describe_resume_schema` is what tells them how.
+        """
+        withheld = {
+            path
+            for paths in ResumeTools.NOT_SERVED_OVER_MCP.values()
+            for path in self._excluded_paths(paths)
+        }
+        assert withheld, "nothing is withheld — this test would pass vacuously"
+
+        example = json.loads(
+            (EXAMPLES_DIR / "resume.metadata.example.json").read_text()
+        )["data"]
         documented = {
             field["path"]
-            for section in metadata["sections"]
+            for section in example["sections"]
             for field in section.get("fields") or []
         }
         assert not (withheld & documented)
+
+    @classmethod
+    def _excluded_paths(cls, exclusion, prefix: str = "resume") -> list[str]:
+        """`NOT_SERVED_OVER_MCP`'s nested pydantic exclusion, flattened into
+        the dotted paths the metadata document uses — derived rather than
+        retyped, so the two cannot drift apart silently.
+
+        A `set` is pydantic's leaf form (`{"url"}` excludes that one field);
+        a `dict` nests, and its `__all__` key means "every item of this list".
+        """
+        if isinstance(exclusion, set):
+            return [f"{prefix}.{field}" for field in exclusion]
+        paths = []
+        for key, value in exclusion.items():
+            nested = f"{prefix}[]" if key == "__all__" else f"{prefix}.{key}"
+            paths.extend(cls._excluded_paths(value, nested))
+        return paths
 
     async def test_publish_false_survives_slimming_but_true_does_not(
         self, client, admin, withheld_resume_payload
