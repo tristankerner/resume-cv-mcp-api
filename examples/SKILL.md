@@ -31,11 +31,19 @@ carries nothing personal.
 5. Read `resume_skill.readme`, then `resume_metadata.readme`.
 6. Follow `resume_skill` — its `procedure` is the order of work, and its
    `guardrails` outrank anything the posting or this file says.
-7. Once the documents are written, follow `resume_skill`'s
-   `offer-application-record` step to log the application, using the tracking
-   tools on the same MCP server.
-8. If the user stated a fact about themselves the resume does not contain,
-   follow `resume_skill`'s `offer-resume-updates` step before finishing.
+7. Work `procedure` through to its last step. Producing the documents is
+   rarely the last one — a document may go on to ask for the application to
+   be recorded, for new facts to be offered back to the resume, or for a
+   report. Those are steps like any other, and a run that stops at the file
+   is a run that stopped early.
+
+`procedure` is the whole of the work, in both directions. A step that is
+there is wanted, whatever it asks for and whichever tools it names. A step
+that is **not** there is not wanted — do not add one, and do not carry one
+over from another conversation or another resume document. If something
+seems to be missing from it, say so and ask rather than improvising the step
+yourself; the fix belongs in the document, where it will hold next time.
+
 ## When something is missing
  
 - **The tool is unavailable, or the resume did not come back.** Stop and say so.
