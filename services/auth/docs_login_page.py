@@ -11,19 +11,21 @@ from services.auth.passkeys.browser_script import PasskeyBrowserScript
 
 
 class DocsLoginPageRenderer:
-    # `credential`/`loginToken` are in scope where PasskeyBrowserScript
-    # splices this in. A `fetch` rather than a form submission — unlike the
-    # OAuth authorize page, there is no consent decision that has to survive
-    # a redirect here, so the login can finish itself and navigate on success.
+    # `credential`/`loginToken`/`nextEl` are in scope where
+    # PasskeyBrowserScript splices this in. A `fetch` rather than a form
+    # submission — unlike the OAuth authorize page, there is no consent
+    # decision that has to survive a redirect here, so the login can finish
+    # itself and navigate on success.
+    #
+    # `next` is not sent to the server: it is only ever the value this page
+    # was rendered with, which `DocsRouter._validate_next` already restricted
+    # to the docs paths, so the navigation below needs no second opinion — and
+    # a `next` on the wire would invite one to be trusted.
     _PASSKEY_SUBMIT: ClassVar[str] = """\
       var resp = await fetch("/docs/login/passkey", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          login_token: loginToken,
-          credential: credential,
-          next: nextEl ? nextEl.value : "/docs",
-        }),
+        body: JSON.stringify({ login_token: loginToken, credential: credential }),
       });
       if (resp.status === 204) {
         location.assign(nextEl ? nextEl.value : "/docs");

@@ -244,19 +244,13 @@ class DocsRouter:
         return RelyingParty(settings).serves_origin(settings.public_base_url_str)
 
     @staticmethod
-    def _session_cookie_kwargs(
-        user: User, settings: ConfigServiceModel
-    ) -> tuple[str, int]:
-        """The token and its `max_age`, minted fresh — the two pieces that
-        vary between an issued cookie. The rest of `set_cookie`'s arguments
-        are the same at every call site and stay inline there."""
-        return DocsSessionToken.mint(settings, user)
-
-    @classmethod
     def _set_session_cookie(
-        cls, response: Response, user: User, settings: ConfigServiceModel
+        response: Response, user: User, settings: ConfigServiceModel
     ) -> None:
-        token, expires_in = cls._session_cookie_kwargs(user, settings)
+        """Split out of `_issue_cookie` so the passkey route can set the same
+        cookie on a 204 — see `passkey_login` for why that one cannot
+        redirect."""
+        token, expires_in = DocsSessionToken.mint(settings, user)
         # Path=/ rather than /docs: /openapi.json and /redoc are outside a
         # /docs prefix. Secure only in production — a local run over plain HTTP
         # would never see the cookie come back.
