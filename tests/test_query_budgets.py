@@ -50,8 +50,12 @@ async def _make_contact(
     client: AsyncClient, admin, company_id: int, first_name: str
 ) -> int:
     """`first_name` gets a random suffix - same dedup-collision reasoning as
-    `_make_company`."""
-    unique_name = f"{first_name} {secrets.token_hex(4)}"
+    `_make_company`, but wider: this helper runs inside tight fan-out loops
+    that create many contacts sharing a near-identical prefix (only a
+    trailing digit differs), so an 8-hex-char suffix leaves enough headroom
+    for `SequenceMatcher` to occasionally rate two of them "fuzzy" above
+    threshold by chance. A 16-hex-char suffix pushes that below noise."""
+    unique_name = f"{first_name} {secrets.token_hex(8)}"
     response = await client.post(
         "/contacts",
         headers=admin.headers,
