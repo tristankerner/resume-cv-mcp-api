@@ -1518,7 +1518,12 @@ class TestPublicProjection:
                 }
             ],
             "skills": [
-                {"name": skill["name"], "keywords": [{"name": keyword["name"]}]}
+                {
+                    "name": skill["name"],
+                    "keywords": [
+                        {"name": keyword["name"], "url": keyword["url"]},
+                    ],
+                }
             ],
         }
 

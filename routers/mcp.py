@@ -1,3 +1,5 @@
+from typing import Any, ClassVar
+
 from fastmcp.exceptions import ToolError
 from fastmcp.server.auth import require_scopes
 from fastmcp.tools import ToolResult, tool
@@ -25,12 +27,38 @@ class ResumeTools(McpToolBase):
     directly — see `McpToolBase.as_result` for why.
     """
 
+    NOT_SERVED_OVER_MCP: ClassVar[dict[DocumentType, dict[str, Any]]] = {
+        DocumentType.RESUME: {"skills": {"__all__": {"keywords": {"__all__": {"url"}}}}}
+    }
+    """Fields a tailoring run is told never to use, dropped before they are
+    paid for. `keywords[].url` is a reference link the metadata marks
+    `internal`, no rule in either companion document reads, and which costs
+    ~3,000 characters of every retrieval.
+
+    Not a redaction — `PublicProjection` is what governs disclosure, and the
+    field is still served in full by the REST routes and the public feed,
+    where the website renders it. This is only about what an MCP client is
+    made to read.
+
+    Only optional fields belong here. `metrics[].basis` is the other obvious
+    candidate — `resume_metadata.figures` says it is never printed — but it
+    is required on `Metric`, so excluding it would mean the slimmed payload
+    no longer validates as a `ResumePrivate` and could not be written back
+    through `preview_resume_patch`. `TestSlimming` asserts that round trip.
+
+    The matching field entry in the metadata document has to go when a path
+    is added here, and come back when one is removed: a field documented but
+    never delivered is the failure `by_alias=True` exists to avoid, pointed
+    the other way.
+    """
+
     @classmethod
     def slim(cls, document: Document) -> dict:
-        """Defaults dropped, or the stored payload untouched if it no longer
-        validates — a document written under an older schema must still
-        retrieve. The only place in the codebase where a document is
-        deliberately served without validating.
+        """Defaults dropped and the fields in `NOT_SERVED_OVER_MCP` excluded,
+        or the stored payload untouched if it no longer validates — a document
+        written under an older schema must still retrieve. The only place in
+        the codebase where a document is deliberately served without
+        validating.
 
         `by_alias=True` is not cosmetic. The resume payload's field names are
         the JSON Resume schema's, which are camelCase, and every other surface
@@ -47,14 +75,17 @@ class ResumeTools(McpToolBase):
         instead of what gets read would change revision identity.
         """
         try:
-            model = DocumentTypeRegistry.MODELS_BY_TYPE[DocumentType(document.type)]
+            document_type = DocumentType(document.type)
+            model = DocumentTypeRegistry.MODELS_BY_TYPE[document_type]
         except KeyError, ValueError:
             # A type this build does not know — retired, or written by a newer
             # build. Same reasoning as `DocumentTypeRegistry.scopes_for_stored`.
             return document.data
         try:
             return model.model_validate(document.data).model_dump(
-                by_alias=True, exclude_defaults=True
+                by_alias=True,
+                exclude_defaults=True,
+                exclude=cls.NOT_SERVED_OVER_MCP.get(document_type),
             )
         except ValidationError:
             return document.data

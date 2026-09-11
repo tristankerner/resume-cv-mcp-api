@@ -2,6 +2,7 @@
 work there without MCP-specific auth code. These tests hold that seam."""
 
 import json
+from pathlib import Path
 
 import pytest
 from fastmcp.exceptions import ToolError
@@ -379,6 +380,45 @@ class TestSlimming:
     async def test_slimmed_skill_round_trips(self, admin, stored_skill):
         document = await self._load(admin, "resume.skill.json")
         ResumeSkill.model_validate(ResumeTools.slim(document))
+
+    async def test_fields_not_served_over_mcp_are_dropped(self, admin, stored_resume):
+        """`keywords[].url` is stored, served by the REST routes, and
+        deliberately withheld from an MCP read — see
+        `ResumeTools.NOT_SERVED_OVER_MCP`."""
+        document = await self._load(admin, "resume.json")
+        slimmed = ResumeTools.slim(document)
+
+        keyword = slimmed["skills"][0]["keywords"][0]
+        assert "url" not in keyword
+        assert keyword["name"] == "Python"
+
+        # `basis` stays: it is required on `Metric`, so dropping it would
+        # cost the round trip the tests above assert.
+        assert slimmed["work"][0]["highlights"][0]["metrics"][0]["basis"]
+
+    async def test_the_rest_route_still_serves_it(self, client, admin, stored_resume):
+        """The MCP exclusion is about what a tailoring run is made to read,
+        not about disclosure — no other surface may start withholding it. The
+        website renders these links off the feed."""
+        response = await client.get(
+            "/documents/resume/resume.json", headers=admin.headers
+        )
+        assert response.status_code == 200, response.text
+        assert "https://example.invalid/python" in json.dumps(response.json())
+
+    async def test_metadata_documents_no_field_the_mcp_read_withholds(self):
+        """A field documented but never delivered is the same class of bug as
+        an alias mismatch: instructions pointing at something the client does
+        not have. `NOT_SERVED_OVER_MCP` and the metadata document have to be
+        changed together."""
+        withheld = {"resume.skills[].keywords[].url"}
+        metadata = json.loads(Path("data/resume.metadata.latest.json").read_text())
+        documented = {
+            field["path"]
+            for section in metadata["sections"]
+            for field in section.get("fields") or []
+        }
+        assert not (withheld & documented)
 
     async def test_publish_false_survives_slimming_but_true_does_not(
         self, client, admin, withheld_resume_payload

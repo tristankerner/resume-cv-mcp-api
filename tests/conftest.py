@@ -428,7 +428,12 @@ def resume_payload() -> dict:
             {
                 "name": "group",
                 "keywords": [
-                    {"name": "Python", "level": "expert", "lastUsed": last_used}
+                    {
+                        "name": "Python",
+                        "level": "expert",
+                        "lastUsed": last_used,
+                        "url": "https://example.invalid/python",
+                    }
                 ],
             }
         ],
