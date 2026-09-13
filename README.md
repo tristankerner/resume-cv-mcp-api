@@ -11,6 +11,12 @@ well as via MCP tools.
 Documents may optionally be marked as public. Additionally, sections within a résumé
 may be hidden from the public feed.
 
+Screenshots from web client:
+
+<a href="https://github.com/user-attachments/assets/c16e7390-6c53-4cd7-bb8c-9c37fde015b9" target="_blank"><img width="3742" height="1933" alt="image" src="https://github.com/user-attachments/assets/c16e7390-6c53-4cd7-bb8c-9c37fde015b9" /></a>
+
+<a href="https://github.com/user-attachments/assets/8f0530d3-6f6b-4b4e-a26b-1d99e2759e6b" target="_blank"><img width="3732" height="1940" alt="image" src="https://github.com/user-attachments/assets/8f0530d3-6f6b-4b4e-a26b-1d99e2759e6b" /></a>
+
 ## Author's Note
 
 **Q:** What problem(s) does this solve?
