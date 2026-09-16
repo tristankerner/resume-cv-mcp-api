@@ -66,12 +66,16 @@ async def _make_contact(
 
 
 async def _make_event(
-    client: AsyncClient, admin, application_id: int, contact_id: int, status: str
+    client: AsyncClient,
+    admin,
+    application_id: int,
+    contact_ids: list[int],
+    status: str,
 ) -> None:
     response = await client.post(
         f"/applications/{application_id}/events",
         headers=admin.headers,
-        json={"status": status, "contact_id": contact_id},
+        json={"status": status, "contact_ids": contact_ids},
     )
     assert response.status_code == 201, response.text
 
@@ -171,13 +175,18 @@ class TestListInvariance:
 
     async def test_application_detail(self, client, admin):
         """Fixed by QUERY_PERFORMANCE_PLAN.md Phase 2: `Lookup.map` replaced
-        a `Contact.get` per event row."""
+        a `Contact.get` per event row. Two contacts per event, not one - a
+        per-contact N+1 (as opposed to a per-event one) would otherwise slip
+        past this test."""
         company_id = await _make_company(client, admin, "Event Co")
-        contact_id = await _make_contact(client, admin, company_id, "Recruiter")
+        contact_ids = [
+            await _make_contact(client, admin, company_id, "Recruiter"),
+            await _make_contact(client, admin, company_id, "Hiring Manager"),
+        ]
 
         small_app_id = await _make_application(client, admin, company_id, "Small Role")
         for i in range(5):
-            await _make_event(client, admin, small_app_id, contact_id, "screening")
+            await _make_event(client, admin, small_app_id, contact_ids, "screening")
         with QueryRecorder() as small:
             response = await client.get(
                 f"/applications/{small_app_id}", headers=admin.headers
@@ -186,7 +195,7 @@ class TestListInvariance:
 
         large_app_id = await _make_application(client, admin, company_id, "Large Role")
         for i in range(25):
-            await _make_event(client, admin, large_app_id, contact_id, "screening")
+            await _make_event(client, admin, large_app_id, contact_ids, "screening")
         with QueryRecorder() as large:
             response = await client.get(
                 f"/applications/{large_app_id}", headers=admin.headers
@@ -194,17 +203,24 @@ class TestListInvariance:
         assert response.status_code == 200, response.text
 
         assert small.count() == large.count(), (small.tally(), large.tally())
-        assert small.count() == 6
+        # One more than before: `_event_dtos` now runs an extra batched query
+        # for `ApplicationEventContact.contact_ids_for`.
+        assert small.count() == 7
 
     async def test_application_events_list(self, client, admin):
         """Fixed by QUERY_PERFORMANCE_PLAN.md Phase 2: `Lookup.map` replaced
-        a `Contact.get` per event row."""
+        a `Contact.get` per event row. Two contacts per event, not one - a
+        per-contact N+1 (as opposed to a per-event one) would otherwise slip
+        past this test."""
         company_id = await _make_company(client, admin, "Event List Co")
-        contact_id = await _make_contact(client, admin, company_id, "Recruiter")
+        contact_ids = [
+            await _make_contact(client, admin, company_id, "Recruiter"),
+            await _make_contact(client, admin, company_id, "Hiring Manager"),
+        ]
 
         small_app_id = await _make_application(client, admin, company_id, "Small Role")
         for i in range(5):
-            await _make_event(client, admin, small_app_id, contact_id, "screening")
+            await _make_event(client, admin, small_app_id, contact_ids, "screening")
         with QueryRecorder() as small:
             response = await client.get(
                 f"/applications/{small_app_id}/events", headers=admin.headers
@@ -213,7 +229,7 @@ class TestListInvariance:
 
         large_app_id = await _make_application(client, admin, company_id, "Large Role")
         for i in range(25):
-            await _make_event(client, admin, large_app_id, contact_id, "screening")
+            await _make_event(client, admin, large_app_id, contact_ids, "screening")
         with QueryRecorder() as large:
             response = await client.get(
                 f"/applications/{large_app_id}/events", headers=admin.headers
@@ -221,7 +237,9 @@ class TestListInvariance:
         assert response.status_code == 200, response.text
 
         assert small.count() == large.count(), (small.tally(), large.tally())
-        assert small.count() == 4
+        # One more than before: `_event_dtos` now runs an extra batched query
+        # for `ApplicationEventContact.contact_ids_for`.
+        assert small.count() == 5
 
     async def test_company_detail_relationships(self, client, admin):
         """Fixed by QUERY_PERFORMANCE_PLAN.md Phase 2: `Company.names_for`

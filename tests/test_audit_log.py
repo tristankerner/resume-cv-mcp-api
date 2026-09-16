@@ -151,6 +151,38 @@ class TestCompanyTriggers:
         assert delete_rows[0]["new_data"] is None
 
 
+class TestApplicationEventContactsTriggers:
+    async def test_insert_writes_an_i_row_with_the_owning_user(
+        self, client, admin, application
+    ):
+        contact = await client.post(
+            "/contacts", headers=admin.headers, json={"first_name": "Sam"}
+        )
+        contact_id = contact.json()["id"]
+        created = await client.post(
+            f"/applications/{application['id']}/events",
+            headers=admin.headers,
+            json={"description": "note", "contact_ids": [contact_id]},
+        )
+        event_id = created.json()["event"]["id"]
+
+        join_row = await client.get(
+            "/audit",
+            headers=admin.headers,
+            params={"table": "application_event_contacts"},
+        )
+        rows = [
+            row
+            for row in join_row.json()["data"]
+            if row["new_data"] is not None
+            and row["new_data"].get("event_id") == event_id
+        ]
+        assert len(rows) == 1
+        assert rows[0]["operation"] == "I"
+        assert rows[0]["row_user_id"] == admin.user_id
+        assert rows[0]["new_data"]["contact_id"] == contact_id
+
+
 class TestActorAttribution:
     async def test_actor_matches_the_authenticated_caller(self, client, admin):
         response = await client.post(

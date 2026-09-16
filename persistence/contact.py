@@ -1,3 +1,4 @@
+from collections.abc import Collection
 from datetime import datetime
 
 from sqlalchemy import (
@@ -179,6 +180,24 @@ class Contact(SQAlchemyBase):
             .scalars()
             .first()
         )
+
+    @staticmethod
+    async def existing_ids(
+        db: AsyncSession, user_id: int, contact_ids: Collection[int]
+    ) -> set[int]:
+        """Which of `contact_ids` resolve for this owner, in one query.
+        The multi-contact equivalent of a `Contact.get` per id - validating
+        25 ids one at a time is 25 round trips for a single event write."""
+        if not contact_ids:
+            return set()
+        rows = (
+            await db.execute(
+                select(Contact.id).where(
+                    Contact.user_id == user_id, Contact.id.in_(contact_ids)
+                )
+            )
+        ).all()
+        return {row[0] for row in rows}
 
     @staticmethod
     async def candidates_for_dedup(

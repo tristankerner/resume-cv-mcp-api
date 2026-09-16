@@ -43,6 +43,11 @@ V3_CATALOGUE_ROWS = "6ec9cebeb712"  # add v3 document_schema rows
 V3_RESUME_CONVERSION = "d980e94de5a2"  # convert resume documents to v3
 BEFORE_V3 = "9fd383ecfc98"  # head immediately before the v3 catalogue rows land
 
+MULTI_CONTACT_EVENTS = (
+    "a806bc88a451"  # join table replaces application_events.contact_id
+)
+BEFORE_MULTI_CONTACT_EVENTS = "a17c4e9b2d50"  # head immediately before that revision
+
 
 @pytest.fixture
 def migration_db(monkeypatch):
@@ -824,3 +829,264 @@ class TestV3ResumeConversion:
 
         with pytest.raises(Exception, match="newer revision"):
             command.downgrade(cfg, V3_CATALOGUE_ROWS)
+
+
+def _insert_company(conn: sqlite3.Connection, user_id: int, name: str) -> int:
+    cur = conn.execute(
+        "INSERT INTO companies (user_id, name, normalized_name, created_at, updated_at) "
+        "VALUES (?,?,?,?,?)",
+        (user_id, name, name.lower(), "2026-01-01 00:00:00", "2026-01-01 00:00:00"),
+    )
+    conn.commit()
+    assert cur.lastrowid is not None
+    return cur.lastrowid
+
+
+def _insert_contact(
+    conn: sqlite3.Connection, user_id: int, company_id: int, first_name: str
+) -> int:
+    cur = conn.execute(
+        "INSERT INTO contacts (user_id, company_id, first_name, created_at, updated_at) "
+        "VALUES (?,?,?,?,?)",
+        (user_id, company_id, first_name, "2026-01-01 00:00:00", "2026-01-01 00:00:00"),
+    )
+    conn.commit()
+    assert cur.lastrowid is not None
+    return cur.lastrowid
+
+
+def _insert_application(conn: sqlite3.Connection, user_id: int, company_id: int) -> int:
+    cur = conn.execute(
+        "INSERT INTO applications (user_id, company_id, status, created_at, updated_at) "
+        "VALUES (?,?,?,?,?)",
+        (
+            user_id,
+            company_id,
+            "submitted",
+            "2026-01-01 00:00:00",
+            "2026-01-01 00:00:00",
+        ),
+    )
+    conn.commit()
+    assert cur.lastrowid is not None
+    return cur.lastrowid
+
+
+def _insert_event(
+    conn: sqlite3.Connection,
+    user_id: int,
+    application_id: int,
+    contact_id: int | None,
+    occurred_at: str,
+) -> int:
+    cur = conn.execute(
+        "INSERT INTO application_events "
+        "(user_id, application_id, status, contact_id, occurred_at, created_at) "
+        "VALUES (?,?,?,?,?,?)",
+        (user_id, application_id, "screening", contact_id, occurred_at, occurred_at),
+    )
+    conn.commit()
+    assert cur.lastrowid is not None
+    return cur.lastrowid
+
+
+class TestMultiContactApplicationEvents:
+    """`a806bc88a451` - the join table that replaces
+    `application_events.contact_id`. See its own docstring for the shape of
+    the change; this exercises the upgrade's backfill and the downgrade's
+    "lowest join row wins, falling back to the snapshot" restore."""
+
+    def test_upgrade_backfills_join_table_and_backup_and_drops_the_column(
+        self, migration_db
+    ):
+        connect, cfg = migration_db
+        command.upgrade(cfg, BEFORE_MULTI_CONTACT_EVENTS)
+
+        conn = connect()
+        owner = _insert_user(conn)
+        company = _insert_company(conn, owner, "Acme")
+        contact_a = _insert_contact(conn, owner, company, "Dana")
+        contact_b = _insert_contact(conn, owner, company, "Sam")
+        application = _insert_application(conn, owner, company)
+        event_a = _insert_event(
+            conn, owner, application, contact_a, "2026-01-01 00:00:00"
+        )
+        event_b = _insert_event(
+            conn, owner, application, contact_b, "2026-01-02 00:00:00"
+        )
+        event_c = _insert_event(conn, owner, application, None, "2026-01-03 00:00:00")
+        conn.close()
+
+        command.upgrade(cfg, MULTI_CONTACT_EVENTS)
+        conn = connect()
+
+        join_rows = conn.execute(
+            "SELECT event_id, contact_id, user_id FROM application_event_contacts "
+            "ORDER BY id"
+        ).fetchall()
+        assert join_rows == [
+            (event_a, contact_a, owner),
+            (event_b, contact_b, owner),
+        ]
+
+        backup_rows = conn.execute(
+            "SELECT event_id, contact_id FROM deprecated_application_event_contact_ids "
+            "ORDER BY event_id"
+        ).fetchall()
+        assert backup_rows == [(event_a, contact_a), (event_b, contact_b)]
+
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(application_events)")}
+        assert "contact_id" not in columns
+
+        # SQLite can only drop this column by rebuilding the table, and batch
+        # mode recreates exactly the indexes `_events_copy_from` names. An
+        # omission there is silent: the migration succeeds, and every event
+        # query falls back to a table scan. See the migration's own comment.
+        indexes = {
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' "
+                "AND tbl_name='application_events'"
+            )
+        }
+        assert "ix_application_events_user_app_occurred" in indexes
+        assert "ix_application_events_user_occurred" in indexes
+        assert "ix_application_events_user_contact" not in indexes
+
+        (table_sql,) = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' "
+            "AND name='application_events'"
+        ).fetchone()
+        assert "ck_application_events_rating_range" in table_sql
+
+        event_triggers = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' "
+            "AND tbl_name='application_events'"
+        ).fetchall()
+        assert len(event_triggers) == 3
+        for (sql,) in event_triggers:
+            assert "contact_id" not in sql
+
+        contact_triggers = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='trigger' "
+            "AND tbl_name='application_event_contacts'"
+        ).fetchall()
+        assert len(contact_triggers) == 3
+
+        assert event_c is not None  # the NULL-contact event migrated too
+        conn.close()
+
+    def test_downgrade_restores_lowest_id_join_row_or_falls_back_to_snapshot(
+        self, migration_db
+    ):
+        connect, cfg = migration_db
+        command.upgrade(cfg, BEFORE_MULTI_CONTACT_EVENTS)
+
+        conn = connect()
+        owner = _insert_user(conn)
+        company = _insert_company(conn, owner, "Acme")
+        contact_a = _insert_contact(conn, owner, company, "Dana")
+        contact_b = _insert_contact(conn, owner, company, "Sam")
+        application = _insert_application(conn, owner, company)
+        event_a = _insert_event(
+            conn, owner, application, contact_a, "2026-01-01 00:00:00"
+        )
+        event_c = _insert_event(conn, owner, application, None, "2026-01-03 00:00:00")
+        conn.close()
+
+        command.upgrade(cfg, MULTI_CONTACT_EVENTS)
+
+        # Simulate post-migration use: a second contact is added to event_a
+        # through the join table directly, after contact_a's original row.
+        conn = connect()
+        conn.execute(
+            "INSERT INTO application_event_contacts "
+            "(user_id, event_id, contact_id, created_at) VALUES (?,?,?,?)",
+            (owner, event_a, contact_b, "2026-01-05 00:00:00"),
+        )
+        conn.commit()
+        conn.close()
+
+        command.downgrade(cfg, BEFORE_MULTI_CONTACT_EVENTS)
+        conn = connect()
+
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(application_events)")}
+        assert "contact_id" in columns
+
+        rows = dict(
+            conn.execute(
+                "SELECT id, contact_id FROM application_events ORDER BY id"
+            ).fetchall()
+        )
+        # The lowest-id join row - contact_a, added first - wins over the
+        # later contact_b, even though the snapshot also says contact_a.
+        assert rows[event_a] == contact_a
+        assert rows[event_c] is None
+
+        tables = {
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        assert "application_event_contacts" not in tables
+        assert "deprecated_application_event_contact_ids" not in tables
+
+        indexes = {
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' "
+                "AND tbl_name='application_events'"
+            ).fetchall()
+        }
+        assert "ix_application_events_user_contact" in indexes
+        # The two the upgrade's table rebuild had to carry through must still
+        # be here after a full round trip, not just after the upgrade.
+        assert "ix_application_events_user_app_occurred" in indexes
+        assert "ix_application_events_user_occurred" in indexes
+
+        triggers = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' "
+            "AND tbl_name='application_events'"
+        ).fetchall()
+        assert len(triggers) == 3
+        for (sql,) in triggers:
+            assert "contact_id" in sql
+        conn.close()
+
+    def test_downgrade_falls_back_to_the_snapshot_when_join_rows_are_gone(
+        self, migration_db
+    ):
+        """The other arm of the downgrade's COALESCE, and the only reason
+        `deprecated_application_event_contact_ids` exists at all: an event
+        whose join rows were deleted after the migration. The join table now
+        says "no contact", which is not what the dropped column held."""
+        connect, cfg = migration_db
+        command.upgrade(cfg, BEFORE_MULTI_CONTACT_EVENTS)
+
+        conn = connect()
+        owner = _insert_user(conn)
+        company = _insert_company(conn, owner, "Acme")
+        contact_a = _insert_contact(conn, owner, company, "Dana")
+        application = _insert_application(conn, owner, company)
+        event_a = _insert_event(
+            conn, owner, application, contact_a, "2026-01-01 00:00:00"
+        )
+        conn.close()
+
+        command.upgrade(cfg, MULTI_CONTACT_EVENTS)
+
+        conn = connect()
+        conn.execute(
+            "DELETE FROM application_event_contacts WHERE event_id = ?", (event_a,)
+        )
+        conn.commit()
+        conn.close()
+
+        command.downgrade(cfg, BEFORE_MULTI_CONTACT_EVENTS)
+        conn = connect()
+        restored = conn.execute(
+            "SELECT contact_id FROM application_events WHERE id = ?", (event_a,)
+        ).fetchone()[0]
+        assert restored == contact_a
+        conn.close()

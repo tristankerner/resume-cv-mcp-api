@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from persistence.application import Application, ApplicationSearchRow
 from persistence.application_attachment import ApplicationAttachment
 from persistence.application_event import ApplicationEvent
+from persistence.application_event_contact import ApplicationEventContact
 from persistence.base import Clock
 from persistence.company import Company
 from persistence.company_relationship import CompanyRelationship
@@ -32,6 +33,7 @@ from services.tracking.dtos.application_event import (
 from services.tracking.dtos.application_event import (
     ApplicationEventWriteResponse,
     CreateApplicationEventRequest,
+    EventContact,
     UpdateApplicationEventRequest,
 )
 from services.tracking.dtos.attachment import AttachmentMeta
@@ -147,24 +149,31 @@ class ApplicationService(TrackingServiceBase):
     async def _event_dtos(
         self, events: list[ApplicationEvent]
     ) -> list[ApplicationEventDto]:
-        """DTOs for a page of events in one round trip for every contact
-        name, rather than one `Contact.get` per row."""
+        """DTOs for a page of events in two batched queries - one for every
+        event's contact ids, one for every contact name across the whole
+        page - rather than one query per event."""
         if not events:
             return []
-        contact_ids = [
-            event.contact_id for event in events if event.contact_id is not None
-        ]
+        owner = self._owner()
+        contacts_by_event = await ApplicationEventContact.contact_ids_for(
+            self.db, owner, [event.id for event in events]
+        )
+        all_contact_ids = {
+            contact_id
+            for contact_ids in contacts_by_event.values()
+            for contact_id in contact_ids
+        }
         names = await Lookup.map(
             self.db,
             key_column=Contact.id,
             value_columns=(Contact.first_name, Contact.last_name),
             owner_column=Contact.user_id,
-            owner_id=self._owner(),
-            keys=contact_ids,
+            owner_id=owner,
+            keys=all_contact_ids,
         )
 
-        def _contact_name(contact_id: int | None) -> str | None:
-            if contact_id is None or contact_id not in names:
+        def _contact_name(contact_id: int) -> str | None:
+            if contact_id not in names:
                 return None
             row = names[contact_id]
             return (
@@ -179,14 +188,17 @@ class ApplicationService(TrackingServiceBase):
             status = (
                 ApplicationStatus(event.status) if event.status is not None else None
             )
+            contacts = [
+                EventContact(id=contact_id, name=_contact_name(contact_id))
+                for contact_id in contacts_by_event.get(event.id, [])
+            ]
             result.append(
                 ApplicationEventDto(
                     id=event.id,
                     application_id=event.application_id,
                     status=status,
                     status_label=APPLICATION_STATUS_LABELS[status] if status else None,
-                    contact_id=event.contact_id,
-                    contact_name=_contact_name(event.contact_id),
+                    contacts=contacts,
                     description=event.description,
                     rating=event.rating,
                     occurred_at=event.occurred_at,
@@ -595,9 +607,13 @@ class ApplicationService(TrackingServiceBase):
         owner = self._owner()
         application = await self._require_application(application_id)
 
-        for event in await ApplicationEvent.list_for_application(
+        events = await ApplicationEvent.list_for_application(
             self.db, owner, application_id
-        ):
+        )
+        await ApplicationEventContact.delete_for_events(
+            self.db, owner, [event.id for event in events]
+        )
+        for event in events:
             await self.db.delete(event)
         for attachment in await ApplicationAttachment.list_metadata_for_application(
             self.db, owner, application_id
@@ -633,16 +649,21 @@ class ApplicationService(TrackingServiceBase):
         self, application_id: int, request: CreateApplicationEventRequest
     ) -> Application:
         """The read-only half of `create_event`'s checks: the application
-        reference, the content requirement, and the contact reference -
+        reference, the content requirement, and the contact references -
         without writing anything. Returns the application the event would be
         recorded against."""
         application = await self._require_application(application_id)
         if not any((request.status, request.description, request.rating)):
             raise TrackingErrors.event_needs_content()
-        if request.contact_id is not None:
-            contact = await Contact.get(self.db, self._owner(), request.contact_id)
-            if contact is None:
-                raise TrackingErrors.invalid_reference("contact_id", "contact")
+        if request.contact_ids:
+            found = await Contact.existing_ids(
+                self.db, self._owner(), request.contact_ids
+            )
+            missing = [cid for cid in request.contact_ids if cid not in found]
+            if missing:
+                raise TrackingErrors.invalid_references(
+                    "contact_ids", "contact", missing
+                )
         return application
 
     async def preview_event_creation(
@@ -664,13 +685,17 @@ class ApplicationService(TrackingServiceBase):
             user_id=owner,
             application_id=application_id,
             status=request.status.value if request.status else None,
-            contact_id=request.contact_id,
             description=request.description,
             rating=request.rating,
             occurred_at=request.occurred_at or Clock.utcnow(),
         )
         self.db.add(event)
         await self.db.flush()
+        if request.contact_ids:
+            await ApplicationEventContact.replace_for_event(
+                self.db, owner, event.id, request.contact_ids
+            )
+            await self.db.flush()
         await self._recompute_status(application)
         await self.db.commit()
         return await self._event_write_response(event, application)
@@ -693,12 +718,17 @@ class ApplicationService(TrackingServiceBase):
 
         if "status" in fields:
             event.status = request.status.value if request.status else None
-        if "contact_id" in fields:
-            if request.contact_id is not None:
-                contact = await Contact.get(self.db, owner, request.contact_id)
-                if contact is None:
-                    raise TrackingErrors.invalid_reference("contact_id", "contact")
-            event.contact_id = request.contact_id
+        if "contact_ids" in fields:
+            if request.contact_ids:
+                found = await Contact.existing_ids(self.db, owner, request.contact_ids)
+                missing = [cid for cid in request.contact_ids if cid not in found]
+                if missing:
+                    raise TrackingErrors.invalid_references(
+                        "contact_ids", "contact", missing
+                    )
+            await ApplicationEventContact.replace_for_event(
+                self.db, owner, event.id, request.contact_ids
+            )
         if "description" in fields:
             event.description = request.description
         if "rating" in fields:
@@ -714,9 +744,11 @@ class ApplicationService(TrackingServiceBase):
     async def delete_event(self, event_id: int) -> ApplicationEventWriteResponse:
         self._require(Scopes.APPLICATIONS_DELETE)
         await self._begin_write()
+        owner = self._owner()
         event = await self._require_event(event_id)
         application = await self._require_application(event.application_id)
 
+        await ApplicationEventContact.delete_for_events(self.db, owner, [event.id])
         await self.db.delete(event)
         await self.db.flush()
         await self._recompute_status(application)

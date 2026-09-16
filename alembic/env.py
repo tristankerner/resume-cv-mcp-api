@@ -13,6 +13,7 @@ from persistence import (  # noqa: F401
     application,
     application_attachment,
     application_event,
+    application_event_contact,
     audit_actor,
     audit_log,
     auth_failure,

@@ -62,9 +62,6 @@ class ConfirmTools(McpToolBase):
         "add_application_event": ConfirmableWrite(
             Scopes.APPLICATIONS_WRITE, TrackingTools.apply_add_application_event
         ),
-        "add_attachment": ConfirmableWrite(
-            Scopes.APPLICATIONS_WRITE, TrackingTools.apply_add_attachment
-        ),
         "resume_patch": ConfirmableWrite(
             Scopes.RESUME_WRITE, DocumentPatchTools.apply_resume_patch
         ),

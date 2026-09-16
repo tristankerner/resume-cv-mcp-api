@@ -1,6 +1,11 @@
 """Applications: CRUD, filters, pagination, derived status, document
 references, ownership isolation."""
 
+from sqlalchemy import select
+
+from persistence.application_event_contact import ApplicationEventContact
+from services.database.database_service import DatabaseService
+
 
 class TestCreateApplication:
     async def test_creates_an_application(self, client, admin, company):
@@ -390,9 +395,10 @@ class TestApplicationEvents:
         response = await client.post(
             f"/applications/{application['id']}/events",
             headers=admin.headers,
-            json={"description": "note", "contact_id": 999999},
+            json={"description": "note", "contact_ids": [999999]},
         )
         assert response.status_code == 422
+        assert "999999" in response.json()["detail"]
 
     async def test_list_events_newest_first(self, client, admin, application):
         await client.post(
@@ -437,6 +443,196 @@ class TestApplicationEvents:
             headers=other_owner.headers,
         )
         assert response.status_code == 404
+
+
+class TestApplicationEventContacts:
+    """`contact_ids` / `contacts` - decision 1.4 (`ContactIds`/`EventContact`
+    take over from the singular `contact_id`/`contact_name`)."""
+
+    @staticmethod
+    async def _make_contact(client, admin, name: str) -> int:
+        response = await client.post(
+            "/contacts", headers=admin.headers, json={"first_name": name}
+        )
+        assert response.status_code == 201, response.text
+        return response.json()["id"]
+
+    async def test_create_with_two_contacts_preserves_order(
+        self, client, admin, application
+    ):
+        dana = await self._make_contact(client, admin, "Dana")
+        sam = await self._make_contact(client, admin, "Sam")
+        response = await client.post(
+            f"/applications/{application['id']}/events",
+            headers=admin.headers,
+            json={"description": "Panel interview.", "contact_ids": [dana, sam]},
+        )
+        assert response.status_code == 201, response.text
+        contacts = response.json()["event"]["contacts"]
+        assert [c["id"] for c in contacts] == [dana, sam]
+        assert contacts[0]["name"] == "Dana"
+
+    async def test_create_without_contact_ids_is_empty(
+        self, client, admin, application
+    ):
+        response = await client.post(
+            f"/applications/{application['id']}/events",
+            headers=admin.headers,
+            json={"description": "No contacts."},
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["event"]["contacts"] == []
+
+    async def test_patch_replaces_the_exact_set(self, client, admin, application):
+        dana = await self._make_contact(client, admin, "Dana")
+        sam = await self._make_contact(client, admin, "Sam")
+        created = await client.post(
+            f"/applications/{application['id']}/events",
+            headers=admin.headers,
+            json={"description": "note", "contact_ids": [dana, sam]},
+        )
+        event_id = created.json()["event"]["id"]
+
+        response = await client.patch(
+            f"/application-events/{event_id}",
+            headers=admin.headers,
+            json={"contact_ids": [dana]},
+        )
+        assert response.status_code == 200, response.text
+        contacts = response.json()["event"]["contacts"]
+        assert [c["id"] for c in contacts] == [dana]
+
+    async def test_patch_with_empty_list_clears_contacts(
+        self, client, admin, application
+    ):
+        dana = await self._make_contact(client, admin, "Dana")
+        created = await client.post(
+            f"/applications/{application['id']}/events",
+            headers=admin.headers,
+            json={"description": "note", "contact_ids": [dana]},
+        )
+        event_id = created.json()["event"]["id"]
+
+        response = await client.patch(
+            f"/application-events/{event_id}",
+            headers=admin.headers,
+            json={"contact_ids": []},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["event"]["contacts"] == []
+
+    async def test_patch_omitting_contact_ids_leaves_them_unchanged(
+        self, client, admin, application
+    ):
+        """Decision 1.5's regression test: `contact_ids` absent from the
+        body must not be treated as "clear the set"."""
+        dana = await self._make_contact(client, admin, "Dana")
+        created = await client.post(
+            f"/applications/{application['id']}/events",
+            headers=admin.headers,
+            json={"description": "note", "contact_ids": [dana]},
+        )
+        event_id = created.json()["event"]["id"]
+
+        response = await client.patch(
+            f"/application-events/{event_id}",
+            headers=admin.headers,
+            json={"description": "updated note"},
+        )
+        assert response.status_code == 200, response.text
+        contacts = response.json()["event"]["contacts"]
+        assert [c["id"] for c in contacts] == [dana]
+        assert response.json()["event"]["description"] == "updated note"
+
+    async def test_26_contact_ids_is_422(self, client, admin, application):
+        response = await client.post(
+            f"/applications/{application['id']}/events",
+            headers=admin.headers,
+            json={"description": "note", "contact_ids": list(range(1, 27))},
+        )
+        assert response.status_code == 422
+
+    async def test_duplicate_contact_id_collapses_to_one(
+        self, client, admin, application
+    ):
+        dana = await self._make_contact(client, admin, "Dana")
+        response = await client.post(
+            f"/applications/{application['id']}/events",
+            headers=admin.headers,
+            json={"description": "note", "contact_ids": [dana, dana]},
+        )
+        assert response.status_code == 201, response.text
+        assert len(response.json()["event"]["contacts"]) == 1
+
+    async def test_sending_contact_id_is_422(self, client, admin, application):
+        response = await client.post(
+            f"/applications/{application['id']}/events",
+            headers=admin.headers,
+            json={"description": "note", "contact_id": 1},
+        )
+        assert response.status_code == 422
+
+    async def test_deleting_an_event_removes_its_join_rows(
+        self, client, admin, application
+    ):
+        dana = await self._make_contact(client, admin, "Dana")
+        created = await client.post(
+            f"/applications/{application['id']}/events",
+            headers=admin.headers,
+            json={"description": "note", "contact_ids": [dana]},
+        )
+        event_id = created.json()["event"]["id"]
+
+        response = await client.delete(
+            f"/application-events/{event_id}", headers=admin.headers
+        )
+        assert response.status_code == 200, response.text
+
+        async with DatabaseService.session() as db:
+            rows = (
+                (
+                    await db.execute(
+                        select(ApplicationEventContact).where(
+                            ApplicationEventContact.event_id == event_id
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert rows == []
+
+    async def test_deleting_an_application_leaves_no_orphan_join_rows(
+        self, client, admin, application
+    ):
+        dana = await self._make_contact(client, admin, "Dana")
+        sam = await self._make_contact(client, admin, "Sam")
+        for contact_ids in ([dana, sam], [dana], [sam]):
+            response = await client.post(
+                f"/applications/{application['id']}/events",
+                headers=admin.headers,
+                json={"description": "note", "contact_ids": contact_ids},
+            )
+            assert response.status_code == 201, response.text
+
+        response = await client.delete(
+            f"/applications/{application['id']}", headers=admin.headers
+        )
+        assert response.status_code == 204, response.text
+
+        async with DatabaseService.session() as db:
+            rows = (
+                (
+                    await db.execute(
+                        select(ApplicationEventContact).where(
+                            ApplicationEventContact.user_id == admin.user_id
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert rows == []
 
 
 class TestUrlSchemeIsRestricted:

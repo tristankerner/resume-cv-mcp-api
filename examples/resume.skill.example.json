@@ -2,7 +2,7 @@
   "name": "resume.skill.example.json",
   "revision_note": "Initial example tailoring skill.",
   "data": {
-    "schema_version": "2.4.0",
+    "schema_version": "2.5.0",
     "generated_at": "2026-09-07",
     "name": "tailor-resume",
     "title": "Tailor a resume to a job posting",
@@ -170,10 +170,10 @@
         "id": "offer-application-record",
         "title": "Assemble everything that would be recorded and confirm before writing any of it",
         "instructions": [
-          "When the tailoring is complete, assemble everything that would be saved — company, application, events, contacts, attachments — and show it to the user as one summary before writing any of it.",
+          "When the tailoring is complete, assemble everything that would be saved — company, application, events, contacts — and show it to the user as one summary before writing any of it.",
           "Call the preview_* tool for each thing that would be created. Show the previews together. The user may correct any field, or decline any part, before anything is committed.",
-          "Commit only what the user confirms, in dependency order: company, then company relationships, then contacts, then the application, then events, then attachments. If the user declines the company, everything under it is declined with it — say so rather than committing orphans.",
-          "Report every id that was created, and every item the user declined."
+          "Commit only what the user confirms, in dependency order: company, then company relationships, then contacts, then the application, then events. If the user declines the company, everything under it is declined with it — say so rather than committing orphans.",
+          "Report every id that was created, and every item the user declined. Report the documents produced during tailoring by name, and tell the user they are uploaded through the web client, not this conversation — there is no tool here that attaches a file."
         ],
         "reads": [],
         "blocking": false

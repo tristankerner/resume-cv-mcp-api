@@ -17,11 +17,12 @@ import pytest
 from fastmcp.exceptions import ToolError
 from mcp.types import TextContent
 
+from persistence.base import Clock
+from persistence.pending_write import PendingWrite
 from routers import mcp_documents, mcp_tracking
 from routers.mcp_confirm import ConfirmTools, confirm
 from routers.mcp_tracking import (
     ApplicationStatusLiteral,
-    AttachmentKindLiteral,
     CompanyRelationshipTypeLiteral,
     StackItemInput,
     StackItemTypeLiteral,
@@ -29,7 +30,6 @@ from routers.mcp_tracking import (
     get_application,
     get_company,
     preview_add_application_event,
-    preview_add_attachment,
     preview_add_company_stack_items,
     preview_create_company,
     preview_create_company_relationship,
@@ -39,11 +39,12 @@ from routers.mcp_tracking import (
     search_companies,
     search_contacts,
 )
+from services.auth.api_keys import ApiKeyToken
 from services.auth.mcp_tools import McpToolBase
 from services.auth.scopes import Scopes
+from services.database.database_service import DatabaseService
 from services.tracking.enums import (
     ApplicationStatus,
-    AttachmentKind,
     CompanyRelationshipType,
     StackItemType,
 )
@@ -96,11 +97,6 @@ class TestLiteralsMatchEnums:
     def test_company_relationship_type(self):
         assert set(get_args(CompanyRelationshipTypeLiteral)) == {
             relationship_type.value for relationship_type in CompanyRelationshipType
-        }
-
-    def test_attachment_kind(self):
-        assert set(get_args(AttachmentKindLiteral)) == {
-            kind.value for kind in AttachmentKind
         }
 
 
@@ -348,8 +344,20 @@ class TestAddApplicationEvent:
     async def test_unknown_contact_id_raises(self, as_admin, application):
         with pytest.raises(ToolError):
             await TrackingTools.preview_add_application_event(
-                application["id"], description="note", contact_id=999999
+                application["id"], description="note", contact_ids=[999999]
             )
+
+    async def test_records_multiple_contacts(self, as_admin, application):
+        dana = await _create_contact(first_name="Dana")
+        sam = await _create_contact(first_name="Sam")
+        preview = await TrackingTools.preview_add_application_event(
+            application["id"],
+            description="Panel interview.",
+            contact_ids=[dana["id"], sam["id"]],
+        )
+        result = await _confirm(preview["confirm_token"])
+        contacts = result["event"]["contacts"]
+        assert [c["id"] for c in contacts] == [dana["id"], sam["id"]]
 
 
 class TestCompanyRelationships:
@@ -403,68 +411,6 @@ class TestCompanyRelationships:
         with pytest.raises(ToolError):
             await TrackingTools.preview_create_company_relationship(
                 company["id"], company["id"], "partner_of"
-            )
-
-
-class TestAddAttachment:
-    PDF_BASE64 = "JVBERi0xLjQKJeLjz9M="  # "%PDF-1.4\n%..." — starts with %PDF-
-
-    async def test_preview_returns_metadata_without_content(
-        self, as_admin, application
-    ):
-        preview = await TrackingTools.preview_add_attachment(
-            application["id"],
-            "resume",
-            "resume.pdf",
-            "application/pdf",
-            self.PDF_BASE64,
-        )
-        assert preview["preview"]["filename"] == "resume.pdf"
-        assert preview["preview"]["sha256"]
-        assert "content_base64" not in preview["preview"]
-
-    async def test_confirm_writes_the_attachment(self, as_admin, application):
-        preview = await TrackingTools.preview_add_attachment(
-            application["id"],
-            "resume",
-            "resume.pdf",
-            "application/pdf",
-            self.PDF_BASE64,
-        )
-        result = await _confirm(preview["confirm_token"])
-        assert result["filename"] == "resume.pdf"
-        assert result["application_id"] == application["id"]
-
-    async def test_duplicate_bytes_are_refused_at_preview_time(
-        self, as_admin, application
-    ):
-        preview = await TrackingTools.preview_add_attachment(
-            application["id"],
-            "resume",
-            "resume.pdf",
-            "application/pdf",
-            self.PDF_BASE64,
-        )
-        await _confirm(preview["confirm_token"])
-        with pytest.raises(ToolError):
-            await TrackingTools.preview_add_attachment(
-                application["id"],
-                "resume",
-                "resume-again.pdf",
-                "application/pdf",
-                self.PDF_BASE64,
-            )
-
-    async def test_wrong_magic_bytes_are_refused_at_preview_time(
-        self, as_admin, application
-    ):
-        with pytest.raises(ToolError):
-            await TrackingTools.preview_add_attachment(
-                application["id"],
-                "resume",
-                "resume.pdf",
-                "application/pdf",
-                "bm90IGEgcGRm",  # "not a pdf"
             )
 
 
@@ -542,18 +488,6 @@ class TestToolAdaptersReturnASingleTextBlock:
         result = await confirm(confirm_token)
         assert json.loads(_text(result))["result"]["from_company_id"] == company["id"]
 
-    async def test_add_attachment(self, as_admin, application):
-        preview_result = await preview_add_attachment(
-            application["id"],
-            "resume",
-            "resume.pdf",
-            "application/pdf",
-            "JVBERi0xLjQKJeLjz9M=",
-        )
-        confirm_token = json.loads(_text(preview_result))["confirm_token"]
-        result = await confirm(confirm_token)
-        assert json.loads(_text(result))["result"]["filename"] == "resume.pdf"
-
 
 class TestConfirmDispatch:
     """The one `confirm` tool that replaced the eight `confirm_*` ones.
@@ -630,3 +564,31 @@ class TestConfirmDispatch:
                 re.findall(r'issue_preview\(\s*"(\w+)"', Path(module).read_text())
             )
         assert issued == set(ConfirmTools.REGISTRY)
+
+    def test_add_attachment_is_no_longer_registered(self):
+        """The MCP attachment tool was removed (§6) - `add_attachment` must
+        not route to anything, so a stale token cannot silently write."""
+        assert "add_attachment" not in ConfirmTools.REGISTRY
+
+    async def test_a_stale_add_attachment_token_is_refused(self, as_admin, admin):
+        """A `PendingWrite` row inserted directly, exactly as a token issued
+        by a build that still had `add_attachment` would look today - the
+        registry no longer knows the tool, so redeeming it must raise the
+        same "does not know how to commit" refusal as any other retired
+        tool, per `_authorize`'s docstring."""
+        raw_token = "stale-add-attachment-token"
+        async with DatabaseService.session() as db:
+            db.add(
+                PendingWrite(
+                    token_hash=ApiKeyToken.hash_secret(raw_token),
+                    user_id=admin.user_id,
+                    tool_name="add_attachment",
+                    payload={},
+                    preview={},
+                    expires_at=Clock.utcnow() + PendingWrite.TTL,
+                )
+            )
+            await db.commit()
+
+        with pytest.raises(ToolError, match="does not know how to commit"):
+            await ConfirmTools.confirm(raw_token)

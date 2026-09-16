@@ -216,7 +216,7 @@ before the document itself can go.
 | --- | --- | --- | --- |
 | `GET` | `/contacts` | `contacts:read` | Filter by `company_id`, `query`. |
 | `POST` | `/contacts` | `contacts:write` | Requires at least one of `first_name`, `last_name`, `email`. `409` on a matching email or a fuzzy name match within the same company. |
-| `GET` / `PATCH` / `DELETE` | `/contacts/{id}` | `contacts:read`/`write`/`delete` | Deleting a contact nulls its `contact_id` on any `application_events` row that named it. |
+| `GET` / `PATCH` / `DELETE` | `/contacts/{id}` | `contacts:read`/`write`/`delete` | Deleting a contact removes it from every event that named it; the events themselves are untouched. |
 
 ### Applications and events
 
@@ -225,8 +225,8 @@ before the document itself can go.
 | `GET` | `/applications` | `applications:read` | Filters: `company_id`, repeatable `status`, `source`, `system`, `query`, `job_code`, `submitted_from`/`submitted_to`, `has_attachments`. |
 | `POST` | `/applications` | `applications:write` | `company_id` required. `409` on a near-duplicate: an existing application with the same `job_code`, or the same company with a similar title and a submission date within 14 days. |
 | `GET` / `PATCH` / `DELETE` | `/applications/{id}` | `applications:read`/`write`/`delete` | `PATCH` rejects a `status` field with `422` — status is derived, never set directly. Changing `job_code` to one another application already carries is a `409`, exactly like create; `confirm_create_duplicate: true` overrides. The fuzzy title/company/date heuristic stays create-only. Delete cascades to its events and attachments. |
-| `GET` / `POST` | `/applications/{id}/events` | `applications:read`/`write` | A status change, a note, a rating, or any combination — at least one is required on create. |
-| `PATCH` | `/application-events/{id}` | `applications:write` | |
+| `GET` / `POST` | `/applications/{id}/events` | `applications:read`/`write` | A status change, a note, a rating, or any combination — at least one is required on create. `contact_ids` names every contact involved (max 25, duplicates silently collapsed); omit it for none. Response carries `contacts: [{id, name}]`, always present, possibly empty. |
+| `PATCH` | `/application-events/{id}` | `applications:write` | `contact_ids` present **replaces** the event's exact contact set — `[]` clears it, omitting the key leaves it untouched. An id that does not resolve for the caller is a `422` naming every offending id. |
 | `DELETE` | `/application-events/{id}` | `applications:delete` | **Returns `200`, not `204`** — the body carries the application's recomputed status. |
 | `GET` | `/applications/{id}/contact-options` | `applications:read` **and** `contacts:read` | Contacts plausibly involved in this application, reached by walking `company_relationships` out from its own company — up to 3 hops, both directions, capped at 200 companies. `query` filters like `GET /contacts`; `limit` defaults to 200 (max 500). Each row carries `depth` (0 = the application's own company) and `via`, the chain of intermediate company names. Shapes what a client *offers*, not an authorization boundary — `POST`/`PATCH` on an event still accepts any contact the caller owns, whether or not it appears here. |
 
@@ -267,10 +267,10 @@ attached — no override).
 | `GET` | `/audit` | `audit:read` | Your own rows only, filterable by `table` and `row_id`. `table` must be one of the audited tables or `422`. |
 
 Records every write to `applications`, `application_events`,
-`application_attachments`, `companies`, `company_relationships`,
-`company_stack_items`, `contacts`, `users` and `api_keys` — never a secret
-column, and never `documents`, which is append-only and is its own history.
-See [Security](security.md).
+`application_event_contacts`, `application_attachments`, `companies`,
+`company_relationships`, `company_stack_items`, `contacts`, `users` and
+`api_keys` — never a secret column, and never `documents`, which is
+append-only and is its own history. See [Security](security.md).
 
 ### Duplicate-conflict body
 
@@ -316,11 +316,16 @@ The one place `detail` is an object rather than a string, returned by every
 | `preview_create_company_relationship` / `confirm` | `companies:read`+`companies:write` / `companies:write` | A directed edge between two companies. Same duplicate/inverse-duplicate rule as `POST /companies/{id}/relationships`. |
 | `preview_create_contact` / `confirm` | `contacts:read`+`contacts:write` / `contacts:write` | A contact. Never invents one — only records one the user names or the posting states. |
 | `preview_record_application` / `confirm` | `applications:read`+`applications:write` (+`companies:read`+`companies:write` to preview a new company) / `applications:write` | The composite pair for the end of a tailoring run — one of `company_id`/`company_name`, plus the documents actually used. |
-| `preview_add_application_event` / `confirm` | `applications:read`+`applications:write` / `applications:write` | A status change, a note, a rating, or any combination. |
-| `preview_add_attachment` / `confirm` | `applications:read`+`applications:write` / `applications:write` | A file on an application. Content-type, size, and magic-byte checks all run at preview time. |
+| `preview_add_application_event` / `confirm` | `applications:read`+`applications:write` / `applications:write` | A status change, a note, a rating, or any combination. `contact_ids` names every contact involved — ids only, from `search_contacts` or `preview_create_contact`. |
 
 Every tool returns a single text content block with no `structuredContent`
 mirror, which halves the token cost of a call.
+
+There is deliberately no MCP tool for attachments. A file is uploaded through
+the web client, or `POST /applications/{id}/attachments` directly — never by
+having the model re-emit a document's bytes as a tool argument. `get_application`
+still returns attachment *metadata* over MCP; reading what is attached was
+never the broken part.
 
 **This is a breaking change from the previous MCP tool surface**: `create_company`,
 `create_contact`, `record_application`, `add_application_event` and

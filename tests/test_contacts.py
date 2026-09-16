@@ -250,3 +250,39 @@ class TestDeleteContact:
             f"/contacts/{created.json()['id']}", headers=other_owner.headers
         )
         assert response.status_code == 404
+
+    async def test_deleting_a_named_contact_removes_it_from_events_not_the_events(
+        self, client, admin, application
+    ):
+        sam = await client.post(
+            "/contacts", headers=admin.headers, json={"first_name": "Sam"}
+        )
+        dana = await client.post(
+            "/contacts", headers=admin.headers, json={"first_name": "Dana"}
+        )
+        sam_id, dana_id = sam.json()["id"], dana.json()["id"]
+
+        first_event = await client.post(
+            f"/applications/{application['id']}/events",
+            headers=admin.headers,
+            json={"description": "first", "contact_ids": [sam_id, dana_id]},
+        )
+        second_event = await client.post(
+            f"/applications/{application['id']}/events",
+            headers=admin.headers,
+            json={"description": "second", "contact_ids": [sam_id]},
+        )
+        assert first_event.status_code == 201, first_event.text
+        assert second_event.status_code == 201, second_event.text
+
+        response = await client.delete(f"/contacts/{sam_id}", headers=admin.headers)
+        assert response.status_code == 204
+
+        events = await client.get(
+            f"/applications/{application['id']}/events", headers=admin.headers
+        )
+        assert events.status_code == 200
+        for event in events.json()["data"]:
+            assert sam_id not in [c["id"] for c in event["contacts"]]
+        first_contacts = [c["id"] for e in events.json()["data"] for c in e["contacts"]]
+        assert dana_id in first_contacts

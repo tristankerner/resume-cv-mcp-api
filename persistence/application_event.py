@@ -28,7 +28,6 @@ class ApplicationEvent(SQAlchemyBase):
             "occurred_at",
         ),
         Index("ix_application_events_user_occurred", "user_id", "occurred_at"),
-        Index("ix_application_events_user_contact", "user_id", "contact_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -37,9 +36,6 @@ class ApplicationEvent(SQAlchemyBase):
         ForeignKey("applications.id", ondelete="CASCADE"), nullable=False
     )
     status: Mapped[str | None]
-    contact_id: Mapped[int | None] = mapped_column(
-        ForeignKey("contacts.id", ondelete="SET NULL")
-    )
     description: Mapped[str | None] = mapped_column(Text)
     rating: Mapped[int | None]
     occurred_at: Mapped[datetime] = mapped_column(default=Clock.utcnow, nullable=False)

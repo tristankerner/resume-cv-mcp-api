@@ -41,6 +41,18 @@ class TrackingErrors:
         )
 
     @staticmethod
+    def invalid_references(field: str, entity: str, values: list[int]) -> HTTPException:
+        """The plural of `invalid_reference`: a list field naming rows that do
+        not resolve for this caller. Names every offending id rather than only
+        the first - a caller sending 25 ids should not have to fix them one
+        request at a time."""
+        listed = ", ".join(str(value) for value in sorted(values))
+        return HTTPException(
+            status_code=422,
+            detail=f"{field} refers to {entity}s that do not exist: {listed}.",
+        )
+
+    @staticmethod
     def document_type_mismatch(field: str, expected: str, actual: str) -> HTTPException:
         return HTTPException(
             status_code=422,

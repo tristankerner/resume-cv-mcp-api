@@ -151,6 +151,24 @@ flagged for review, unparseable dates, unmapped response values — looks
 right. It runs as one transaction and is idempotent: re-running against the
 same file finds every row's application already there and writes nothing new.
 
+### `deprecated_application_event_contact_ids` is a deliberate leftover
+
+`a806bc88a451` (multi-contact application events) dropped
+`application_events.contact_id` in favor of the `application_event_contacts`
+join table, and before dropping it, snapshotted every row's value into
+`deprecated_application_event_contact_ids` — `event_id, contact_id,
+captured_at`, one row per event that had a contact at the instant of the
+migration. Nothing reads this table at run time; it has no SQLAlchemy model
+and exists purely so `alembic downgrade` has an authoritative answer for
+events whose join rows were later deleted (the join table alone would answer
+"no contact" for those, which is wrong — the snapshot remembers what the
+column actually held).
+
+It is intentionally not dropped by `a806bc88a451` itself. Drop it with its
+own follow-up migration once the change has been verified in production and
+the downgrade path is no longer wanted — dropping it early would close that
+option during the window it exists to cover.
+
 ### SQLite audit trigger columns are literal
 
 The audit-log migration generates three SQLite triggers (insert/update/delete)

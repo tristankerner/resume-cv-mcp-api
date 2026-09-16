@@ -1,10 +1,9 @@
 from typing import Annotated
 
 from fastapi import Depends
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from persistence.application_event import ApplicationEvent
+from persistence.application_event_contact import ApplicationEventContact
 from persistence.base import Clock
 from persistence.company import Company
 from persistence.contact import Contact
@@ -256,14 +255,7 @@ class ContactService(TrackingServiceBase):
         owner = self._owner()
         contact = await self._require_contact(contact_id)
 
-        result = await self.db.execute(
-            select(ApplicationEvent).where(
-                ApplicationEvent.user_id == owner,
-                ApplicationEvent.contact_id == contact_id,
-            )
-        )
-        for event in result.scalars().all():
-            event.contact_id = None
+        await ApplicationEventContact.delete_for_contact(self.db, owner, contact_id)
 
         await self.db.delete(contact)
         await self.db.commit()

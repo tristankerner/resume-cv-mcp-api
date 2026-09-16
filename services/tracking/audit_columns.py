@@ -56,12 +56,16 @@ class AuditColumns:
                 "user_id",
                 "application_id",
                 "status",
-                "contact_id",
                 "description",
                 "rating",
                 "occurred_at",
                 "created_at",
             ],
+        ),
+        "application_event_contacts": (
+            "id",
+            "user_id",
+            ["id", "user_id", "event_id", "contact_id", "created_at"],
         ),
         "application_attachments": (
             "id",

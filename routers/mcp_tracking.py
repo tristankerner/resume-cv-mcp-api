@@ -13,12 +13,10 @@ from services.auth.principal import Principal
 from services.auth.scopes import Scopes
 from services.database.database_service import DatabaseService
 from services.tracking.application_service import ApplicationService
-from services.tracking.attachment_service import AttachmentService
 from services.tracking.company_service import CompanyService
 from services.tracking.contact_service import ContactService
 from services.tracking.dtos.application import CreateApplicationRequest
 from services.tracking.dtos.application_event import CreateApplicationEventRequest
-from services.tracking.dtos.attachment import CreateAttachmentRequest
 from services.tracking.dtos.company import (
     CreateCompanyRelationshipRequest,
     CreateCompanyRequest,
@@ -29,7 +27,6 @@ from services.tracking.duplicates import DuplicateFinder
 from services.tracking.enums import (
     COMPANY_RELATIONSHIP_TYPE_LABELS,
     ApplicationStatus,
-    AttachmentKind,
     CompanyRelationshipType,
 )
 from services.tracking.normalization import Normalizer
@@ -69,8 +66,6 @@ CompanyRelationshipTypeLiteral = Literal[
     "acquired_by",
     "partner_of",
 ]
-
-AttachmentKindLiteral = Literal["resume", "cover_letter", "other"]
 
 
 class StackItemInput(BaseModel):
@@ -835,14 +830,14 @@ class TrackingTools(McpToolBase):
         status: ApplicationStatusLiteral | None = None,
         description: str | None = None,
         rating: int | None = None,
-        contact_id: int | None = None,
+        contact_ids: list[int] | None = None,
         occurred_at: str | None = None,
     ) -> dict:
         async with DatabaseService.session() as db:
             service = ApplicationService(db, cls._principal())
             request = CreateApplicationEventRequest(
                 status=ApplicationStatus(status) if status else None,
-                contact_id=contact_id,
+                contact_ids=contact_ids or [],
                 description=description,
                 rating=rating,
                 occurred_at=datetime.fromisoformat(occurred_at)
@@ -862,7 +857,7 @@ class TrackingTools(McpToolBase):
                 "status": status,
                 "description": description,
                 "rating": rating,
-                "contact_id": contact_id,
+                "contact_ids": contact_ids,
                 "occurred_at": occurred_at,
             },
         }
@@ -871,13 +866,29 @@ class TrackingTools(McpToolBase):
             "status": status,
             "description": description,
             "rating": rating,
-            "contact_id": contact_id,
+            "contact_ids": contact_ids,
             "occurred_at": occurred_at,
         }
         return await cls.issue_preview("add_application_event", payload, preview)
 
     @classmethod
     async def apply_add_application_event(cls, payload: dict) -> dict:
+        # A token issued by the previous build froze a `contact_id` key, and
+        # has a ten-minute TTL in which it can still be redeemed after this
+        # deploy. Fold it into `contact_ids` rather than let it raise a
+        # `TypeError` on an unexpected kwarg. Copied rather than mutated:
+        # `payload` is the frozen record `ConfirmationService.redeem`
+        # returned, and rewriting it in place would edit the audit trail of
+        # what the token authorized. Removable after one release.
+        if "contact_id" in payload:
+            legacy_contact_id = payload["contact_id"]
+            payload = {
+                key: value for key, value in payload.items() if key != "contact_id"
+            }
+            payload.setdefault(
+                "contact_ids",
+                [legacy_contact_id] if legacy_contact_id is not None else None,
+            )
         return await cls.add_application_event(**payload)
 
     @classmethod
@@ -887,14 +898,14 @@ class TrackingTools(McpToolBase):
         status: ApplicationStatusLiteral | None = None,
         description: str | None = None,
         rating: int | None = None,
-        contact_id: int | None = None,
+        contact_ids: list[int] | None = None,
         occurred_at: str | None = None,
     ) -> dict:
         async with DatabaseService.session() as db:
             service = ApplicationService(db, cls._principal())
             request = CreateApplicationEventRequest(
                 status=ApplicationStatus(status) if status else None,
-                contact_id=contact_id,
+                contact_ids=contact_ids or [],
                 description=description,
                 rating=rating,
                 occurred_at=datetime.fromisoformat(occurred_at)
@@ -906,73 +917,6 @@ class TrackingTools(McpToolBase):
             except HTTPException as error:
                 raise cls._translate(error) from error
         return result.model_dump(mode="json")
-
-    @classmethod
-    async def preview_add_attachment(
-        cls,
-        application_id: int,
-        kind: AttachmentKindLiteral,
-        filename: str,
-        content_type: str,
-        content_base64: str,
-    ) -> dict:
-        async with DatabaseService.session() as db:
-            service = AttachmentService(db, cls._principal())
-            request = CreateAttachmentRequest(
-                kind=AttachmentKind(kind),
-                filename=filename,
-                content_type=content_type,
-                content_base64=content_base64,
-            )
-            try:
-                resolved = await service.preview_attachment_creation(
-                    application_id, request
-                )
-            except HTTPException as error:
-                raise cls._translate(error) from error
-        preview = {
-            "application_id": application_id,
-            "kind": kind,
-            "filename": filename,
-            "content_type": content_type,
-            "byte_size": len(resolved.raw),
-            "sha256": resolved.sha256,
-        }
-        payload = {
-            "application_id": application_id,
-            "kind": kind,
-            "filename": filename,
-            "content_type": content_type,
-            "content_base64": content_base64,
-        }
-        return await cls.issue_preview("add_attachment", payload, preview)
-
-    @classmethod
-    async def apply_add_attachment(cls, payload: dict) -> dict:
-        return await cls.add_attachment(**payload)
-
-    @classmethod
-    async def add_attachment(
-        cls,
-        application_id: int,
-        kind: AttachmentKindLiteral,
-        filename: str,
-        content_type: str,
-        content_base64: str,
-    ) -> dict:
-        async with DatabaseService.session() as db:
-            service = AttachmentService(db, cls._principal())
-            request = CreateAttachmentRequest(
-                kind=AttachmentKind(kind),
-                filename=filename,
-                content_type=content_type,
-                content_base64=content_base64,
-            )
-            try:
-                meta = await service.create_attachment(application_id, request)
-            except HTTPException as error:
-                raise cls._translate(error) from error
-        return meta.model_dump(mode="json")
 
 
 # Free-standing by necessity, not by choice — see ResumeTools' docstring in
@@ -1261,7 +1205,7 @@ async def preview_add_application_event(
     status: ApplicationStatusLiteral | None = None,
     description: str | None = None,
     rating: int | None = None,
-    contact_id: int | None = None,
+    contact_ids: list[int] | None = None,
     occurred_at: str | None = None,
 ) -> ToolResult:
     """Preview recording something that happened on an application: a status
@@ -1269,38 +1213,12 @@ async def preview_add_application_event(
     is required. Returns the application's current status, what would be
     recorded, and a `confirm_token` for `confirm_add_application_event`.
     `occurred_at` defaults to now; pass it as an ISO 8601 timestamp to
-    backdate a note.
+    backdate a note. `contact_ids` names every contact who was involved -
+    ids only, from `search_contacts` or `preview_create_contact`; leave it
+    unset or empty for an event with no contact.
     """
     return TrackingTools.as_result(
         await TrackingTools.preview_add_application_event(
-            application_id, status, description, rating, contact_id, occurred_at
-        )
-    )
-
-
-@tool(
-    auth=require_scopes(Scopes.APPLICATIONS_READ, Scopes.APPLICATIONS_WRITE),
-    output_schema=None,
-)
-async def preview_add_attachment(
-    application_id: int,
-    kind: AttachmentKindLiteral,
-    filename: str,
-    content_type: str,
-    content_base64: str,
-) -> ToolResult:
-    """Preview attaching a file to an application. Validates the content
-    type, decodes and size-checks the base64, sniffs the magic bytes against
-    the declared type, and checks for an exact-byte duplicate already on this
-    application - all before anything is written, so a 10 MiB upload is
-    rejected before it is confirmed rather than after.
-
-    Returns the filename, kind, content type, decoded byte size, and sha256 -
-    never the content itself - plus a `confirm_token` for
-    `confirm_add_attachment`.
-    """
-    return TrackingTools.as_result(
-        await TrackingTools.preview_add_attachment(
-            application_id, kind, filename, content_type, content_base64
+            application_id, status, description, rating, contact_ids, occurred_at
         )
     )
