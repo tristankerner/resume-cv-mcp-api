@@ -228,6 +228,39 @@ class ConfigServiceModel(BaseSettings):
         default=5, ge=1, alias="WEBAUTHN_CHALLENGE_TTL_MINUTES"
     )
 
+    # --- Android app (Digital Asset Links) ----------------------------------
+    # Lets the Android client's CredentialManager trust this API as a login
+    # credential provider: Google's verifier fetches
+    # /.well-known/assetlinks.json and checks it against the requesting app's
+    # package name and signing certificate. Unset means no Android client
+    # exists for this deployment; both settings are required together,
+    # enforced below.
+    android_package_name: str | None = Field(default=None, alias="ANDROID_PACKAGE_NAME")
+
+    # Colon-separated hex SHA-256 fingerprints of the app's signing
+    # certificate(s), comma-separated to list more than one — e.g. Play App
+    # Signing's upload key alongside the release key during a rotation.
+    # NoDecode: see oauth_allowed_redirect_hosts above.
+    android_sha256_cert_fingerprints: Annotated[frozenset[str], NoDecode] = Field(
+        default_factory=frozenset, alias="ANDROID_SHA256_CERT_FINGERPRINTS"
+    )
+
+    @field_validator("android_package_name", mode="before")
+    @classmethod
+    def _normalise_android_package_name(cls, value: Any) -> Any:
+        return None if value == "" else value
+
+    @field_validator("android_sha256_cert_fingerprints", mode="before")
+    @classmethod
+    def _parse_android_sha256_cert_fingerprints(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        return frozenset(
+            fingerprint.strip().upper()
+            for fingerprint in value.split(",")
+            if fingerprint.strip()
+        )
+
     @field_validator("webauthn_rp_id", mode="before")
     @classmethod
     def _normalise_webauthn_rp_id(cls, value: Any) -> Any:
@@ -324,6 +357,37 @@ class ConfigServiceModel(BaseSettings):
     @property
     def passkeys_enabled(self) -> bool:
         return self.webauthn_rp_id is not None
+
+    @property
+    def android_asset_links_enabled(self) -> bool:
+        return self.android_package_name is not None
+
+    @model_validator(mode="after")
+    def _validate_android_asset_links(self) -> ConfigServiceModel:
+        """Reject a half-configured Android client at settings load, the same
+        way the webauthn origin checks below do.
+
+        Either setting alone can never produce a usable assetlinks.json, and
+        finding that out on every route 404ing is worse than finding out at
+        startup.
+        """
+        if self.android_package_name is None:
+            if self.android_sha256_cert_fingerprints:
+                raise ValueError(
+                    "ANDROID_SHA256_CERT_FINGERPRINTS is set but "
+                    "ANDROID_PACKAGE_NAME is not. Both are required to serve "
+                    "assetlinks.json."
+                )
+            return self
+
+        if not self.android_sha256_cert_fingerprints:
+            raise ValueError(
+                "ANDROID_PACKAGE_NAME is set but "
+                "ANDROID_SHA256_CERT_FINGERPRINTS is empty. Name every "
+                "signing certificate's SHA-256 fingerprint that should be "
+                "trusted."
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_webauthn_origins(self) -> ConfigServiceModel:

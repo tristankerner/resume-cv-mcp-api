@@ -234,6 +234,51 @@ class ClientRoute:
         return FileResponse(self.path, media_type="text/html", headers=self.HEADERS)
 
 
+class AssetLinksRoute:
+    """Serves GET /.well-known/assetlinks.json, if an Android client is
+    configured.
+
+    Registered only when both ANDROID_PACKAGE_NAME and
+    ANDROID_SHA256_CERT_FINGERPRINTS are set — see ConfigServiceModel — so a
+    deployment with no Android client 404s here instead of advertising an
+    empty or half-built target. Lives beside ClientRoute for the same reason:
+    a single bespoke GET that needs a specific content type and array body,
+    not an APIRouter with tags.
+    """
+
+    RELATION: ClassVar[list[str]] = ["delegate_permission/common.get_login_creds"]
+
+    def __init__(self, package_name: str, fingerprints: list[str]) -> None:
+        self.package_name = package_name
+        self.fingerprints = fingerprints
+
+    @classmethod
+    def register(
+        cls, app_: FastAPI, package_name: str | None, fingerprints: frozenset[str]
+    ) -> bool:
+        if not package_name or not fingerprints:
+            return False
+
+        app_.get("/.well-known/assetlinks.json", include_in_schema=False)(
+            cls(package_name, sorted(fingerprints)).serve
+        )
+        return True
+
+    async def serve(self) -> JSONResponse:
+        return JSONResponse(
+            [
+                {
+                    "relation": self.RELATION,
+                    "target": {
+                        "namespace": "android_app",
+                        "package_name": self.package_name,
+                        "sha256_cert_fingerprints": self.fingerprints,
+                    },
+                }
+            ]
+        )
+
+
 class Application:
     """Assembles the ASGI app: MCP mount, middleware, routers, client route."""
 
@@ -306,6 +351,11 @@ class Application:
             self._app.include_router(router.router)
 
         ClientRoute.register(self._app, self.settings.client_html_path)
+        AssetLinksRoute.register(
+            self._app,
+            self.settings.android_package_name,
+            self.settings.android_sha256_cert_fingerprints,
+        )
 
         self._app.get("/")(self.root)
 
