@@ -230,6 +230,52 @@ class TestWebauthnSettings:
         reconfigure(WEBAUTHN_RP_ID="", WEBAUTHN_ALLOWED_ORIGINS=None)
         assert settings().passkeys_enabled is False
 
+    def test_an_android_apk_key_hash_origin_is_accepted(self, reconfigure):
+        """Android's Credential Manager sends this in place of a page origin
+        for a native app's ceremony — it has no hostname, so it must skip the
+        https and RP-ID-subdomain checks a page origin is held to."""
+        reconfigure(
+            WEBAUTHN_RP_ID="example.com",
+            WEBAUTHN_ALLOWED_ORIGINS=(
+                "https://example.com,"
+                "android:apk-key-hash:Xmdi-6ZwOSL87AjEZfKUYeHnBi4f1ul_014xhCt_rY4"
+            ),
+        )
+        assert settings().passkeys_enabled is True
+
+    def test_an_android_apk_key_hash_origin_in_production_is_accepted(
+        self, reconfigure
+    ):
+        """The same origin, but with the production checks in play — proof
+        that it is exempted from "is not https" rather than merely untested
+        in development."""
+        reconfigure(
+            ENVIRONMENT="production",
+            WEBAUTHN_RP_ID="example.com",
+            WEBAUTHN_ALLOWED_ORIGINS=(
+                "android:apk-key-hash:Xmdi-6ZwOSL87AjEZfKUYeHnBi4f1ul_014xhCt_rY4"
+            ),
+            PUBLIC_BASE_URL="https://example.com",
+            MFA_ENCRYPTION_KEYS=Fernet.generate_key().decode(),
+        )
+        assert settings().passkeys_enabled is True
+
+    def test_a_malformed_android_origin_is_rejected(self, reconfigure):
+        with pytest.raises(ValueError, match="apk-key-hash"):
+            reconfigure(
+                WEBAUTHN_RP_ID="example.com",
+                WEBAUTHN_ALLOWED_ORIGINS="android:apk-key-hash:not-a-hash",
+            )
+            settings()
+
+    def test_an_empty_android_hash_is_rejected(self, reconfigure):
+        with pytest.raises(ValueError, match="apk-key-hash"):
+            reconfigure(
+                WEBAUTHN_RP_ID="example.com",
+                WEBAUTHN_ALLOWED_ORIGINS="android:apk-key-hash:",
+            )
+            settings()
+
 
 class TestRelyingParty:
     def test_enabled_reflects_the_settings(self, reconfigure):

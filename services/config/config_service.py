@@ -1,3 +1,4 @@
+import base64
 import os
 from enum import StrEnum, auto
 from typing import Annotated, Any, ClassVar
@@ -34,6 +35,12 @@ class Environment(StrEnum):
 
 
 class ConfigServiceModel(BaseSettings):
+    # See the `webauthn_allowed_origins` field and `_validate_webauthn_origins`.
+    ANDROID_ORIGIN_PREFIX: ClassVar[str] = "android:apk-key-hash:"
+    _BASE64URL_CHARS: ClassVar[frozenset[str]] = frozenset(
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -217,6 +224,13 @@ class ConfigServiceModel(BaseSettings):
     # is the browser's own rule, and an entry that breaks it would produce a
     # credential this service could never verify. NoDecode: see
     # oauth_allowed_redirect_hosts above.
+    #
+    # An entry may instead be `ANDROID_ORIGIN_PREFIX` + the app's signing
+    # certificate hash — what Android's Credential Manager sends in place of
+    # a page origin for a native app's ceremony. That one has no hostname to
+    # check against `webauthn_rp_id`; trust instead comes from
+    # /.well-known/assetlinks.json (AssetLinksRoute in main.py), which is
+    # what a browser has no equivalent of and why the check differs below.
     webauthn_allowed_origins: Annotated[frozenset[str], NoDecode] = Field(
         default=frozenset(), alias="WEBAUTHN_ALLOWED_ORIGINS"
     )
@@ -389,10 +403,28 @@ class ConfigServiceModel(BaseSettings):
             )
         return self
 
+    @staticmethod
+    def _is_valid_android_apk_key_hash_origin(origin: str) -> bool:
+        """Whether `origin` is `ANDROID_ORIGIN_PREFIX` followed by the
+        unpadded base64url SHA-256 hash (32 bytes) of an app's signing
+        certificate — what Android's Credential Manager sends in place of a
+        page origin for a native app's WebAuthn ceremony.
+        """
+        encoded = origin.removeprefix(ConfigServiceModel.ANDROID_ORIGIN_PREFIX)
+        if not encoded or any(
+            char not in ConfigServiceModel._BASE64URL_CHARS for char in encoded
+        ):
+            return False
+        padding = "=" * (-len(encoded) % 4)
+        try:
+            return len(base64.urlsafe_b64decode(encoded + padding)) == 32
+        except ValueError:
+            return False
+
     @model_validator(mode="after")
     def _validate_webauthn_origins(self) -> ConfigServiceModel:
-        """Reject an RP ID and origin set the browser would refuse, at settings
-        load.
+        """Reject an RP ID and origin set the browser (or Android's
+        Credential Manager) would refuse, at settings load.
 
         Every one of these is otherwise a ceremony that starts fine in the UI
         and fails at the last step with a `SecurityError` the user cannot act
@@ -415,6 +447,21 @@ class ConfigServiceModel(BaseSettings):
             )
 
         for origin in sorted(self.webauthn_allowed_origins):
+            if origin.startswith(self.ANDROID_ORIGIN_PREFIX):
+                if not self._is_valid_android_apk_key_hash_origin(origin):
+                    raise ValueError(
+                        f"WEBAUTHN_ALLOWED_ORIGINS entry {origin!r} is not a "
+                        f"valid {self.ANDROID_ORIGIN_PREFIX}<hash> origin. "
+                        "Expected that prefix followed by the unpadded "
+                        "base64url SHA-256 hash of the app's signing "
+                        "certificate."
+                    )
+                # No hostname to check against webauthn_rp_id: trust comes
+                # from /.well-known/assetlinks.json instead (AssetLinksRoute
+                # in main.py), which is what ties this hash to a package name
+                # the RP ID has no part in.
+                continue
+
             parsed = urlsplit(origin)
             if parsed.scheme not in {"http", "https"} or not parsed.hostname:
                 raise ValueError(
