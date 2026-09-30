@@ -9,6 +9,8 @@ from fastapi.testclient import TestClient
 from main import AssetLinksRoute
 from services.config.config_service import ConfigService
 
+DEFAULT_RELATIONS = frozenset({"delegate_permission/common.get_login_creds"})
+
 
 def settings():
     return ConfigService.get_without_deps().settings
@@ -31,7 +33,9 @@ def reconfigure(monkeypatch):
 
 
 def _app_serving(
-    package_name: str | None, fingerprints: frozenset[str]
+    package_name: str | None,
+    fingerprints: frozenset[str],
+    relations: frozenset[str] = DEFAULT_RELATIONS,
 ) -> tuple[FastAPI, bool]:
     """A bare app with the route registered, rather than a reload of `main`.
 
@@ -40,7 +44,7 @@ def _app_serving(
     function directly is what makes the unconfigured case testable at all.
     """
     app = FastAPI()
-    registered = AssetLinksRoute.register(app, package_name, fingerprints)
+    registered = AssetLinksRoute.register(app, package_name, fingerprints, relations)
     return app, registered
 
 
@@ -76,6 +80,26 @@ class TestConfigured:
         response = TestClient(app).get("/.well-known/assetlinks.json")
         fingerprints = response.json()[0]["target"]["sha256_cert_fingerprints"]
         assert fingerprints == ["AA:AA:AA", "BB:BB:BB"]
+
+    def test_lists_every_relation_sorted(self):
+        """Sorted for the same reason the fingerprints are — a stable body
+        across processes regardless of set iteration order."""
+        app, _ = _app_serving(
+            "com.tristankerner.resumeapi.client",
+            frozenset({"AA:BB:CC"}),
+            relations=frozenset(
+                {
+                    "delegate_permission/common.handle_all_urls",
+                    "delegate_permission/common.get_login_creds",
+                }
+            ),
+        )
+
+        response = TestClient(app).get("/.well-known/assetlinks.json")
+        assert response.json()[0]["relation"] == [
+            "delegate_permission/common.get_login_creds",
+            "delegate_permission/common.handle_all_urls",
+        ]
 
     def test_stays_out_of_the_openapi_schema(self):
         app, _ = _app_serving("com.example.app", frozenset({"AA:BB:CC"}))
@@ -147,3 +171,62 @@ class TestAndroidAssetLinksSettings:
         mid-run relies on."""
         reconfigure(ANDROID_PACKAGE_NAME="", ANDROID_SHA256_CERT_FINGERPRINTS=None)
         assert settings().android_asset_links_enabled is False
+
+    def test_relations_default_to_get_login_creds(self, reconfigure):
+        reconfigure(
+            ANDROID_PACKAGE_NAME="com.example.app",
+            ANDROID_SHA256_CERT_FINGERPRINTS="AA:BB:CC",
+        )
+        assert settings().android_asset_links_relations == {
+            "delegate_permission/common.get_login_creds"
+        }
+
+    def test_relations_are_split_on_commas_and_trimmed(self, reconfigure):
+        reconfigure(
+            ANDROID_PACKAGE_NAME="com.example.app",
+            ANDROID_SHA256_CERT_FINGERPRINTS="AA:BB:CC",
+            ANDROID_ASSET_LINKS_RELATIONS=(
+                "delegate_permission/common.get_login_creds, "
+                "delegate_permission/common.handle_all_urls"
+            ),
+        )
+        assert settings().android_asset_links_relations == {
+            "delegate_permission/common.get_login_creds",
+            "delegate_permission/common.handle_all_urls",
+        }
+
+    def test_an_empty_relations_value_is_rejected(self, reconfigure):
+        with pytest.raises(ValueError, match="must name at least one relation"):
+            reconfigure(
+                ANDROID_PACKAGE_NAME="com.example.app",
+                ANDROID_SHA256_CERT_FINGERPRINTS="AA:BB:CC",
+                ANDROID_ASSET_LINKS_RELATIONS=",,",
+            )
+            settings()
+
+    def test_a_relation_missing_a_slash_is_rejected(self, reconfigure):
+        with pytest.raises(ValueError, match="is not a relation string"):
+            reconfigure(
+                ANDROID_PACKAGE_NAME="com.example.app",
+                ANDROID_SHA256_CERT_FINGERPRINTS="AA:BB:CC",
+                ANDROID_ASSET_LINKS_RELATIONS="not_a_relation",
+            )
+            settings()
+
+    def test_a_relation_with_a_leading_slash_is_rejected(self, reconfigure):
+        with pytest.raises(ValueError, match="is not a relation string"):
+            reconfigure(
+                ANDROID_PACKAGE_NAME="com.example.app",
+                ANDROID_SHA256_CERT_FINGERPRINTS="AA:BB:CC",
+                ANDROID_ASSET_LINKS_RELATIONS="/handle_all_urls",
+            )
+            settings()
+
+    def test_relations_without_a_package_name_is_rejected(self, reconfigure):
+        with pytest.raises(ValueError, match="ANDROID_PACKAGE_NAME"):
+            reconfigure(
+                ANDROID_PACKAGE_NAME=None,
+                ANDROID_SHA256_CERT_FINGERPRINTS=None,
+                ANDROID_ASSET_LINKS_RELATIONS="delegate_permission/common.handle_all_urls",
+            )
+            settings()

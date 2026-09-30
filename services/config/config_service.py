@@ -259,6 +259,17 @@ class ConfigServiceModel(BaseSettings):
         default_factory=frozenset, alias="ANDROID_SHA256_CERT_FINGERPRINTS"
     )
 
+    # Digital Asset Links relation string(s) granted to the app, comma-
+    # separated — see
+    # https://developers.google.com/digital-asset-links/v1/relation-strings.
+    # Defaults to just credential delegation, the original use case; add
+    # e.g. delegate_permission/common.handle_all_urls for Android App Links
+    # without a code change. NoDecode: see oauth_allowed_redirect_hosts above.
+    android_asset_links_relations: Annotated[frozenset[str], NoDecode] = Field(
+        default=frozenset({"delegate_permission/common.get_login_creds"}),
+        alias="ANDROID_ASSET_LINKS_RELATIONS",
+    )
+
     @field_validator("android_package_name", mode="before")
     @classmethod
     def _normalise_android_package_name(cls, value: Any) -> Any:
@@ -274,6 +285,46 @@ class ConfigServiceModel(BaseSettings):
             for fingerprint in value.split(",")
             if fingerprint.strip()
         )
+
+    @field_validator("android_asset_links_relations", mode="before")
+    @classmethod
+    def _parse_android_asset_links_relations(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        return frozenset(
+            relation.strip() for relation in value.split(",") if relation.strip()
+        )
+
+    @field_validator("android_asset_links_relations", mode="after")
+    @classmethod
+    def _validate_android_asset_links_relations(
+        cls, value: frozenset[str]
+    ) -> frozenset[str]:
+        """Reject a malformed or emptied-out relation list at settings load.
+
+        A typo here is otherwise silent: the route still serves 200, and the
+        only symptom is Android's verifier declining the exact capability
+        that was meant to be granted.
+        """
+        if not value:
+            raise ValueError(
+                "ANDROID_ASSET_LINKS_RELATIONS must name at least one "
+                "relation; unset the variable entirely to use the default "
+                "('delegate_permission/common.get_login_creds')."
+            )
+        for relation in value:
+            if (
+                relation.count("/") != 1
+                or relation.startswith("/")
+                or relation.endswith("/")
+            ):
+                raise ValueError(
+                    f"ANDROID_ASSET_LINKS_RELATIONS entry {relation!r} is not "
+                    "a relation string. Expected "
+                    "'<permission_type>/<permission>', e.g. "
+                    "'delegate_permission/common.get_login_creds'."
+                )
+        return value
 
     @field_validator("webauthn_rp_id", mode="before")
     @classmethod
@@ -391,6 +442,12 @@ class ConfigServiceModel(BaseSettings):
                     "ANDROID_SHA256_CERT_FINGERPRINTS is set but "
                     "ANDROID_PACKAGE_NAME is not. Both are required to serve "
                     "assetlinks.json."
+                )
+            if "android_asset_links_relations" in self.model_fields_set:
+                raise ValueError(
+                    "ANDROID_ASSET_LINKS_RELATIONS is set but "
+                    "ANDROID_PACKAGE_NAME is not. Relations do nothing "
+                    "without a package name to grant them to."
                 )
             return self
 

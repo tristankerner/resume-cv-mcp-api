@@ -246,21 +246,26 @@ class AssetLinksRoute:
     not an APIRouter with tags.
     """
 
-    RELATION: ClassVar[list[str]] = ["delegate_permission/common.get_login_creds"]
-
-    def __init__(self, package_name: str, fingerprints: list[str]) -> None:
+    def __init__(
+        self, package_name: str, fingerprints: list[str], relations: list[str]
+    ) -> None:
         self.package_name = package_name
         self.fingerprints = fingerprints
+        self.relations = relations
 
     @classmethod
     def register(
-        cls, app_: FastAPI, package_name: str | None, fingerprints: frozenset[str]
+        cls,
+        app_: FastAPI,
+        package_name: str | None,
+        fingerprints: frozenset[str],
+        relations: frozenset[str],
     ) -> bool:
         if not package_name or not fingerprints:
             return False
 
         app_.get("/.well-known/assetlinks.json", include_in_schema=False)(
-            cls(package_name, sorted(fingerprints)).serve
+            cls(package_name, sorted(fingerprints), sorted(relations)).serve
         )
         return True
 
@@ -268,7 +273,7 @@ class AssetLinksRoute:
         return JSONResponse(
             [
                 {
-                    "relation": self.RELATION,
+                    "relation": self.relations,
                     "target": {
                         "namespace": "android_app",
                         "package_name": self.package_name,
@@ -355,6 +360,7 @@ class Application:
             self._app,
             self.settings.android_package_name,
             self.settings.android_sha256_cert_fingerprints,
+            self.settings.android_asset_links_relations,
         )
 
         self._app.get("/")(self.root)
